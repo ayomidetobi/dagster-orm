@@ -1,0 +1,10 @@
+[32m2026-02-12 19:12:46 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - ca4c05da-dacd-4614-8b5f-0c1e04306add - 31593 - LOGS_CAPTURED - Started capturing logs in process (pid: 31593).
+[32m2026-02-12 19:12:46 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - ca4c05da-dacd-4614-8b5f-0c1e04306add - 31593 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_START - Started execution of step "load_meta_series_to_s3_validate_metadata_against_lookup".
+[32m2026-02-12 19:12:47 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - ca4c05da-dacd-4614-8b5f-0c1e04306add - 31593 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-02-12 19:12:47 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - ca4c05da-dacd-4614-8b5f-0c1e04306add - 31593 - load_meta_series_to_s3_validate_metadata_against_lookup - ASSET_CHECK_EVALUATION - Asset check 'validate_metadata_against_lookup' on 'load_meta_series_to_s3' did not pass. Description: 'Validation failed with error: Error executing raw SQL: Binder Error: Table "m" does not have a column named "country"
+
+Candidate bindings: : "term"
+
+LINE 93:                     WHERE l.country = m.country
+                                               ^'
+[32m2026-02-12 19:12:47 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - ca4c05da-dacd-4614-8b5f-0c1e04306add - 31593 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_SUCCESS - Finished execution of step "load_meta_series_to_s3_validate_metadata_against_lookup" in 1.03s.

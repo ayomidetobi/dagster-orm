@@ -1,0 +1,9 @@
+[32m2026-02-12 17:47:36 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 7de745db-66bb-42d6-a493-d7d972d111d1 - 10330 - LOGS_CAPTURED - Started capturing logs in process (pid: 10330).
+[32m2026-02-12 17:47:36 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 7de745db-66bb-42d6-a493-d7d972d111d1 - 10330 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_START - Started execution of step "load_meta_series_to_s3_validate_metadata_against_lookup".
+[32m2026-02-12 17:47:37 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 7de745db-66bb-42d6-a493-d7d972d111d1 - 10330 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-02-12 17:47:37 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 7de745db-66bb-42d6-a493-d7d972d111d1 - 10330 - load_meta_series_to_s3_validate_metadata_against_lookup - ASSET_CHECK_EVALUATION - Asset check 'validate_metadata_against_lookup' on 'load_meta_series_to_s3' did not pass. Description: 'Validation failed with error: Failed to get invalid rows: Error executing raw SQL: Binder Error: Referenced table "l" not found!
+Candidate tables: "m"
+
+LINE 12:                         WHERE l.lookup_type = 'asset_class'
+                                       ^'
+[32m2026-02-12 17:47:37 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 7de745db-66bb-42d6-a493-d7d972d111d1 - 10330 - load_meta_series_to_s3_validate_metadata_against_lookup - STEP_SUCCESS - Finished execution of step "load_meta_series_to_s3_validate_metadata_against_lookup" in 1.15s.

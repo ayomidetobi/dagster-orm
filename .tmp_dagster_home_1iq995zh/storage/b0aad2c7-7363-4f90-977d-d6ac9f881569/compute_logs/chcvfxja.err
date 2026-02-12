@@ -1,0 +1,6 @@
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - 12384 - LOGS_CAPTURED - Started capturing logs in process (pid: 12384).
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - 12384 - load_lookup_tables_to_s3 - STEP_START - Started execution of step "load_lookup_tables_to_s3".
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mINFO[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - load_lookup_tables_to_s3 - Loaded 14 lookup table rows to S3: control/lookup/data.parquet
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - 12384 - load_lookup_tables_to_s3 - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - 12384 - load_lookup_tables_to_s3 - ASSET_MATERIALIZATION - Materialized value load_lookup_tables_to_s3.
+[32m2026-02-12 17:55:23 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - b0aad2c7-7363-4f90-977d-d6ac9f881569 - 12384 - load_lookup_tables_to_s3 - STEP_SUCCESS - Finished execution of step "load_lookup_tables_to_s3" in 636ms.

@@ -1,0 +1,12 @@
+parent_series_code,child_series_code,calc_type,id,asset_class,product_type,sub_asset_class,data_type,structure_type,market_segment,field_type,ticker_source,country,currency,region,term,tenor
+AAPL_PX_LAST,TECH_FLY_FLY,FLY,DER_001,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+MSFT_PX_LAST,TECH_FLY_FLY,FLY,DER_001,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+GOOGL_PX_LAST,TECH_FLY_FLY,FLY,DER_001,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+US30Y_YIELD,UST_30Y10Y_SPREAD,SPREAD,DER_002,Fixed Income,Composite,Government Bond,Yield,Derivative,Exchange Traded,High Price,Ramp,US,GBP,Europe,Medium-term,5Y
+US10Y_YIELD,UST_30Y10Y_SPREAD,SPREAD,DER_002,Fixed Income,Composite,Government Bond,Yield,Derivative,Exchange Traded,High Price,Ramp,US,GBP,Europe,Medium-term,5Y
+WTI_PX_LAST,OIL_RATIO_WTI_BRENT,RATIO,DER_003,Commodity,Mutual Fund,Crude Oil,Price,Simple,Primary Market,Last Price,Bloomberg,US,CAD,Asia Pacific,Short-term,1Y
+BRENT_PX_LAST,OIL_RATIO_WTI_BRENT,RATIO,DER_003,Commodity,Mutual Fund,Crude Oil,Price,Simple,Primary Market,Last Price,Bloomberg,US,CAD,Asia Pacific,Short-term,1Y
+AAPL_PX_LAST,AAPL_MSFT_BOX,BOX,DER_004,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+MSFT_PX_LAST,AAPL_MSFT_BOX,BOX,DER_004,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+GOOGL_PX_LAST,AAPL_MSFT_BOX,BOX,DER_004,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
+TSLA_PX_LAST,AAPL_MSFT_BOX,BOX,DER_004,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y

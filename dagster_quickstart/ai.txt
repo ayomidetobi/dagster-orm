@@ -1,0 +1,93 @@
+AI Code Quality Standards
+
+GENERAL PRINCIPLES 1. Write clean, readable, and maintainable code. 2.
+Prefer clarity over cleverness. 3. Code must be production-ready. 4. No
+pseudo-code or placeholder logic. 5. No explanatory paragraphs inside
+code blocks.
+
+NAMING CONVENTIONS 6. Use descriptive, self-explanatory names. 7. Avoid
+cryptic abbreviations. 8. Name variables by intent, not implementation
+detail. 9. Boolean variables should read clearly (e.g., is_active,
+has_permission).
+
+NO UNNECESSARY COMMENTS 10. Do not explain what the code obviously does.
+11. Avoid redundant inline comments. 12. Comments should explain WHY,
+not WHAT. 13. Public modules, classes, and functions must include
+docstrings.
+
+DOCSTRINGS 14. Include purpose, parameters, return values, and
+exceptions. 15. Keep docstrings concise and factual. 16. Do not
+duplicate implementation details in docstrings.
+
+AVOID MAGIC VALUES 17. Do not hardcode repeated strings or numbers. 18.
+Use constants for fixed values. 19. Use enums for categorical states.
+20. Centralize configuration values.
+
+DRY (DO NOT REPEAT YOURSELF) 21. Extract duplicated logic into reusable
+functions. 22. Avoid copy-paste code. 23. Reuse shared utilities.
+
+OBJECT-BASED PARAMETERS 24. Group related parameters into objects or
+data classes. 25. Avoid long parameter lists. 26. Prefer DTOs or
+configuration objects for structured inputs.
+
+TYPE SAFETY 27. Use type hints where supported. 28. Avoid dynamic typing
+when strict typing improves clarity. 29. Prefer enums over string
+comparisons.
+
+ERROR HANDLING 30. Validate inputs at boundaries. 31. Raise meaningful
+exceptions. 32. Do not silently ignore errors. 33. Fail fast when
+encountering invalid state.
+
+SEPARATION OF CONCERNS 34. Separate business logic from I/O. 35. Avoid
+mixing validation, processing, and formatting in one function. 36. Keep
+functions focused on a single responsibility.
+
+FUNCTION DESIGN 37. Keep functions small and focused. 38. Limit nesting
+depth. 39. Prefer early returns over deep conditional blocks. 40. Avoid
+side effects when possible.
+
+ARCHITECTURE 41. Prefer composition over inheritance. 42. Avoid tight
+coupling between modules. 43. Design for extensibility without modifying
+existing logic. 44. Follow SOLID principles where applicable.
+
+DATA & STATE MANAGEMENT 45. Avoid global mutable state. 46. Keep state
+explicit and predictable. 47. Use immutability where practical.
+
+TESTABILITY 48. Write deterministic functions. 49. Avoid hidden
+dependencies. 50. Structure code to allow unit testing. 51. Inject
+dependencies instead of hardcoding them.
+
+PERFORMANCE & SCALABILITY 52. Avoid premature optimization. 53. Use
+built-in libraries before custom implementations. 54. Consider
+algorithmic complexity for large datasets.
+
+SECURITY 55. Never hardcode secrets. 56. Validate and sanitize external
+input. 57. Follow secure coding best practices. 58. Avoid exposing
+sensitive internal details in errors.
+
+LOGGING 59. Log meaningful events, not noise. 60. Do not log sensitive
+data. 61. Use structured logging where possible.
+
+DOMAIN-SPECIFIC EXCEPTIONS
+
+A. Performance-Critical Systems - Micro-optimizations may be
+acceptable. - Reduced abstraction is allowed if benchmark-justified. -
+Inline logic may replace abstraction for measurable gains.
+
+B. Embedded / Low-Level Systems - Memory constraints may justify tighter
+control and fewer abstractions. - Some constants may remain inline when
+required by hardware specs.
+
+C. Prototyping / Experimental Code - Some shortcuts may be acceptable. -
+However, production code must still follow all standards.
+
+D. Framework-Constrained Code - Follow framework idioms even if they
+differ from general guidelines. - Required annotations or decorators are
+allowed even if verbose.
+
+E. Legacy System Integration - Maintain compatibility over refactoring
+purity. - Improvements should not break existing contracts.
+
+FINAL REQUIREMENTS - No TODO comments unless explicitly requested. - No
+dead or unused code. - No commented-out code blocks. - Code must
+compile/run. - Follow the official style guide of the target language.

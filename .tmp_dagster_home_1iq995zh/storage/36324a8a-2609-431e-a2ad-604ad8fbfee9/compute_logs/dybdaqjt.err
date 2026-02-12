@@ -1,0 +1,6 @@
+[32m2026-02-12 17:15:29 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - 2137 - LOGS_CAPTURED - Started capturing logs in process (pid: 2137).
+[32m2026-02-12 17:15:29 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - 2137 - load_meta_series_to_s3 - STEP_START - Started execution of step "load_meta_series_to_s3".
+[32m2026-02-12 17:15:30 +0000[0m - dagster - [34mINFO[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - load_meta_series_to_s3 - Loaded 23 meta series rows to S3: control/metadata/data.parquet
+[32m2026-02-12 17:15:30 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - 2137 - load_meta_series_to_s3 - STEP_OUTPUT - Yielded output "result" of type "Any". (Type check passed).
+[32m2026-02-12 17:15:30 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - 2137 - load_meta_series_to_s3 - ASSET_MATERIALIZATION - Materialized value load_meta_series_to_s3.
+[32m2026-02-12 17:15:30 +0000[0m - dagster - [34mDEBUG[0m - __ASSET_JOB - 36324a8a-2609-431e-a2ad-604ad8fbfee9 - 2137 - load_meta_series_to_s3 - STEP_SUCCESS - Finished execution of step "load_meta_series_to_s3" in 733ms.
