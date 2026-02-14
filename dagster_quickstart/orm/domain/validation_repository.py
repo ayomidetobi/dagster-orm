@@ -1,13 +1,20 @@
 """Validation repository for validating metadata against wide-format lookup tables."""
 
 from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
+from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.orm.exceptions import MetadataResolutionError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
+from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames, LOOKUP_TABLE_PROCESSING_ORDER
+from dagster_quickstart.orm.schema import (
+    LOOKUP_TABLE_PROCESSING_ORDER,
+    MetadataColumns,
+    TableNames,
+)
 
 
 class ValidationRepository:
@@ -16,38 +23,63 @@ class ValidationRepository:
     def __init__(
         self,
         duckdb_repository: DuckDbRepository,
+        parquet_adapter: ParquetAdapter,
         s3_adapter: S3Adapter,
         temp_table_manager: TempTableManager,
     ):
+        """Initialize validation repository.
+
+        Args:
+            duckdb_repository: DuckDbRepository for executing queries
+            parquet_adapter: ParquetAdapter for building parquet sources
+            s3_adapter: S3Adapter for URI resolution
+            temp_table_manager: TempTableManager for managing temp tables
+        """
         self._repository = duckdb_repository
+        self._parquet_adapter = parquet_adapter
         self._s3_adapter = s3_adapter
         self._temp_table_manager = temp_table_manager
 
-    def _build_filter_where_clause(
-        self, filters: Optional[Dict[str, List[str]]], table_alias: str = "m"
-    ) -> Tuple[str, List]:
-        """Build WHERE clause string from filters."""
-        where_clause = ""
-        param_values: List = []
+    def _build_filtered_query(
+        self, filters: Optional[Dict[str, List[str]]]
+    ) -> Tuple[QueryBuilder, List]:
+        """Build QueryBuilder with WHERE clauses for filters.
+
+        Note: QueryBuilder.where_in() uses named parameters, but DuckDB needs
+        positional parameters. We handle IN clauses manually with ? placeholders.
+
+        Args:
+            filters: Optional dictionary mapping column names to filter values
+
+        Returns:
+            Tuple of (QueryBuilder instance, list of parameter values)
+        """
+        query_builder = QueryBuilder("_parquet_source")
+        param_values: list = []
 
         if filters:
-            for field, values in filters.items():
-                if values:
-                    if len(values) == 1:
-                        where_clause += f" AND {table_alias}.{field} = ?"
-                        param_values.append(values[0])
+            for filter_field, filter_values in filters.items():
+                if filter_values:
+                    if len(filter_values) == 1:
+                        query_builder.where(filter_field, "=", filter_values[0])
+                        param_values.append(filter_values[0])
                     else:
-                        placeholders = ", ".join(["?"] * len(values))
-                        where_clause += f" AND {table_alias}.{field} IN ({placeholders})"
-                        param_values.extend(values)
+                        placeholders = ", ".join(["?"] * len(filter_values))
+                        query_builder.where_clauses.append(f"{filter_field} IN ({placeholders})")
+                        param_values.extend(filter_values)
 
-        return where_clause, param_values
+        return query_builder, param_values
 
     def _build_exists_clauses_wide_lookup(self, lookup_table_name: str) -> str:
-        """
-        Build EXISTS clauses for wide-format lookup parquet.
+        """Build EXISTS clauses for wide-format lookup parquet.
 
         Each column in LOOKUP_TABLE_PROCESSING_ORDER is semi-joined individually.
+
+        Args:
+            lookup_table_name: Name of the temp lookup table
+
+        Returns:
+            SQL string with AND-ed EXISTS clauses
         """
         clauses = []
         for lookup_col in LOOKUP_TABLE_PROCESSING_ORDER:
@@ -67,7 +99,18 @@ class ValidationRepository:
         filters: Optional[Dict[str, List[str]]] = None,
         control_type: str = TableNames.METADATA,
     ) -> pd.DataFrame:
-        """Return metadata rows fully validated against wide-format lookup parquet."""
+        """Return metadata rows fully validated against wide-format lookup parquet.
+
+        Args:
+            filters: Optional dictionary mapping column names to filter values
+            control_type: Type of control table (default: 'metadata')
+
+        Returns:
+            DataFrame with validated metadata rows
+
+        Raises:
+            MetadataResolutionError: If no rows found after validation
+        """
         lookup_table_name = "_temp_lookup_validation"
         try:
             lookup_uri = self._s3_adapter.get_lookup_uri()
@@ -76,20 +119,36 @@ class ValidationRepository:
             )
 
             metadata_uri = self._s3_adapter.get_metadata_uri(control_type)
-            where_clause, param_values = self._build_filter_where_clause(filters)
+            query_builder, param_values = self._build_filtered_query(filters)
+
+            # Adapt the base query to use parquet source
+            adapted_sql, builder_params = self._parquet_adapter.adapt_query_builder_for_parquet(
+                query_builder, metadata_uri
+            )
+
+            # Replace the SELECT clause to use alias 'm' and add EXISTS clauses
+            parquet_source = self._parquet_adapter.build_parquet_source(metadata_uri)
             exists_clauses = self._build_exists_clauses_wide_lookup(lookup_table_name)
 
-            sql_query = f"""
-                SELECT m.*
-                FROM read_parquet('{metadata_uri}') AS m
-                WHERE 1=1 {where_clause}
-                  AND {exists_clauses}
-            """
+            # Build final SQL with EXISTS clauses
+            # Replace FROM clause to add alias, and append EXISTS clauses to WHERE
+            final_sql = adapted_sql.replace(
+                f"FROM {parquet_source}",
+                f"FROM {parquet_source} AS m"
+            )
 
-            if param_values:
-                result = self._repository.execute_raw_sql(sql_query, param_values)
+            # Add EXISTS clauses to WHERE clause
+            if "WHERE" in final_sql:
+                final_sql = f"{final_sql} AND {exists_clauses}"
             else:
-                result = self._repository.execute_raw_sql(sql_query)
+                final_sql = f"{final_sql} WHERE {exists_clauses}"
+
+            all_params = param_values + builder_params
+
+            if all_params:
+                result = self._repository.execute_raw_sql(final_sql, all_params)
+            else:
+                result = self._repository.execute_raw_sql(final_sql)
 
             if result.empty:
                 raise MetadataResolutionError(
@@ -113,6 +172,13 @@ class ValidationRepository:
         - series_name
         - invalid_column (name of the column with invalid value)
         - invalid_value (the invalid value)
+
+        Args:
+            filters: Optional dictionary mapping column names to filter values
+            control_type: Type of control table (default: 'metadata')
+
+        Returns:
+            DataFrame with invalid rows (one per invalid column per metadata row)
         """
         lookup_table_name = "_temp_lookup_validation"
         try:
@@ -122,7 +188,24 @@ class ValidationRepository:
             )
 
             metadata_uri = self._s3_adapter.get_metadata_uri(control_type)
-            where_clause, param_values = self._build_filter_where_clause(filters)
+            parquet_source = self._parquet_adapter.build_parquet_source(metadata_uri)
+
+            # Build base WHERE clause and parameters from filters
+            where_clause_parts = []
+            param_values: list = []
+
+            if filters:
+                for filter_field, filter_values in filters.items():
+                    if filter_values:
+                        if len(filter_values) == 1:
+                            where_clause_parts.append(f"m.{filter_field} = ?")
+                            param_values.append(filter_values[0])
+                        else:
+                            placeholders = ", ".join(["?"] * len(filter_values))
+                            where_clause_parts.append(f"m.{filter_field} IN ({placeholders})")
+                            param_values.extend(filter_values)
+
+            base_where = " AND ".join(where_clause_parts) if where_clause_parts else "1=1"
 
             # Build UNION ALL query to return one row per invalid column
             union_parts = []
@@ -133,8 +216,8 @@ class ValidationRepository:
                         m.{MetadataColumns.SERIES_NAME},
                         '{lookup_col}' AS invalid_column,
                         CAST(m.{lookup_col} AS VARCHAR) AS invalid_value
-                    FROM read_parquet('{metadata_uri}') AS m
-                    WHERE 1=1 {where_clause}
+                    FROM {parquet_source} AS m
+                    WHERE {base_where}
                       AND m.{lookup_col} IS NOT NULL
                       AND NOT EXISTS (
                           SELECT 1
@@ -143,7 +226,7 @@ class ValidationRepository:
                           AND l.{lookup_col} IS NOT NULL
                       )
                 """
-                union_parts.append(union_part)
+                union_parts.append(union_part.strip())
 
             if not union_parts:
                 return pd.DataFrame(columns=[
@@ -153,6 +236,8 @@ class ValidationRepository:
                     "invalid_value"
                 ])
 
+            # Each UNION part needs the same parameters, so we repeat them
+            # Since all parts have identical WHERE clauses, we can reuse params
             sql_query = " UNION ALL ".join(union_parts)
 
             if param_values:

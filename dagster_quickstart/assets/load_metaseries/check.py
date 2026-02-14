@@ -4,6 +4,7 @@ from dagster import AssetCheckResult, AssetCheckSeverity, AssetCheckExecutionCon
 
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
+from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.schema import MetadataColumns, TableNames
@@ -24,11 +25,13 @@ def validate_metadata_against_lookup(
 
     # Initialize repository with dependency injection
     duckdb_repo = DuckDbRepository(duckdb_resource._con)
+    parquet_adapter = ParquetAdapter()
     s3_adapter = S3Adapter(duckdb_resource.get_bucket())
     temp_table_manager = TempTableManager(duckdb_repo)
 
     validation_repo = ValidationRepository(
         duckdb_repository=duckdb_repo,
+        parquet_adapter=parquet_adapter,
         s3_adapter=s3_adapter,
         temp_table_manager=temp_table_manager
     )
