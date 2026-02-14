@@ -77,6 +77,8 @@ class ValidationRepository:
         """Build EXISTS clauses for wide-format lookup parquet.
 
         Each column in LOOKUP_TABLE_PROCESSING_ORDER is semi-joined individually.
+        Only validates columns that have non-NULL values in metadata.
+        NULL values in metadata are skipped (not validated).
 
         Args:
             lookup_table_name: Name of the temp lookup table
@@ -86,13 +88,15 @@ class ValidationRepository:
         """
         clauses = []
         for lookup_col in LOOKUP_TABLE_PROCESSING_ORDER:
+            # Only validate if metadata column has a value (is NOT NULL)
+            # If metadata column is NULL, skip validation for that column
             clause = f"""
-                EXISTS (
+                (m.{lookup_col} IS NULL OR EXISTS (
                     SELECT 1
                     FROM {lookup_table_name} AS l
                     WHERE l.{lookup_col} = m.{lookup_col}
                       AND l.{lookup_col} IS NOT NULL
-                )
+                ))
             """
             clauses.append(clause)
         return " AND ".join(clauses)
@@ -152,11 +156,9 @@ class ValidationRepository:
             else:
                 result = self._repository.execute_raw_sql(final_sql)
 
-            if result.empty:
-                raise MetadataResolutionError(
-                    f"No metadata rows found after validation for control_type '{control_type}'"
-                )
-
+            # Return empty DataFrame instead of raising error
+            # This allows callers to handle empty results gracefully
+            # (e.g., when filters are too restrictive or lookup table is incomplete)
             return result
 
         finally:
