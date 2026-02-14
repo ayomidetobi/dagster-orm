@@ -102,13 +102,23 @@ class TempTableManager:
     def drop_temp_table(self, table_name: str) -> None:
         """Drop temporary table and remove from registry.
 
+        Handles both DataFrame-registered tables (via unregister) and
+        SQL-created TEMP TABLEs (via DROP TABLE).
+
         Args:
             table_name: Name of temporary table to drop
         """
         try:
+            # First try to unregister (for DataFrame-registered tables)
             self._repository.unregister_table(table_name)
         except Exception:
-            pass
+            # If unregister fails, try dropping as SQL TEMP TABLE
+            try:
+                drop_sql = f"DROP TABLE IF EXISTS {table_name}"
+                self._repository.execute_raw_relation(drop_sql)
+            except Exception:
+                # If both fail, continue - table might not exist
+                pass
         finally:
             self._registry.pop(table_name, None)
 
@@ -210,12 +220,15 @@ class TempTableManager:
         if table_name in self._registry and not force_recreate:
             return table_name
 
-        if force_recreate and table_name in self._registry:
+        # If force_recreate, always try to drop the table first
+        # (even if not in registry, it might exist in DuckDB from a previous call)
+        if force_recreate:
             self.drop_temp_table(table_name)
 
         try:
+            # Use CREATE OR REPLACE to handle case where table exists but wasn't in registry
             create_temp_sql = f"""
-                CREATE TEMP TABLE {table_name} AS
+                CREATE OR REPLACE TEMP TABLE {table_name} AS
                 SELECT * FROM read_parquet('{parquet_uri}')
             """
             self._repository.execute_raw_relation(create_temp_sql)

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
+from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
 from dagster_quickstart.orm.exceptions import ConnectionBindingError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
@@ -13,7 +14,6 @@ from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.schema import TickerSource
-from dagster_quickstart.orm.validation import MetadataValidator
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 
 
@@ -66,8 +66,10 @@ class DataAPI:
         self._value_repository = ValueRepository(duckdb_repository, parquet_adapter, s3_adapter)
         self._temp_table_manager = temp_table_manager
 
-        validator_metadata_repo = MetadataRepository(duckdb_repository, parquet_adapter, s3_adapter)
-        self._validator = MetadataValidator(validator_metadata_repo)
+        # Create ValidationRepository for wide-format lookup table validation
+        self._validation_repository = ValidationRepository(
+            duckdb_repository, parquet_adapter, s3_adapter, temp_table_manager
+        )
 
     def get(self, **filters: Any) -> QuerySet:
         """Create QuerySet with metadata filters.
@@ -97,7 +99,7 @@ class DataAPI:
             metadata_repository=self._metadata_repository,
             value_repository=self._value_repository,
             metadata_filters=normalized_filters,
-            validator=self._validator,
+            validation_repository=self._validation_repository,
         )
 
     def load_metadata_from_s3(self) -> pd.DataFrame:
@@ -106,9 +108,7 @@ class DataAPI:
         Returns:
             DataFrame with metadata columns (validated against lookup tables)
         """
-        metadata_df = self._metadata_repository.filter()
-        validated_df = self._validator.validate_metadata_dataframe(metadata_df)
-        return validated_df
+        return self._validation_repository.filter_with_validation(filters=None)
 
     def load_lookup_table_from_s3(self) -> pd.DataFrame:
         """Load lookup table from S3 Parquet file.

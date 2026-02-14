@@ -33,7 +33,7 @@ def validate_metadata_against_lookup(
         duckdb_repository=duckdb_repo,
         parquet_adapter=parquet_adapter,
         s3_adapter=s3_adapter,
-        temp_table_manager=temp_table_manager
+        temp_table_manager=temp_table_manager,
     )
 
     metadata_uri = s3_adapter.get_metadata_uri(TableNames.METADATA)
@@ -43,7 +43,7 @@ def validate_metadata_against_lookup(
         # 1️⃣ Get invalid rows (only series_code and series_name)
         invalid_df = validation_repo.get_invalid_rows(
             filters=None,  # or pass specific filters if needed
-            control_type=TableNames.METADATA
+            control_type=TableNames.METADATA,
         )
 
         invalid_count = len(invalid_df)
@@ -52,24 +52,24 @@ def validate_metadata_against_lookup(
         if invalid_count > 0:
             # Get unique series count
             unique_series = invalid_df[MetadataColumns.SERIES_CODE].nunique()
-            
+
             # Build detailed error messages
             error_details = []
             for _, row in invalid_df.iterrows():
                 error_details.append(
                     f"{row[MetadataColumns.SERIES_CODE]}: {row['invalid_column']}='{row['invalid_value']}'"
                 )
-            
+
             # Create summary description
             error_summary = "; ".join(error_details[:10])
             if invalid_count > 10:
                 error_summary += f"; ... and {invalid_count - 10} more invalid value(s)"
-            
+
             description = (
                 f"Found {invalid_count} invalid lookup value(s) across {unique_series} series. "
                 f"Invalid values: {error_summary}"
             )
-            
+
             # Log detailed errors
             context.log.error(f"Validation failed: {description}")
             for _, row in invalid_df.iterrows():
@@ -86,7 +86,9 @@ def validate_metadata_against_lookup(
                     "invalid_count": invalid_count,
                     "unique_series_count": int(unique_series),
                     "invalid_details": invalid_df.to_dict("records"),
-                    "invalid_series_codes": invalid_df[MetadataColumns.SERIES_CODE].unique().tolist(),
+                    "invalid_series_codes": invalid_df[MetadataColumns.SERIES_CODE]
+                    .unique()
+                    .tolist(),
                     "metadata_uri": metadata_uri,
                     "lookup_uri": lookup_uri,
                 },

@@ -188,14 +188,12 @@ class ValueRepository:
             Tuple of (SQL string, parameter list)
         """
         query_builder = QueryBuilder("_parquet_source")
-        params: list = []
 
+        # Use QueryBuilder.where() which handles parameters internally
         if start:
             query_builder.where(ValueColumns.TIMESTAMP, ">=", start)
-            params.append(start)
         if end:
             query_builder.where(ValueColumns.TIMESTAMP, "<=", end)
-            params.append(end)
 
         order_by_column = order_by or ValueColumns.TIMESTAMP
         query_builder.order_by(order_by_column)
@@ -203,8 +201,8 @@ class ValueRepository:
         if limit:
             query_builder.limit(limit)
 
+        # QueryBuilder.build() returns the parameters, don't manually add them
         base_sql, builder_params = query_builder.build()
-        params.extend(builder_params)
 
         parquet_source = self._parquet_adapter.build_parquet_source(uri)
         adapted_sql = base_sql.replace("FROM _parquet_source", f"FROM {parquet_source}")
@@ -217,4 +215,4 @@ class ValueRepository:
         """
         final_sql = adapted_sql.replace("SELECT *", custom_select.strip())
 
-        return final_sql, params
+        return final_sql, builder_params

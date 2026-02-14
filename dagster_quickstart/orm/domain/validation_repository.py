@@ -61,9 +61,12 @@ class ValidationRepository:
             for filter_field, filter_values in filters.items():
                 if filter_values:
                     if len(filter_values) == 1:
+                        # Use QueryBuilder.where() which handles parameters internally
                         query_builder.where(filter_field, "=", filter_values[0])
-                        param_values.append(filter_values[0])
+                        # Don't add to param_values - query_builder.build() will return it
                     else:
+                        # For IN clauses, manually add placeholders and track parameters
+                        # because QueryBuilder.where_in() uses named params but DuckDB needs positional
                         placeholders = ", ".join(["?"] * len(filter_values))
                         query_builder.where_clauses.append(f"{filter_field} IN ({placeholders})")
                         param_values.extend(filter_values)
@@ -132,10 +135,7 @@ class ValidationRepository:
 
             # Build final SQL with EXISTS clauses
             # Replace FROM clause to add alias, and append EXISTS clauses to WHERE
-            final_sql = adapted_sql.replace(
-                f"FROM {parquet_source}",
-                f"FROM {parquet_source} AS m"
-            )
+            final_sql = adapted_sql.replace(f"FROM {parquet_source}", f"FROM {parquet_source} AS m")
 
             # Add EXISTS clauses to WHERE clause
             if "WHERE" in final_sql:
@@ -143,7 +143,9 @@ class ValidationRepository:
             else:
                 final_sql = f"{final_sql} WHERE {exists_clauses}"
 
-            all_params = param_values + builder_params
+            # Combine parameters: builder_params (from query_builder.where()) come first,
+            # then param_values (from manually added IN clauses)
+            all_params = builder_params + param_values
 
             if all_params:
                 result = self._repository.execute_raw_sql(final_sql, all_params)
@@ -166,7 +168,7 @@ class ValidationRepository:
         control_type: str = TableNames.METADATA,
     ) -> pd.DataFrame:
         """Return metadata rows with invalid lookup values, including column name and invalid value.
-        
+
         Returns one row per invalid column per metadata row with:
         - series_code
         - series_name
@@ -229,12 +231,14 @@ class ValidationRepository:
                 union_parts.append(union_part.strip())
 
             if not union_parts:
-                return pd.DataFrame(columns=[
-                    MetadataColumns.SERIES_CODE,
-                    MetadataColumns.SERIES_NAME,
-                    "invalid_column",
-                    "invalid_value"
-                ])
+                return pd.DataFrame(
+                    columns=[
+                        MetadataColumns.SERIES_CODE,
+                        MetadataColumns.SERIES_NAME,
+                        "invalid_column",
+                        "invalid_value",
+                    ]
+                )
 
             # Each UNION part needs the same parameters, so we repeat them
             # Since all parts have identical WHERE clauses, we can reuse params

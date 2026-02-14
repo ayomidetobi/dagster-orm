@@ -6,6 +6,7 @@ import pandas as pd
 
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
+from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.exceptions import (
     InvalidFilterFieldError,
     MetadataResolutionError,
@@ -18,7 +19,6 @@ from dagster_quickstart.orm.schema import (
     TickerSource,
     VALID_METADATA_FILTER_COLUMNS,
 )
-from dagster_quickstart.orm.validation import MetadataValidator
 
 
 class QuerySet:
@@ -44,7 +44,7 @@ class QuerySet:
         metadata_repository: MetadataRepository,
         value_repository: ValueRepository,
         metadata_filters: Dict[str, List[str]],
-        validator: Optional[MetadataValidator] = None,
+        validation_repository: Optional[ValidationRepository] = None,
     ):
         """Initialize QuerySet with repositories and filters.
 
@@ -52,7 +52,7 @@ class QuerySet:
             metadata_repository: MetadataRepository for loading metadata
             value_repository: ValueRepository for loading value data
             metadata_filters: Dictionary mapping metadata column names to filter values
-            validator: Optional MetadataValidator instance for validation
+            validation_repository: Optional ValidationRepository instance for validation
 
         Raises:
             InvalidFilterFieldError: If any filter field is invalid
@@ -61,7 +61,7 @@ class QuerySet:
         self._value_repository = value_repository
         self._metadata_filters = self._normalize_filters(metadata_filters)
         self._resolved_series_codes: Optional[List[str]] = None
-        self._validator = validator
+        self._validation_repository = validation_repository
 
     def _normalize_filters(self, filters: Dict[str, List[str]]) -> Dict[str, List[str]]:
         """Normalize filter dictionary to ensure consistent format.
@@ -98,16 +98,23 @@ class QuerySet:
     def _build_metadata_query(self) -> pd.DataFrame:
         """Build metadata query using metadata repository.
 
+        If validation_repository is provided, uses filter_with_validation() which
+        performs both filtering and validation in a single SQL query.
+
         Returns:
-            DataFrame with filtered metadata
+            DataFrame with filtered (and validated if validation_repository provided) metadata
 
         Raises:
             MetadataResolutionError: If query execution fails
         """
-        metadata_df = self._metadata_repository.filter(filters=self._metadata_filters)
-
-        if self._validator is not None:
-            metadata_df = self._validator.validate_metadata_dataframe(metadata_df)
+        if self._validation_repository is not None:
+            # Use ValidationRepository which does filtering + validation in one SQL query
+            metadata_df = self._validation_repository.filter_with_validation(
+                filters=self._metadata_filters
+            )
+        else:
+            # Use MetadataRepository for filtering only (no validation)
+            metadata_df = self._metadata_repository.filter(filters=self._metadata_filters)
 
         return metadata_df
 
