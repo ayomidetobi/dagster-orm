@@ -1,10 +1,11 @@
 """PyPDL data ingestion resource using pyeqdr.pypdl library."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from dagster import ConfigurableResource, get_dagster_logger
 
+from dagster_quickstart.orm.schema import DataPoint
 from dagster_quickstart.utils.datetime_utils import parse_timestamp
 from dagster_quickstart.utils.exceptions import PyPDLError, PyPDLExecutionError
 
@@ -28,26 +29,24 @@ class PyPDLResource(ConfigurableResource):
 
     def fetch_time_series(
         self,
-        data_code: Union[str, List[str]],
+        data_codes: List[str],
         data_source: str,
         start_date: datetime,
         end_date: datetime,
-    ) -> Union[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-        """Fetch time-series data for single or multiple series.
+    ) -> Dict[str, List[DataPoint]]:
+        """Fetch time-series data for multiple series.
 
-        Uses bulk logic for both single and multiple series.
-        For single series: returns List[Dict[str, Any]]
-        For multiple series: returns Dict[str, List[Dict[str, Any]]] mapping data_code to data points
+        Always processes multiple series using bulk logic.
+        Returns a dictionary mapping data_code to list of data points.
 
         Args:
-            data_code: The ticker/code (str) or list of tickers/codes (List[str])
+            data_codes: List of ticker/codes (List[str])
             data_source: The data source path (e.g., "bloomberg/ts/PX_LAST")
             start_date: Start date for data retrieval
             end_date: End date for data retrieval
 
         Returns:
-            For single: List of data point dicts with timestamp and value
-            For multiple: Dict mapping data_code to list of data point dicts
+            Dict mapping data_code to list of DataPoint dicts with timestamp and value
 
         Raises:
             PyPDLError: If PyPDL is not installed or execution fails
@@ -58,20 +57,10 @@ class PyPDLResource(ConfigurableResource):
                 "pyeqdr.pypdl is not installed. Please install it with: pip install pyeqdr"
             )
 
-        # Convert to list if single (bulk logic handles both)
-        is_single = isinstance(data_code, str)
-        if is_single:
-            # Type narrowing: we know data_code is str here
-            single_code: str = data_code
-            data_codes: List[str] = [single_code]
-        else:
-            data_codes = list(data_code)
-
         if not data_codes:
-            return [] if is_single else {}
+            return {}
 
         try:
-            # Always use bulk logic (works for single and multiple)
             pdl_dict, wrapper_program_name, result_keys = _build_pdl_dict_bulk(
                 data_codes, data_source, start_date, end_date
             )
@@ -85,7 +74,6 @@ class PyPDLResource(ConfigurableResource):
                 },
             )
 
-            # Execute the wrapper program
             out_d = pypdl.gnp_exec(
                 pdl_dict,
                 wrapper_program_name,
@@ -94,8 +82,7 @@ class PyPDLResource(ConfigurableResource):
                 self.username,
             )
 
-            # Process results with error handling from wrapper program
-            results: Dict[str, List[Dict[str, Any]]] = {}
+            results: Dict[str, List[DataPoint]] = {}
             _process_pypdl_result_bulk(out_d, data_codes, data_source, result_keys, results)
 
             logger.info(
@@ -106,9 +93,6 @@ class PyPDLResource(ConfigurableResource):
                 },
             )
 
-            # Return single list if input was single, otherwise return dict
-            if is_single:
-                return results[data_codes[0]]
             return results
 
         except Exception as e:
@@ -184,7 +168,7 @@ def _process_pypdl_result_bulk(
     data_codes: List[str],
     data_source: str,
     result_keys: List[str],
-    results: Dict[str, List[Dict[str, Any]]],
+    results: Dict[str, List[DataPoint]],
 ) -> List[str]:
     """Process PyPDL bulk execution result with wrapper program error handling.
 
@@ -263,59 +247,9 @@ def _process_pypdl_result_bulk(
     return result_keys
 
 
-def _process_pypdl_result_single(
-    out_d: Dict[str, Any],
-    data_code: str,
-    data_source: str,
-    result_key: str,
-) -> List[Dict[str, Any]]:
-    """Process PyPDL execution result and extract data points for a single series.
-
-    Args:
-        out_d: PyPDL output dictionary
-        data_code: Data code for the series
-        data_source: Data source for the series
-        result_key: Result key prefix
-
-    Returns:
-        List of data point dicts with timestamp and value
-    """
-    # Check for errors
-    error_index_list = out_d.get(f"{result_key}.error_index_list")
-    if error_index_list:
-        error_stack_key = f"{result_key}.error_stack_1"
-        error_stack_list = out_d.get(error_stack_key, [])
-        error_stack = ", ".join(str(item) for item in error_stack_list) if error_stack_list else ""
-        logger.error(
-            f"PyPDL request failed for {data_code}",
-            extra={"data_code": data_code, "data_source": data_source, "error_stack": error_stack},
-        )
-        raise PyPDLExecutionError(f"PyPDL request failed for {data_code}: {error_stack}")
-
-    # Get data
-    date_list = out_d.get(f"{result_key}.date_list", [])
-    value_list = out_d.get(f"{result_key}.value_list", [])
-
-    if not date_list or not value_list:
-        logger.warning(
-            f"No data for {data_code} ({data_source})",
-            extra={"data_code": data_code, "data_source": data_source},
-        )
-        return []
-
-    data_points = _convert_to_data_points(date_list, value_list, data_code)
-    if data_points:
-        logger.info(
-            f"Fetched {len(data_points)} data points for {data_code}",
-            extra={"data_code": data_code, "data_point_count": len(data_points)},
-        )
-
-    return data_points
-
-
 def _convert_to_data_points(
     date_list: List[Any], value_list: List[Any], data_code: str
-) -> List[Dict[str, Any]]:
+) -> List[DataPoint]:
     """Convert PyPDL date and value lists to data points.
 
     Args:
@@ -324,9 +258,9 @@ def _convert_to_data_points(
         data_code: Data code for logging
 
     Returns:
-        List of data point dicts with timestamp and value
+        List of DataPoint dicts with timestamp and value
     """
-    data_points: List[Dict[str, Any]] = []
+    data_points: List[DataPoint] = []
 
     for dt, spot in zip(date_list, value_list):
         timestamp = _parse_pypdl_date(dt)

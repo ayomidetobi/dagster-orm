@@ -2,6 +2,8 @@ from dagster import Definitions
 from decouple import config
 
 from dagster_quickstart.assets import (
+    ingest_bloomberg_data_backfill,
+    ingest_bloomberg_data_daily,
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
     load_series_dependencies_to_s3,
@@ -9,13 +11,15 @@ from dagster_quickstart.assets import (
     validate_parent_series_count,
 )
 from dagster_quickstart.orm.io_manager import duckdb_io_manager
-from dagster_quickstart.resources import DuckDBResource
+from dagster_quickstart.resources import DuckDBResource, PyPDLResource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 
 all_assets = [
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
     load_series_dependencies_to_s3,
+    ingest_bloomberg_data_daily,
+    ingest_bloomberg_data_backfill,
 ]
 
 all_asset_checks = [
@@ -35,9 +39,17 @@ duckdb_cacher = duckdb_datacacher(
 # Initialize DuckDB resource with datacacher
 duckdb_resource = DuckDBResource(cacher=duckdb_cacher)
 
+# Initialize PyPDL resource
+pypdl_resource = PyPDLResource(
+    host=config("PYPDL_HOST", default="localhost"),
+    port=config("PYPDL_PORT", default=8194, cast=int),
+    username=config("PYPDL_USERNAME", default=""),
+)
+
 # Define resources
 resources = {
     "duckdb": duckdb_resource,
+    "pypdl": pypdl_resource,
     "io_manager": duckdb_io_manager,
     "duckdb_io_manager": duckdb_io_manager,
 }

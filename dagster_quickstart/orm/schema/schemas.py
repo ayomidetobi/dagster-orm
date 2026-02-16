@@ -1,11 +1,12 @@
 """Schema definitions for metadata and value tables.
 
-Contains table names, column names, and enumerations.
+Contains table names, column names, enumerations, and data structures.
 All table names and column names must be defined here to avoid magic strings.
 """
 
+from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, TypedDict
 
 
 class TableNames:
@@ -99,3 +100,14 @@ class PreviewColumns:
             cls.ASSET_CLASS,
             cls.TICKER_SOURCE,
         ]
+
+
+class DataPoint(TypedDict):
+    """Data point structure for time-series data.
+
+    Represents a single data point with timestamp and value.
+    Used consistently across PyPDL ingestion and value data operations.
+    """
+
+    timestamp: datetime
+    value: float

@@ -126,3 +126,33 @@ def parse_timestamp(
             return None
 
     return None
+
+
+def utc_now() -> datetime:
+    """Get current UTC datetime.
+
+    Returns:
+        Current UTC timezone-aware datetime
+    """
+    return datetime.now(UTC)
+
+
+def parse_datetime_string(datetime_string: str) -> datetime:
+    """Parse datetime string to UTC timezone-aware datetime.
+
+    This is a convenience wrapper around parse_timestamp that ensures
+    a datetime is returned (raises ValueError if parsing fails).
+
+    Args:
+        datetime_string: Datetime string in various formats (ISO, YYYY-MM-DD, etc.)
+
+    Returns:
+        UTC timezone-aware datetime
+
+    Raises:
+        ValueError: If datetime_string cannot be parsed
+    """
+    parsed = parse_timestamp(datetime_string)
+    if parsed is None:
+        raise ValueError(f"Could not parse datetime string: {datetime_string}")
+    return parsed

@@ -13,7 +13,8 @@ from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
-from dagster_quickstart.orm.schema import TickerSource
+from dagster_quickstart.orm.s3_paths import build_s3_value_data_path
+from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 
 
@@ -244,3 +245,224 @@ class DataAPI:
             table_name: Name of temporary table to drop
         """
         self._temp_table_manager.drop_temp_table(table_name)
+
+    def get_series_codes(
+        self,
+        field_type: Optional[str] = None,
+        ticker_source: Optional[TickerSource] = None,
+        **filters: Any,
+    ) -> List[str]:
+        """Get list of series codes from metadata.
+
+        Args:
+            field_type: Optional field_type filter
+            ticker_source: Optional ticker_source filter (default: BLOOMBERG)
+            **filters: Additional metadata filters
+
+        Returns:
+            List of series code strings
+        """
+        query_filters: Dict[str, List[str]] = {}
+
+        # if field_type:
+        #     query_filters[MetadataColumns.FIELD_TYPE] = (
+        #         [field_type] if isinstance(field_type, str) else field_type
+        #     )
+
+        # if ticker_source:
+        #     query_filters[MetadataColumns.TICKER_SOURCE] = [ticker_source.value]
+        # else:
+        #     query_filters[MetadataColumns.TICKER_SOURCE] = [TickerSource.BLOOMBERG.value]
+
+        for filter_field, filter_value in filters.items():
+            if isinstance(filter_value, str):
+                query_filters[filter_field] = [filter_value]
+            elif isinstance(filter_value, list):
+                query_filters[filter_field] = filter_value
+            else:
+                query_filters[filter_field] = [str(filter_value)]
+
+        metadata_df = self.get(**query_filters).info()
+
+        if metadata_df.empty:
+            return []
+
+        return metadata_df[MetadataColumns.SERIES_CODE].unique().tolist()
+
+    def get_tickers(
+        self,
+        series_codes: List[str],
+        field_type: Optional[str] = None,
+        ticker_source: Optional[TickerSource] = None,
+    ) -> Dict[str, str]:
+        """Get ticker mapping for series codes.
+
+        Args:
+            series_codes: List of series codes to get tickers for
+            field_type: Optional field_type filter
+            ticker_source: Optional ticker_source filter (default: BLOOMBERG)
+
+        Returns:
+            Dict mapping series_code to ticker
+        """
+        if not series_codes:
+            return {}
+
+        query_filters: Dict[str, List[str]] = {
+            MetadataColumns.SERIES_CODE: series_codes,
+        }
+
+        # if field_type:
+        #     query_filters[MetadataColumns.FIELD_TYPE] = [field_type]
+
+        # if ticker_source:
+        #     query_filters[MetadataColumns.TICKER_SOURCE] = [ticker_source.value]
+        # else:
+        #     query_filters[MetadataColumns.TICKER_SOURCE] = [TickerSource.BLOOMBERG.value]
+
+        metadata_df = self.get(**query_filters).info()
+
+        if metadata_df.empty:
+            return {}
+
+        ticker_map = {}
+        for _, row in metadata_df.iterrows():
+            series_code = row[MetadataColumns.SERIES_CODE]
+            ticker = row[MetadataColumns.TICKER]
+            if pd.notna(ticker) and ticker:
+                ticker_map[series_code] = str(ticker)
+
+        return ticker_map
+
+    def _prepare_new_dataframe(
+        self, points: List[Dict[str, Any]], series_code: str
+    ) -> Optional[pd.DataFrame]:
+        """Prepare new data points as DataFrame with required columns.
+
+        Args:
+            points: List of data point dicts with 'timestamp' and 'value' keys
+            series_code: Series code identifier
+
+        Returns:
+            Prepared DataFrame or None if invalid
+        """
+        if not points:
+            return None
+
+        df = pd.DataFrame(points)
+        if df.empty:
+            return None
+
+        required_columns = ["timestamp", "value"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return None
+
+        df[ValueColumns.SERIES_CODE] = series_code
+        df = df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]]
+
+        if not pd.api.types.is_datetime64_any_dtype(df[ValueColumns.TIMESTAMP]):
+            df[ValueColumns.TIMESTAMP] = pd.to_datetime(df[ValueColumns.TIMESTAMP])
+
+        return df
+
+    def _filter_existing_by_date_range(
+        self, existing_df: pd.DataFrame, start_date: Any, end_date: Any
+    ) -> pd.DataFrame:
+        """Filter existing DataFrame to exclude rows in date range.
+
+        Args:
+            existing_df: DataFrame with existing data
+            start_date: Start date (datetime or date string)
+            end_date: End date (datetime or date string)
+
+        Returns:
+            Filtered DataFrame
+        """
+        existing_df[ValueColumns.TIMESTAMP] = pd.to_datetime(existing_df[ValueColumns.TIMESTAMP])
+
+        start_date_dt = pd.to_datetime(start_date).date()
+        end_date_dt = pd.to_datetime(end_date).date()
+
+        existing_df["_date"] = existing_df[ValueColumns.TIMESTAMP].dt.date
+        filtered_df = existing_df[
+            ~((existing_df["_date"] >= start_date_dt) & (existing_df["_date"] <= end_date_dt))
+        ]
+        return filtered_df.drop(columns=["_date"])
+
+    def _merge_and_deduplicate(
+        self, existing_df: pd.DataFrame, new_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Merge existing and new data, deduplicate, and order by timestamp.
+
+        Args:
+            existing_df: DataFrame with existing data
+            new_df: DataFrame with new data
+
+        Returns:
+            Merged, deduplicated, and ordered DataFrame
+        """
+        merged_df = pd.concat([existing_df, new_df], ignore_index=True)
+        merged_df = merged_df.drop_duplicates(
+            subset=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP], keep="last"
+        )
+        return merged_df.sort_values(ValueColumns.TIMESTAMP)
+
+    def save_value_data_to_s3(
+        self,
+        data_points: Dict[str, List[Dict[str, Any]]],
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+        force_refresh: bool = False,
+        start_date: Optional[Any] = None,
+        end_date: Optional[Any] = None,
+    ) -> Dict[str, str]:
+        """Save value data points to S3 for multiple series with merge logic.
+
+        Handles existing files by:
+        - If no existing file: Write new data ordered by timestamp
+        - If existing file AND force_refresh=False: Load all existing, merge with new,
+          deduplicate by (series_code, timestamp), prioritize new rows, order by timestamp
+        - If existing file AND force_refresh=True: Load existing but exclude rows where
+          DATE(timestamp) BETWEEN start_date AND end_date, merge with new, deduplicate,
+          order by timestamp
+
+        Args:
+            data_points: Dict mapping series_code to list of data point dicts
+                Each data point dict should have 'timestamp' and 'value' keys
+            ticker_source: Ticker source (default: BLOOMBERG)
+            force_refresh: If True, exclude existing data for date range before merging
+            start_date: Start date for force_refresh exclusion (datetime or date string)
+            end_date: End date for force_refresh exclusion (datetime or date string)
+
+        Returns:
+            Dict mapping series_code to S3 path where data was saved
+        """
+        saved_paths: Dict[str, str] = {}
+
+        if not data_points:
+            return saved_paths
+
+        for series_code, points in data_points.items():
+            new_df = self._prepare_new_dataframe(points, series_code)
+            if new_df is None:
+                continue
+
+            existing_df = self._value_repository.get_series_data(
+                series_code=series_code,
+                tickersource=ticker_source,
+            )
+
+            if existing_df.empty:
+                final_df = new_df.sort_values(ValueColumns.TIMESTAMP)
+            else:
+                if force_refresh and start_date and end_date:
+                    existing_df = self._filter_existing_by_date_range(
+                        existing_df, start_date, end_date
+                    )
+                final_df = self._merge_and_deduplicate(existing_df, new_df)
+
+            relative_path = build_s3_value_data_path(series_code, ticker_source)
+            self.save_dataframe_to_s3(final_df, relative_path)
+            saved_paths[series_code] = relative_path
+
+        return saved_paths

@@ -1,0 +1,1 @@
+"""Ingestion assets package."""
