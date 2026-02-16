@@ -1,6 +1,6 @@
 """Validation repository for validating metadata against wide-format lookup tables."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from duckdb_tinyorm_py import QueryBuilder
@@ -13,7 +13,9 @@ from dagster_quickstart.orm.schema import (
     LOOKUP_TABLE_PROCESSING_ORDER,
     MetadataColumns,
     TableNames,
+    ValueColumns,
 )
+from dagster_quickstart.utils.datetime_utils import normalize_date_to_utc
 
 
 class ValidationRepository:
@@ -250,3 +252,74 @@ class ValidationRepository:
 
         finally:
             self._temp_table_manager.drop_temp_table(lookup_table_name)
+
+    def validate_date_range_for_force_refresh(
+        self, force_refresh: bool, start_date: Any, end_date: Any
+    ) -> None:
+        """Validate date range parameters when force_refresh is enabled.
+
+        Args:
+            force_refresh: Whether force refresh is enabled
+            start_date: Start date (datetime or date string)
+            end_date: End date (datetime or date string)
+
+        Raises:
+            ValueError: If force_refresh=True but start_date or end_date is missing,
+                or if start_date > end_date
+        """
+        if not force_refresh:
+            return
+
+        if start_date is None or end_date is None:
+            raise ValueError(
+                "force_refresh=True requires both start_date and end_date to be provided"
+            )
+
+        start_date_utc = normalize_date_to_utc(start_date)
+        end_date_utc = normalize_date_to_utc(end_date)
+        if start_date_utc > end_date_utc:
+            raise ValueError(
+                f"start_date ({start_date}) must be <= end_date ({end_date})"
+            )
+
+    def validate_value_dataframe_columns(
+        self, df: pd.DataFrame, df_name: str = "dataframe"
+    ) -> None:
+        """Validate that DataFrame has required value data columns.
+
+        Args:
+            df: DataFrame to validate
+            df_name: Name of dataframe for error messages
+
+        Raises:
+            ValueError: If required columns are missing
+        """
+        required_cols = [
+            ValueColumns.SERIES_CODE,
+            ValueColumns.TIMESTAMP,
+            ValueColumns.VALUE,
+        ]
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise ValueError(f"{df_name} missing required columns: {missing}")
+
+    def validate_data_points_structure(
+        self, points: list, required_columns: list[str]
+    ) -> bool:
+        """Validate that data points have required structure.
+
+        Args:
+            points: List of data point dicts
+            required_columns: List of required column names
+
+        Returns:
+            True if valid, False otherwise
+        """
+        if not points:
+            return False
+
+        if not isinstance(points[0], dict):
+            return False
+
+        missing_columns = [col for col in required_columns if col not in points[0]]
+        return len(missing_columns) == 0

@@ -132,6 +132,65 @@ def ingest_bloomberg_data_daily(
             }
         )
 
+    # Track original series count for metadata
+    original_series_count = len(series_codes)
+
+    # Check if data already exists for idempotency (skip PyPDL query if force_refresh=False)
+    if not config.force_refresh:
+        data_exists_map = data_api.check_data_exists_for_date_range(
+            series_codes=series_codes,
+            start_date=start_date,
+            end_date=end_date,
+            ticker_source=TickerSource.BLOOMBERG,
+        )
+
+        # Filter out series codes that already have data
+        series_codes_to_fetch = [
+            sc for sc in series_codes if not data_exists_map.get(sc, False)
+        ]
+
+        if not series_codes_to_fetch:
+            context.log.info(
+                f"All {len(series_codes)} series already have data for date range, skipping PyPDL query",
+                extra={
+                    "field_type": field_type,
+                    "series_count": len(series_codes),
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+            )
+            return MaterializeResult(
+                metadata={
+                    "field_type": field_type,
+                    "series_count": len(series_codes),
+                    "tickers_fetched": 0,
+                    "series_saved": 0,
+                    "data_points_saved": 0,
+                    "s3_paths": MetadataValue.json([]),
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "skipped": True,
+                }
+            )
+
+        # Update series_codes and ticker mappings to only include those that need fetching
+        series_codes = series_codes_to_fetch
+        series_code_to_ticker = {
+            sc: ticker
+            for sc, ticker in series_code_to_ticker.items()
+            if sc in series_codes_to_fetch
+        }
+
+        context.log.info(
+            f"Skipping {len(data_exists_map) - len(series_codes_to_fetch)} series with existing data, "
+            f"fetching {len(series_codes_to_fetch)} series",
+            extra={
+                "field_type": field_type,
+                "series_to_fetch": len(series_codes_to_fetch),
+                "series_skipped": len(data_exists_map) - len(series_codes_to_fetch),
+            },
+        )
+
     # Reverse mapping for save_value_data_to_s3 (needs ticker -> series_code)
     ticker_to_series_code = {v: k for k, v in series_code_to_ticker.items()}
     tickers = list(ticker_to_series_code.keys())
@@ -203,7 +262,7 @@ def ingest_bloomberg_data_daily(
     return MaterializeResult(
         metadata={
             "field_type": field_type,
-            "series_count": len(series_codes),
+            "series_count": original_series_count,
             "tickers_fetched": len(tickers),
             "series_saved": len(saved_paths),
             "data_points_saved": total_data_points,

@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
@@ -16,6 +17,10 @@ from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_value_data_path
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
+from dagster_quickstart.utils.datetime_utils import (
+    normalize_date_to_utc,
+    normalize_pandas_timestamp_to_utc,
+)
 
 
 class DataAPI:
@@ -159,8 +164,6 @@ class DataAPI:
         temp_table_name = self._temp_table_manager.create_temp_table_from_dataframe(dataframe)
         full_uri = self._metadata_repository._s3_adapter.get_relative_path_uri(relative_path)
 
-        from duckdb_tinyorm_py import QueryBuilder
-
         query_builder = QueryBuilder(temp_table_name)
         self._metadata_repository._repository.copy_builder_to_parquet(query_builder, full_uri)
         self._temp_table_manager.drop_temp_table(temp_table_name)
@@ -264,16 +267,6 @@ class DataAPI:
         """
         query_filters: Dict[str, List[str]] = {}
 
-        # if field_type:
-        #     query_filters[MetadataColumns.FIELD_TYPE] = (
-        #         [field_type] if isinstance(field_type, str) else field_type
-        #     )
-
-        # if ticker_source:
-        #     query_filters[MetadataColumns.TICKER_SOURCE] = [ticker_source.value]
-        # else:
-        #     query_filters[MetadataColumns.TICKER_SOURCE] = [TickerSource.BLOOMBERG.value]
-
         for filter_field, filter_value in filters.items():
             if isinstance(filter_value, str):
                 query_filters[filter_field] = [filter_value]
@@ -312,14 +305,6 @@ class DataAPI:
             MetadataColumns.SERIES_CODE: series_codes,
         }
 
-        # if field_type:
-        #     query_filters[MetadataColumns.FIELD_TYPE] = [field_type]
-
-        # if ticker_source:
-        #     query_filters[MetadataColumns.TICKER_SOURCE] = [ticker_source.value]
-        # else:
-        #     query_filters[MetadataColumns.TICKER_SOURCE] = [TickerSource.BLOOMBERG.value]
-
         metadata_df = self.get(**query_filters).info()
 
         if metadata_df.empty:
@@ -334,42 +319,46 @@ class DataAPI:
 
         return ticker_map
 
+
     def _prepare_new_dataframe(
         self, points: List[Dict[str, Any]], series_code: str
     ) -> Optional[pd.DataFrame]:
         """Prepare new data points as DataFrame with required columns.
+
+        Ensures timestamps are timezone-aware and normalized to UTC.
 
         Args:
             points: List of data point dicts with 'timestamp' and 'value' keys
             series_code: Series code identifier
 
         Returns:
-            Prepared DataFrame or None if invalid
+            Prepared DataFrame with UTC-normalized timestamps or None if invalid
         """
         if not points:
+            return None
+
+        required_columns = ["timestamp", "value"]
+        if not self._validation_repository.validate_data_points_structure(
+            points, required_columns
+        ):
             return None
 
         df = pd.DataFrame(points)
         if df.empty:
             return None
 
-        required_columns = ["timestamp", "value"]
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            return None
-
+        df = df.copy()
         df[ValueColumns.SERIES_CODE] = series_code
-        df = df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]]
-
-        if not pd.api.types.is_datetime64_any_dtype(df[ValueColumns.TIMESTAMP]):
-            df[ValueColumns.TIMESTAMP] = pd.to_datetime(df[ValueColumns.TIMESTAMP])
-
-        return df
+        df = normalize_pandas_timestamp_to_utc(df, ValueColumns.TIMESTAMP)
+        return df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]].copy()
 
     def _filter_existing_by_date_range(
         self, existing_df: pd.DataFrame, start_date: Any, end_date: Any
     ) -> pd.DataFrame:
         """Filter existing DataFrame to exclude rows in date range.
+
+        Operates on a copy to prevent in-place mutation.
+        Excludes rows where DATE(timestamp) BETWEEN start_date AND end_date (inclusive).
 
         Args:
             existing_df: DataFrame with existing data
@@ -377,36 +366,115 @@ class DataAPI:
             end_date: End date (datetime or date string)
 
         Returns:
-            Filtered DataFrame
+            Filtered DataFrame with UTC-normalized timestamps
         """
-        existing_df[ValueColumns.TIMESTAMP] = pd.to_datetime(existing_df[ValueColumns.TIMESTAMP])
+        df = existing_df.copy()
+        df = normalize_pandas_timestamp_to_utc(df, ValueColumns.TIMESTAMP)
 
-        start_date_dt = pd.to_datetime(start_date).date()
-        end_date_dt = pd.to_datetime(end_date).date()
+        # Normalize dates to UTC for comparison
+        start_date_utc = normalize_date_to_utc(start_date)
+        end_date_utc = normalize_date_to_utc(end_date)
 
-        existing_df["_date"] = existing_df[ValueColumns.TIMESTAMP].dt.date
-        filtered_df = existing_df[
-            ~((existing_df["_date"] >= start_date_dt) & (existing_df["_date"] <= end_date_dt))
-        ]
-        return filtered_df.drop(columns=["_date"])
+        # Normalize timestamps to dates for comparison
+        df_dates = df[ValueColumns.TIMESTAMP].dt.normalize()
+
+        # Exclude rows where DATE(timestamp) BETWEEN start_date AND end_date (inclusive)
+        mask = ~((df_dates >= start_date_utc) & (df_dates <= end_date_utc))
+        filtered_df = df[mask].copy()
+
+        # Ensure only required columns
+        filtered_df = filtered_df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]].copy()
+
+        return filtered_df
 
     def _merge_and_deduplicate(
         self, existing_df: pd.DataFrame, new_df: pd.DataFrame
     ) -> pd.DataFrame:
         """Merge existing and new data, deduplicate, and order by timestamp.
 
+        Ensures required columns exist, prioritizes new data in deduplication,
+        and returns a clean dataframe with reset index.
+
         Args:
             existing_df: DataFrame with existing data
             new_df: DataFrame with new data
 
         Returns:
-            Merged, deduplicated, and ordered DataFrame
+            Merged, deduplicated, sorted DataFrame with reset index
+
+        Raises:
+            ValueError: If required columns are missing
         """
+        # Verify required columns exist
+        self._validation_repository.validate_value_dataframe_columns(existing_df, "existing_df")
+        self._validation_repository.validate_value_dataframe_columns(new_df, "new_df")
+
+        existing_df = existing_df.copy()
+        new_df = new_df.copy()
+        existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
+        new_df = normalize_pandas_timestamp_to_utc(new_df, ValueColumns.TIMESTAMP)
+
+        # Merge dataframes
         merged_df = pd.concat([existing_df, new_df], ignore_index=True)
+
+        # Deduplicate by (series_code, timestamp), prioritizing new rows (keep='last')
         merged_df = merged_df.drop_duplicates(
             subset=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP], keep="last"
         )
-        return merged_df.sort_values(ValueColumns.TIMESTAMP)
+
+        # Sort by timestamp ascending
+        merged_df = merged_df.sort_values(ValueColumns.TIMESTAMP, ascending=True)
+
+        # Reset index and ensure only required columns
+        required_cols = [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+        merged_df = merged_df[required_cols].reset_index(drop=True)
+
+        return merged_df
+
+    def check_data_exists_for_date_range(
+        self,
+        series_codes: List[str],
+        start_date: Any,
+        end_date: Any,
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+    ) -> Dict[str, bool]:
+        """Check if data already exists for given series codes in date range.
+
+        Args:
+            series_codes: List of series codes to check
+            start_date: Start date (datetime or date string)
+            end_date: End date (datetime or date string)
+            ticker_source: Ticker source (default: BLOOMBERG)
+
+        Returns:
+            Dict mapping series_code to bool indicating if data exists
+        """
+        start_date_utc = normalize_date_to_utc(start_date)
+        end_date_utc = normalize_date_to_utc(end_date)
+
+        result: Dict[str, bool] = {}
+
+        for series_code in series_codes:
+            existing_df = self._value_repository.get_series_data(
+                series_code=series_code,
+                tickersource=ticker_source,
+            )
+
+            if existing_df.empty:
+                result[series_code] = False
+                continue
+
+            existing_df = existing_df.copy()
+            existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
+
+            existing_dates = existing_df[ValueColumns.TIMESTAMP].dt.normalize()
+            has_overlap = (
+                (existing_dates >= start_date_utc) & (existing_dates <= end_date_utc)
+            ).any()
+
+            result[series_code] = has_overlap
+
+        return result
 
     def save_value_data_to_s3(
         self,
@@ -426,6 +494,8 @@ class DataAPI:
           DATE(timestamp) BETWEEN start_date AND end_date, merge with new, deduplicate,
           order by timestamp
 
+        All timestamps are normalized to UTC before processing.
+
         Args:
             data_points: Dict mapping series_code to list of data point dicts
                 Each data point dict should have 'timestamp' and 'value' keys
@@ -436,7 +506,16 @@ class DataAPI:
 
         Returns:
             Dict mapping series_code to S3 path where data was saved
+
+        Raises:
+            ValueError: If force_refresh=True but start_date or end_date is missing,
+                or if start_date > end_date
         """
+        # Validate date parameters when force_refresh is True
+        self._validation_repository.validate_date_range_for_force_refresh(
+            force_refresh, start_date, end_date
+        )
+
         saved_paths: Dict[str, str] = {}
 
         if not data_points:
@@ -453,13 +532,35 @@ class DataAPI:
             )
 
             if existing_df.empty:
-                final_df = new_df.sort_values(ValueColumns.TIMESTAMP)
+                # No existing data: use new data, ensure sorted and UTC-normalized
+                final_df = new_df.sort_values(ValueColumns.TIMESTAMP, ascending=True).reset_index(
+                    drop=True
+                )
             else:
+                existing_df = existing_df.copy()
+                existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
+
+                # Ensure existing_df has required columns
+                if ValueColumns.SERIES_CODE not in existing_df.columns:
+                    existing_df[ValueColumns.SERIES_CODE] = series_code
+                existing_df = existing_df[
+                    [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+                ].copy()
+
                 if force_refresh and start_date and end_date:
                     existing_df = self._filter_existing_by_date_range(
                         existing_df, start_date, end_date
                     )
+
                 final_df = self._merge_and_deduplicate(existing_df, new_df)
+
+            # Ensure final dataframe has consistent dtypes and only required columns
+            final_df = final_df[
+                [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            ].copy()
+            final_df = final_df.sort_values(ValueColumns.TIMESTAMP, ascending=True).reset_index(
+                drop=True
+            )
 
             relative_path = build_s3_value_data_path(series_code, ticker_source)
             self.save_dataframe_to_s3(final_df, relative_path)

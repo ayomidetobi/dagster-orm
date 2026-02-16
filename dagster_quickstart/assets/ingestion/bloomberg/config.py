@@ -23,14 +23,13 @@ class BloombergIngestionConfig(Config):
     mode: IngestionMode = (
         IngestionMode.DAILY  # IngestionMode.BACKFILL uses series_codes from config for backfilling historical data
     )
-    force_refresh: bool = False  # If True, delete existing data for the partition date before inserting (ensures idempotency when re-running a partition). If False, skip insertion if data already exists for the date.
+    force_refresh: bool = True  # If True, delete existing data for the partition date before inserting (ensures idempotency when re-running a partition). If False, skip insertion if data already exists for the date.
     use_dummy_data: bool = True  # If True, use dummy  data instead of real database queries. Useful for testing with PyPDL.
     series_codes: List[
         str
     ] = []  # List of series codes for backfill ingestion (required when mode=IngestionMode.BACKFILL)
-    start_date: Optional[str] = field(
-        default_factory=lambda: utc_now().strftime("%Y-%m-%d"),
-    )
+    start_date: Optional[str] =  "2025-12-01"
+    
 
     end_date: Optional[str] = field(
         default_factory=lambda: utc_now().strftime("%Y-%m-%d"),

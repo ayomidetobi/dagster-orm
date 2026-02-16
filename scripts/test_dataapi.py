@@ -53,11 +53,11 @@ print("Example 2: Get value data")
 print("=" * 60)
 values_df = dataset.value(
     ValueQueryParams(
-        start="2026-02-01",
+        start="2025-02-01",
         end="2026-02-16",
     )
 )
-print(values_df.tail(10))
+print(values_df.head(10))
 if not values_df.empty:
     print(f"Columns: {', '.join(values_df.columns)}")
     print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")

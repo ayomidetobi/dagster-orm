@@ -4,10 +4,16 @@ This module provides utilities for:
 - Creating UTC timezone-aware datetimes
 - Parsing timestamps with robust parsing (dateutil.parser.parse)
 - Normalizing timestamps to match DateTime64 precision
+- Normalizing pandas timestamp columns to UTC
 """
 
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None  # type: ignore
 
 try:
     from dateutil import parser as dateutil_parser
@@ -156,3 +162,50 @@ def parse_datetime_string(datetime_string: str) -> datetime:
     if parsed is None:
         raise ValueError(f"Could not parse datetime string: {datetime_string}")
     return parsed
+
+
+def normalize_pandas_timestamp_to_utc(
+    df: "pd.DataFrame", timestamp_column: str
+) -> "pd.DataFrame":
+    """Normalize pandas DataFrame timestamp column to UTC timezone-aware datetime.
+
+    Handles various timestamp formats:
+    - Non-datetime columns: converts to datetime with UTC
+    - Naive datetime columns: converts to UTC
+    - Timezone-aware columns: converts to UTC
+
+    Args:
+        df: DataFrame with timestamp column to normalize
+        timestamp_column: Name of timestamp column
+
+    Returns:
+        DataFrame with UTC-normalized timestamp column
+
+    Raises:
+        ImportError: If pandas is not available
+    """
+    if pd is None:
+        raise ImportError("pandas is required for normalize_pandas_timestamp_to_utc")
+
+    if not pd.api.types.is_datetime64_any_dtype(df[timestamp_column]):
+        df[timestamp_column] = pd.to_datetime(df[timestamp_column], utc=True)
+    elif df[timestamp_column].dt.tz is None:
+        df[timestamp_column] = pd.to_datetime(df[timestamp_column], utc=True)
+    else:
+        df[timestamp_column] = df[timestamp_column].dt.tz_convert("UTC")
+    return df
+
+
+def normalize_date_to_utc(date_value: Any) -> datetime:
+    """Normalize date value to UTC datetime (date only, time set to 00:00:00).
+
+    Args:
+        date_value: Date value (datetime, date string, or date object)
+
+    Returns:
+        UTC datetime normalized to date (time set to 00:00:00)
+    """
+    if pd is None:
+        raise ImportError("pandas is required for normalize_date_to_utc")
+
+    return pd.to_datetime(date_value, utc=True).normalize()
