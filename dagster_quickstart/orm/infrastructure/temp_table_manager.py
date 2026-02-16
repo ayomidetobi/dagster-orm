@@ -3,8 +3,8 @@
 Manages registration, tracking, and cleanup of temporary tables.
 """
 
-from typing import Dict, Optional
 import uuid
+from typing import Dict, Optional
 
 import pandas as pd
 
@@ -220,13 +220,10 @@ class TempTableManager:
         if table_name in self._registry and not force_recreate:
             return table_name
 
-        # If force_recreate, always try to drop the table first
-        # (even if not in registry, it might exist in DuckDB from a previous call)
         if force_recreate:
             self.drop_temp_table(table_name)
 
         try:
-            # Use CREATE OR REPLACE to handle case where table exists but wasn't in registry
             create_temp_sql = f"""
                 CREATE OR REPLACE TEMP TABLE {table_name} AS
                 SELECT * FROM read_parquet('{parquet_uri}')

@@ -1,13 +1,12 @@
 import os
 import unittest
+from unittest import mock
 
 from dagster_quickstart.assets import (
     HNStoriesConfig,
-    hackernews_top_story_ids,
     hackernews_top_stories,
+    hackernews_top_story_ids,
 )
-from unittest import mock
-
 
 CONFIG = HNStoriesConfig(
     hn_top_story_ids_path="dagster_quickstart_tests/hackernews_top_story_ids.json",

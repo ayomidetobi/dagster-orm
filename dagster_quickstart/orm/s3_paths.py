@@ -4,7 +4,6 @@ from dagster_quickstart.orm.schema import (
     S3_BASE_PATH_CONTROL,
     S3_BASE_PATH_VALUE_DATA,
     S3_PARQUET_FILE_NAME,
-    TableNames,
     TickerSource,
 )
 from dagster_quickstart.resources.duckdb_datacacher import join_s3

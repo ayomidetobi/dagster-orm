@@ -6,7 +6,6 @@ import pandas as pd
 
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.exceptions import (
-    MetadataResolutionError,
     SeriesNotFoundError,
 )
 from dagster_quickstart.orm.schema import (

@@ -1,24 +1,26 @@
-from decouple import config
-
 from dagster import Definitions
-
-from dagster_quickstart.orm.io_manager import duckdb_io_manager
-from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
-from dagster_quickstart.resources import DuckDBResource
+from decouple import config
 
 from dagster_quickstart.assets import (
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
+    load_series_dependencies_to_s3,
+    validate_metadata_against_lookup,
+    validate_parent_series_count,
 )
-from dagster_quickstart.assets.load_metaseries.check import validate_metadata_against_lookup
+from dagster_quickstart.orm.io_manager import duckdb_io_manager
+from dagster_quickstart.resources import DuckDBResource
+from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 
 all_assets = [
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
+    load_series_dependencies_to_s3,
 ]
 
 all_asset_checks = [
     validate_metadata_against_lookup,
+    validate_parent_series_count,
 ]
 
 # Initialize DuckDB datacacher with S3 credentials from environment

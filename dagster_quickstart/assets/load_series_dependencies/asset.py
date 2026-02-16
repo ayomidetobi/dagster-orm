@@ -1,27 +1,29 @@
-"""Asset for loading lookup tables CSV to S3 as Parquet file.
+"""Asset for loading series dependencies CSV to S3 as Parquet file.
 
 Uses ORM layer (DataAPI) for all operations - no raw SQL.
-Reads lookup_tables.csv in wide format (one column per lookup type) and saves to S3.
+Reads series_dependencies.csv and saves to S3.
 """
 
 from dagster import AssetExecutionContext, MaterializeResult, asset
 from duckdb_tinyorm_py import QueryBuilder
 
-from dagster_quickstart.assets.load_lookup.config import LoadLookupConfig
+from dagster_quickstart.assets.load_series_dependencies.config import (
+    LoadSeriesDependenciesConfig,
+)
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 
 
 @asset(required_resource_keys={"duckdb"})
-def load_lookup_tables_to_s3(
-    context: AssetExecutionContext, config: LoadLookupConfig
+def load_series_dependencies_to_s3(
+    context: AssetExecutionContext, config: LoadSeriesDependenciesConfig
 ) -> MaterializeResult:
-    """Load lookup tables CSV to S3 as Parquet file in wide format.
+    """Load series dependencies CSV to S3 as Parquet file.
 
     Args:
         context: Dagster asset execution context
-        config: LoadLookupConfig with asset configuration
+        config: LoadSeriesDependenciesConfig with asset configuration
 
     Returns:
         MaterializeResult with metadata about the loaded data
@@ -45,7 +47,7 @@ def load_lookup_tables_to_s3(
     data_api.drop_temp_table(config.temp_table_name)
 
     context.log.info(
-        f"Loaded {row_count} lookup table rows to S3: {relative_path}",
+        f"Loaded {row_count} series dependencies rows to S3: {relative_path}",
         extra={
             "row_count": row_count,
             "s3_path": relative_path,

@@ -1,6 +1,6 @@
 """Schema package for metadata and value tables.
 
-Provides table names, column names, constants, and enumerations.
+Provides table names, column names, constants, enumerations, and SQL scripts.
 """
 
 from dagster_quickstart.orm.schema.constants import (
@@ -19,6 +19,7 @@ from dagster_quickstart.orm.schema.schemas import (
     TickerSource,
     ValueColumns,
 )
+from dagster_quickstart.orm.schema.sql_scripts import VALIDATE_PARENT_SERIES_COUNT_QUERY
 
 __all__ = [
     "TableNames",
@@ -33,4 +34,5 @@ __all__ = [
     "S3_BASE_PATH_VALUE_DATA",
     "S3_BASE_PATH_CONTROL",
     "S3_PARQUET_FILE_NAME",
+    "VALIDATE_PARENT_SERIES_COUNT_QUERY",
 ]

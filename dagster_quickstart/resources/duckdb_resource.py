@@ -4,20 +4,18 @@ This resource provides DuckDB database operations with S3 as the datalake.
 Uses local DuckDBDataCacher for connection management.
 """
 
-import uuid
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Iterator
 
 import duckdb
-import pandas as pd
 from dagster import (
     ConfigurableResource,
     InitResourceContext,
     ResourceDependency,
     get_dagster_logger,
 )
+
 from dagster_quickstart.resources.duckdb_datacacher import (
-    SQL,
     DuckDBDataCacher,
 )
 

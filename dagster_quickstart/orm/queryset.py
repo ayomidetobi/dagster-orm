@@ -5,8 +5,8 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
-from dagster_quickstart.orm.domain.value_repository import ValueRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
+from dagster_quickstart.orm.domain.value_repository import ValueRepository
 from dagster_quickstart.orm.exceptions import (
     InvalidFilterFieldError,
     MetadataResolutionError,
@@ -15,9 +15,9 @@ from dagster_quickstart.orm.exceptions import (
 )
 from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.orm.schema import (
+    VALID_METADATA_FILTER_COLUMNS,
     MetadataColumns,
     TickerSource,
-    VALID_METADATA_FILTER_COLUMNS,
 )
 
 
@@ -108,12 +108,10 @@ class QuerySet:
             MetadataResolutionError: If query execution fails
         """
         if self._validation_repository is not None:
-            # Use ValidationRepository which does filtering + validation in one SQL query
             metadata_df = self._validation_repository.filter_with_validation(
                 filters=self._metadata_filters
             )
         else:
-            # Use MetadataRepository for filtering only (no validation)
             metadata_df = self._metadata_repository.filter(filters=self._metadata_filters)
 
         return metadata_df

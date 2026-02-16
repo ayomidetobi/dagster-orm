@@ -5,7 +5,6 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from duckdb_tinyorm_py import QueryBuilder
 
-from dagster_quickstart.orm.exceptions import MetadataResolutionError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
@@ -194,7 +193,6 @@ class ValidationRepository:
             metadata_uri = self._s3_adapter.get_metadata_uri(control_type)
             parquet_source = self._parquet_adapter.build_parquet_source(metadata_uri)
 
-            # Build base WHERE clause and parameters from filters
             where_clause_parts = []
             param_values: list = []
 
@@ -211,7 +209,6 @@ class ValidationRepository:
 
             base_where = " AND ".join(where_clause_parts) if where_clause_parts else "1=1"
 
-            # Build UNION ALL query to return one row per invalid column
             union_parts = []
             for lookup_col in LOOKUP_TABLE_PROCESSING_ORDER:
                 union_part = f"""
@@ -242,8 +239,6 @@ class ValidationRepository:
                     ]
                 )
 
-            # Each UNION part needs the same parameters, so we repeat them
-            # Since all parts have identical WHERE clauses, we can reuse params
             sql_query = " UNION ALL ".join(union_parts)
 
             if param_values:

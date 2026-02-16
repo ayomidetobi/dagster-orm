@@ -62,7 +62,7 @@ class DuckDbRepository:
                 return self._connection.execute(sql, params)
             return self._connection.execute(sql)
         except Exception as exc:
-            raise InvalidQueryError(f"Error executing query: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error executing query: {exc!s}") from exc
 
     def fetch_df(self, query_builder: QueryBuilder) -> pd.DataFrame:
         """Execute a QueryBuilder and return DataFrame.
@@ -82,7 +82,7 @@ class DuckDbRepository:
                 return self._connection.execute(sql, params).df()
             return self._connection.execute(sql).df()
         except Exception as exc:
-            raise InvalidQueryError(f"Error executing query: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error executing query: {exc!s}") from exc
 
     def execute_raw_sql(self, sql: str, params: Optional[List[Any]] = None) -> pd.DataFrame:
         """Execute raw SQL query (for DDL operations like COPY).
@@ -105,7 +105,7 @@ class DuckDbRepository:
                 return self._connection.execute(sql, params).df()
             return self._connection.execute(sql).df()
         except Exception as exc:
-            raise InvalidQueryError(f"Error executing raw SQL: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error executing raw SQL: {exc!s}") from exc
 
     def execute_raw_relation(
         self, sql: str, params: Optional[List[Any]] = None
@@ -127,7 +127,7 @@ class DuckDbRepository:
                 return self._connection.execute(sql, params)
             return self._connection.execute(sql)
         except Exception as exc:
-            raise InvalidQueryError(f"Error executing raw SQL: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error executing raw SQL: {exc!s}") from exc
 
     def copy_builder_to_parquet(self, query_builder: QueryBuilder, destination_uri: str) -> None:
         """Copy query results to Parquet file.
@@ -149,7 +149,7 @@ class DuckDbRepository:
             else:
                 self._connection.execute(copy_sql)
         except Exception as exc:
-            raise InvalidQueryError(f"Error copying to Parquet: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error copying to Parquet: {exc!s}") from exc
 
     def register_dataframe(self, dataframe: pd.DataFrame, table_name: str) -> None:
         """Register a pandas DataFrame as a temporary table.
@@ -164,7 +164,7 @@ class DuckDbRepository:
         try:
             self._connection.register(table_name, dataframe)
         except Exception as exc:
-            raise InvalidQueryError(f"Error registering DataFrame: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error registering DataFrame: {exc!s}") from exc
 
     def unregister_table(self, table_name: str) -> None:
         """Unregister a temporary table.
@@ -178,4 +178,54 @@ class DuckDbRepository:
         try:
             self._connection.unregister(table_name)
         except Exception as exc:
-            raise InvalidQueryError(f"Error unregistering table: {str(exc)}") from exc
+            raise InvalidQueryError(f"Error unregistering table: {exc!s}") from exc
+
+    def execute_builder_from_parquet(
+        self, query_builder: QueryBuilder, parquet_source: str
+    ) -> pd.DataFrame:
+        """Execute a QueryBuilder query against a parquet source.
+
+        Adapts the QueryBuilder's FROM clause to use the provided parquet source
+        expression (e.g., read_parquet('uri')). This allows QueryBuilder queries
+        to work with parquet files without manually building SQL.
+
+        Args:
+            query_builder: QueryBuilder instance with query configured (uses placeholder table)
+            parquet_source: SQL expression for parquet source (e.g., read_parquet('uri'))
+
+        Returns:
+            pandas DataFrame with query results
+
+        Raises:
+            InvalidQueryError: If query execution fails
+        """
+        try:
+            sql, params = query_builder.build()
+            adapted_sql = sql.replace(f"FROM {query_builder.table_name}", f"FROM {parquet_source}")
+            if params:
+                return self._connection.execute(adapted_sql, params).df()
+            return self._connection.execute(adapted_sql).df()
+        except Exception as exc:
+            raise InvalidQueryError(f"Error executing query from parquet: {exc!s}") from exc
+
+    def count_from_parquet(self, parquet_source: str) -> int:
+        """Get total row count from a parquet source.
+
+        Convenience method for counting rows in a parquet file.
+
+        Args:
+            parquet_source: SQL expression for parquet source (e.g., read_parquet('uri'))
+
+        Returns:
+            Total row count (0 if empty or error)
+
+        Raises:
+            InvalidQueryError: If query execution fails
+        """
+        try:
+            query_builder = QueryBuilder("_parquet_source")
+            query_builder.select("COUNT(*) as total_count")
+            result = self.execute_builder_from_parquet(query_builder, parquet_source)
+            return int(result.iloc[0]["total_count"]) if not result.empty else 0
+        except Exception as exc:
+            raise InvalidQueryError(f"Error counting rows from parquet: {exc!s}") from exc

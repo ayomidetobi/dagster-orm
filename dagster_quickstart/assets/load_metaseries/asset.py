@@ -5,13 +5,12 @@ Reads meta_series.csv and saves to S3 as Parquet.
 """
 
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
+from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.assets.load_metaseries.config import LoadMetaSeriesConfig
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
-from dagster_quickstart.orm.schema import TableNames
-from duckdb_tinyorm_py import QueryBuilder
 
 
 @asset(required_resource_keys={"duckdb"})

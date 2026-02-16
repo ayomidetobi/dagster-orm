@@ -68,8 +68,6 @@ class MetadataRepository:
                 query_builder, uri
             )
 
-            # Combine parameters: builder_params (from query_builder.where()) come first,
-            # then param_values (from manually added IN clauses)
             all_params = builder_params + param_values
 
             if all_params:
@@ -113,12 +111,8 @@ class MetadataRepository:
             for filter_field, filter_values in filters.items():
                 if filter_values:
                     if len(filter_values) == 1:
-                        # Use QueryBuilder.where() which handles parameters internally
                         query_builder.where(filter_field, "=", filter_values[0])
-                        # Don't add to param_values - query_builder.build() will return it
                     else:
-                        # For IN clauses, manually add placeholders and track parameters
-                        # because QueryBuilder.where_in() uses named params but DuckDB needs positional
                         placeholders = ", ".join(["?"] * len(filter_values))
                         query_builder.where_clauses.append(f"{filter_field} IN ({placeholders})")
                         param_values.extend(filter_values)

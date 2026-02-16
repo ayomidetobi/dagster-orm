@@ -4,8 +4,9 @@ Contains configuration constants like S3 paths, valid filter columns,
 and processing order.
 """
 
-from dagster_quickstart.orm.schema.schemas import MetadataColumns
+from typing import Dict
 
+from dagster_quickstart.orm.schema.schemas import MetadataColumns
 
 VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.SERIES_CODE,
@@ -45,3 +46,10 @@ LOOKUP_TABLE_PROCESSING_ORDER = [
 S3_BASE_PATH_VALUE_DATA = "value-data"
 S3_BASE_PATH_CONTROL = "control"
 S3_PARQUET_FILE_NAME = "data.parquet"
+
+CALCULATION_FORMULA_TYPES: Dict[str, int] = {
+    "SPREAD": 2,  # Requires 2 parent series
+    "FLY": 3,  # Requires 3 parent series
+    "BOX": 4,  # Requires 4 parent series
+    "RATIO": 2,  # Requires 2 parent series
+}

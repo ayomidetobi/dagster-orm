@@ -67,6 +67,7 @@ class ControlTableType(str, Enum):
     LOOKUP = "lookup"
     METADATA = "metadata"
     FIELD_MAP = "field_map"
+    SERIES_DEPENDENCIES = "series_dependencies"
 
 
 class TempTableName(str, Enum):
@@ -74,6 +75,7 @@ class TempTableName(str, Enum):
 
     LOOKUP_TABLES = "_temp_lookup_tables"
     META_SERIES = "_temp_meta_series"
+    SERIES_DEPENDENCIES = "_temp_series_dependencies"
 
 
 class PreviewColumns:

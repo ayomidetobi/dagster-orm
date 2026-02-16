@@ -107,7 +107,6 @@ class DuckDBIOManager(ConfigurableIOManager):
                 )
                 return pd.DataFrame()
 
-        # Fallback: try loading from generic path (for non-series data)
         context.log.warning(
             f"No series_code in metadata for asset {context.asset_key}, "
             "returning empty DataFrame"
@@ -147,7 +146,6 @@ class DuckDBIOManager(ConfigurableIOManager):
         Returns:
             Relative S3 path
         """
-        # Check for series_code in metadata - use ORM path builder
         if context.metadata and "series_code" in context.metadata:
             series_code = context.metadata["series_code"]
             tickersource_str = context.metadata.get("ticker_source", "Bloomberg")
@@ -169,7 +167,6 @@ class DuckDBIOManager(ConfigurableIOManager):
         Returns:
             Relative S3 path
         """
-        # Check for series_code in metadata - use ORM path builder
         if context.metadata and "series_code" in context.metadata:
             series_code = context.metadata["series_code"]
             tickersource_str = context.metadata.get("ticker_source", "Bloomberg")

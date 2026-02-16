@@ -1,6 +1,6 @@
 """Asset check for validating metadata parquet against wide-format lookup parquet."""
 
-from dagster import AssetCheckResult, AssetCheckSeverity, AssetCheckExecutionContext, asset_check
+from dagster import AssetCheckExecutionContext, AssetCheckResult, AssetCheckSeverity, asset_check
 
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
@@ -20,7 +20,6 @@ def validate_metadata_against_lookup(
     context: AssetCheckExecutionContext,
 ) -> AssetCheckResult:
     """Validate metadata parquet against wide-format lookup parquet using SQL-only validation."""
-
     duckdb_resource = context.resources.duckdb
 
     # Initialize repository with dependency injection
@@ -95,10 +94,8 @@ def validate_metadata_against_lookup(
             )
 
         # 3️⃣ If all rows are valid
-        count_result = duckdb_repo.execute_raw_sql(f"""
-            SELECT COUNT(*) as total_count FROM read_parquet('{metadata_uri}')
-        """)
-        total_count = int(count_result.iloc[0]["total_count"]) if not count_result.empty else 0
+        metadata_parquet_source = parquet_adapter.build_parquet_source(metadata_uri)
+        total_count = duckdb_repo.count_from_parquet(metadata_parquet_source)
 
         return AssetCheckResult(
             passed=True,
@@ -115,7 +112,7 @@ def validate_metadata_against_lookup(
         return AssetCheckResult(
             passed=False,
             severity=AssetCheckSeverity.ERROR,
-            description=f"Validation failed with error: {str(exc)}",
+            description=f"Validation failed with error: {exc!s}",
             metadata={
                 "error": str(exc),
                 "metadata_uri": metadata_uri,
