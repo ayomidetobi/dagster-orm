@@ -47,12 +47,14 @@ class MetadataRepository:
         self,
         filters: Optional[Dict[str, List[str]]] = None,
         control_type: str = TableNames.METADATA,
+        exclude: bool = False,
     ) -> pd.DataFrame:
         """Load metadata with optional filters applied at SQL level.
 
         Args:
             filters: Optional dictionary mapping column names to filter values
             control_type: Type of control table (default: 'metadata')
+            exclude: If True, invert filter logic (exclude matching values)
 
         Returns:
             DataFrame with filtered metadata
@@ -62,7 +64,7 @@ class MetadataRepository:
         """
         try:
             uri = self._s3_adapter.get_metadata_uri(control_type)
-            query_builder, param_values = self._build_filtered_query(filters)
+            query_builder, param_values = self._build_filtered_query(filters, exclude)
 
             adapted_sql, builder_params = self._parquet_adapter.adapt_query_builder_for_parquet(
                 query_builder, uri
@@ -88,7 +90,7 @@ class MetadataRepository:
             raise MetadataResolutionError(f"Failed to load metadata: {exc}") from exc
 
     def _build_filtered_query(
-        self, filters: Optional[Dict[str, List[str]]]
+        self, filters: Optional[Dict[str, List[str]]], exclude: bool = False
     ) -> Tuple[QueryBuilder, List]:
         """Build QueryBuilder with WHERE clauses for filters.
 
@@ -98,6 +100,7 @@ class MetadataRepository:
 
         Args:
             filters: Optional dictionary mapping column names to filter values
+            exclude: If True, invert filter logic (exclude matching values)
 
         Returns:
             Tuple of (QueryBuilder instance, list of parameter values)
@@ -109,8 +112,22 @@ class MetadataRepository:
 
         if filters:
             for filter_field, filter_values in filters.items():
-                if filter_values:
-                    if len(filter_values) == 1:
+                if exclude:
+                    # Exclude mode: ignore empty lists, use NOT IN for non-empty lists
+                    if filter_values:
+                        if len(filter_values) == 1:
+                            query_builder.where(filter_field, "!=", filter_values[0])
+                        else:
+                            placeholders = ", ".join(["?"] * len(filter_values))
+                            query_builder.where_clauses.append(
+                                f"{filter_field} NOT IN ({placeholders})"
+                            )
+                            param_values.extend(filter_values)
+                else:
+                    # Include mode: empty list means WHERE 1=0 (no matches)
+                    if not filter_values:
+                        query_builder.where_clauses.append("1=0")
+                    elif len(filter_values) == 1:
                         query_builder.where(filter_field, "=", filter_values[0])
                     else:
                         placeholders = ", ".join(["?"] * len(filter_values))

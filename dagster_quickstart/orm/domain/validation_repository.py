@@ -42,7 +42,7 @@ class ValidationRepository:
         self._temp_table_manager = temp_table_manager
 
     def _build_filtered_query(
-        self, filters: Optional[Dict[str, List[str]]]
+        self, filters: Optional[Dict[str, List[str]]], exclude: bool = False
     ) -> Tuple[QueryBuilder, List]:
         """Build QueryBuilder with WHERE clauses for filters.
 
@@ -51,6 +51,7 @@ class ValidationRepository:
 
         Args:
             filters: Optional dictionary mapping column names to filter values
+            exclude: If True, invert filter logic (exclude matching values)
 
         Returns:
             Tuple of (QueryBuilder instance, list of parameter values)
@@ -60,8 +61,22 @@ class ValidationRepository:
 
         if filters:
             for filter_field, filter_values in filters.items():
-                if filter_values:
-                    if len(filter_values) == 1:
+                if exclude:
+                    # Exclude mode: ignore empty lists, use NOT IN for non-empty lists
+                    if filter_values:
+                        if len(filter_values) == 1:
+                            query_builder.where(filter_field, "!=", filter_values[0])
+                        else:
+                            placeholders = ", ".join(["?"] * len(filter_values))
+                            query_builder.where_clauses.append(
+                                f"{filter_field} NOT IN ({placeholders})"
+                            )
+                            param_values.extend(filter_values)
+                else:
+                    # Include mode: empty list means WHERE 1=0 (no matches)
+                    if not filter_values:
+                        query_builder.where_clauses.append("1=0")
+                    elif len(filter_values) == 1:
                         # Use QueryBuilder.where() which handles parameters internally
                         query_builder.where(filter_field, "=", filter_values[0])
                         # Don't add to param_values - query_builder.build() will return it
@@ -106,12 +121,14 @@ class ValidationRepository:
         self,
         filters: Optional[Dict[str, List[str]]] = None,
         control_type: str = TableNames.METADATA,
+        exclude: bool = False,
     ) -> pd.DataFrame:
         """Return metadata rows fully validated against wide-format lookup parquet.
 
         Args:
             filters: Optional dictionary mapping column names to filter values
             control_type: Type of control table (default: 'metadata')
+            exclude: If True, invert filter logic (exclude matching values)
 
         Returns:
             DataFrame with validated metadata rows
@@ -127,7 +144,7 @@ class ValidationRepository:
             )
 
             metadata_uri = self._s3_adapter.get_metadata_uri(control_type)
-            query_builder, param_values = self._build_filtered_query(filters)
+            query_builder, param_values = self._build_filtered_query(filters, exclude)
 
             # Adapt the base query to use parquet source
             adapted_sql, builder_params = self._parquet_adapter.adapt_query_builder_for_parquet(
@@ -278,9 +295,7 @@ class ValidationRepository:
         start_date_utc = normalize_date_to_utc(start_date)
         end_date_utc = normalize_date_to_utc(end_date)
         if start_date_utc > end_date_utc:
-            raise ValueError(
-                f"start_date ({start_date}) must be <= end_date ({end_date})"
-            )
+            raise ValueError(f"start_date ({start_date}) must be <= end_date ({end_date})")
 
     def validate_value_dataframe_columns(
         self, df: pd.DataFrame, df_name: str = "dataframe"
@@ -303,9 +318,7 @@ class ValidationRepository:
         if missing:
             raise ValueError(f"{df_name} missing required columns: {missing}")
 
-    def validate_data_points_structure(
-        self, points: list, required_columns: list[str]
-    ) -> bool:
+    def validate_data_points_structure(self, points: list, required_columns: list[str]) -> bool:
         """Validate that data points have required structure.
 
         Args:

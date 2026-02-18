@@ -164,9 +164,7 @@ def parse_datetime_string(datetime_string: str) -> datetime:
     return parsed
 
 
-def normalize_pandas_timestamp_to_utc(
-    df: "pd.DataFrame", timestamp_column: str
-) -> "pd.DataFrame":
+def normalize_pandas_timestamp_to_utc(df: "pd.DataFrame", timestamp_column: str) -> "pd.DataFrame":
     """Normalize pandas DataFrame timestamp column to UTC timezone-aware datetime.
 
     Handles various timestamp formats:

@@ -1,6 +1,6 @@
 """QuerySet class for building and executing metadata and value queries."""
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -43,25 +43,35 @@ class QuerySet:
         self,
         metadata_repository: MetadataRepository,
         value_repository: ValueRepository,
-        metadata_filters: Dict[str, List[str]],
+        metadata_filters: Optional[Dict[str, List[str]]] = None,
         validation_repository: Optional[ValidationRepository] = None,
+        exclude: bool = False,
+        series_codes: Optional[List[str]] = None,
     ):
         """Initialize QuerySet with repositories and filters.
 
         Args:
             metadata_repository: MetadataRepository for loading metadata
             value_repository: ValueRepository for loading value data
-            metadata_filters: Dictionary mapping metadata column names to filter values
+            metadata_filters: Dictionary mapping metadata column names to filter values.
+                If None and series_codes is provided, filters will be empty.
             validation_repository: Optional ValidationRepository instance for validation
+            exclude: If True, invert filter logic (exclude matching values)
+            series_codes: Optional list of series codes to override filter-based resolution.
+                If set, metadata filtering is bypassed and these codes are used directly.
 
         Raises:
             InvalidFilterFieldError: If any filter field is invalid
         """
         self._metadata_repository = metadata_repository
         self._value_repository = value_repository
-        self._metadata_filters = self._normalize_filters(metadata_filters)
+        self._series_codes: Optional[List[str]] = series_codes
+        self._metadata_filters = (
+            self._normalize_filters(metadata_filters) if metadata_filters is not None else {}
+        )
         self._resolved_series_codes: Optional[List[str]] = None
         self._validation_repository = validation_repository
+        self._exclude = exclude
 
     def _normalize_filters(self, filters: Dict[str, List[str]]) -> Dict[str, List[str]]:
         """Normalize filter dictionary to ensure consistent format.
@@ -77,6 +87,9 @@ class QuerySet:
         Raises:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
+        if not filters:
+            return {}
+
         normalized_filters: Dict[str, List[str]] = {}
 
         for filter_field, filter_values in filters.items():
@@ -98,6 +111,7 @@ class QuerySet:
     def _build_metadata_query(self) -> pd.DataFrame:
         """Build metadata query using metadata repository.
 
+        If _series_codes is set, filters by series_code instead of using metadata_filters.
         If validation_repository is provided, uses filter_with_validation() which
         performs both filtering and validation in a single SQL query.
 
@@ -107,20 +121,26 @@ class QuerySet:
         Raises:
             MetadataResolutionError: If query execution fails
         """
+        # If series_codes override is set, filter by series_code instead
+        if self._series_codes is not None:
+            filters = {MetadataColumns.SERIES_CODE: self._series_codes}
+        else:
+            filters = self._metadata_filters
+
         if self._validation_repository is not None:
             metadata_df = self._validation_repository.filter_with_validation(
-                filters=self._metadata_filters
+                filters=filters, exclude=self._exclude
             )
         else:
-            metadata_df = self._metadata_repository.filter(filters=self._metadata_filters)
+            metadata_df = self._metadata_repository.filter(filters=filters, exclude=self._exclude)
 
         return metadata_df
 
-    def _resolve_series_codes(self) -> List[str]:
-        """Resolve series codes from metadata query.
+    def resolve_series_codes(self) -> List[str]:
+        """Resolve series codes for this QuerySet.
 
-        Executes the metadata query and extracts series_code values.
-        Results are cached to avoid re-execution.
+        If _series_codes is set, returns it directly (override mode).
+        Otherwise, resolves from metadata query and caches the result.
 
         Returns:
             List of series_code strings
@@ -129,6 +149,11 @@ class QuerySet:
             MetadataResolutionError: If query execution fails
             SeriesNotFoundError: If no series match the filters
         """
+        # If series_codes override is set, return it directly
+        if self._series_codes is not None:
+            return self._series_codes
+
+        # Otherwise, use cached result or resolve from metadata
         if self._resolved_series_codes is not None:
             return self._resolved_series_codes
 
@@ -193,9 +218,14 @@ class QuerySet:
             metadata_df = self._build_metadata_query()
 
             if metadata_df.empty:
-                raise SeriesNotFoundError(
-                    f"No series found matching filters: {self._metadata_filters}"
-                )
+                if self._series_codes is not None:
+                    raise SeriesNotFoundError(
+                        f"No metadata found for series codes: {self._series_codes}"
+                    )
+                else:
+                    raise SeriesNotFoundError(
+                        f"No series found matching filters: {self._metadata_filters}"
+                    )
 
             return metadata_df
 
@@ -222,7 +252,7 @@ class QuerySet:
             SeriesNotFoundError: If no series match the filters
             ValueQueryParameterError: If time parameters are invalid
         """
-        resolved_series_codes = self._resolve_series_codes()
+        resolved_series_codes = self.resolve_series_codes()
 
         if not resolved_series_codes:
             raise SeriesNotFoundError(f"No series found matching filters: {self._metadata_filters}")
@@ -239,3 +269,196 @@ class QuerySet:
         )
 
         return value_df
+
+    def filter(self, **filters: Any) -> "QuerySet":
+        """Apply additional filters to this QuerySet, creating a new filtered QuerySet.
+
+        Resolves the current QuerySet's series codes, applies the new filters to their
+        metadata, and returns a new QuerySet with the filtered series codes.
+
+        Args:
+            **filters: Keyword arguments mapping metadata column names to filter values.
+                Values can be single strings or lists of strings.
+                Example: country=["usa"], asset_class=["Equity"]
+
+        Returns:
+            New QuerySet instance with filtered series codes
+
+        Raises:
+            InvalidFilterFieldError: If any filter field is not a valid metadata column
+            SeriesNotFoundError: If no series match the combined filters
+        """
+        # Normalize the new filters
+        new_filters = {}
+        for filter_field, filter_value in filters.items():
+            if filter_field not in VALID_METADATA_FILTER_COLUMNS:
+                raise InvalidFilterFieldError(
+                    f"'{filter_field}' is not a valid metadata filter field. "
+                    f"Valid fields: {sorted(VALID_METADATA_FILTER_COLUMNS)}"
+                )
+
+            if isinstance(filter_value, str):
+                new_filters[filter_field] = [filter_value]
+            elif isinstance(filter_value, list):
+                new_filters[filter_field] = filter_value
+            else:
+                new_filters[filter_field] = [str(filter_value)]
+
+        # Resolve current series codes
+        current_codes = self.resolve_series_codes()
+
+        if not current_codes:
+            raise SeriesNotFoundError("Cannot filter empty QuerySet")
+
+        # Get metadata for current series codes
+        metadata_filters = {MetadataColumns.SERIES_CODE: current_codes}
+        if self._validation_repository is not None:
+            metadata_df = self._validation_repository.filter_with_validation(
+                filters=metadata_filters, exclude=False
+            )
+        else:
+            metadata_df = self._metadata_repository.filter(filters=metadata_filters, exclude=False)
+
+        if metadata_df.empty:
+            raise SeriesNotFoundError(f"No metadata found for series codes: {current_codes}")
+
+        # Apply new filters to the metadata
+        for filter_field, filter_values in new_filters.items():
+            if filter_values:
+                mask = metadata_df[filter_field].isin(filter_values)
+                metadata_df = metadata_df[mask]
+
+        if metadata_df.empty:
+            raise SeriesNotFoundError(f"No series match the combined filters: {new_filters}")
+
+        # Extract filtered series codes
+        filtered_codes = sorted(metadata_df[MetadataColumns.SERIES_CODE].dropna().unique().tolist())
+
+        # Create new QuerySet with filtered series codes
+        return QuerySet(
+            metadata_repository=self._metadata_repository,
+            value_repository=self._value_repository,
+            metadata_filters=None,
+            validation_repository=self._validation_repository,
+            exclude=False,
+            series_codes=filtered_codes,
+        )
+
+    def filter_exclude(self, **filters: Any) -> "QuerySet":
+        """Apply exclude filters to this QuerySet, creating a new filtered QuerySet.
+
+        Resolves the current QuerySet's series codes, excludes series matching the
+        filters from their metadata, and returns a new QuerySet with the remaining
+        series codes.
+
+        Args:
+            **filters: Keyword arguments mapping metadata column names to filter values.
+                Values can be single strings or lists of strings.
+                Series matching these filters will be excluded.
+                Example: country=["usa"], asset_class=["Equity"]
+
+        Returns:
+            New QuerySet instance with filtered series codes (excluding matching series)
+
+        Raises:
+            InvalidFilterFieldError: If any filter field is not a valid metadata column
+            SeriesNotFoundError: If no series remain after exclusion
+        """
+        # Normalize the new filters
+        new_filters = {}
+        for filter_field, filter_value in filters.items():
+            if filter_field not in VALID_METADATA_FILTER_COLUMNS:
+                raise InvalidFilterFieldError(
+                    f"'{filter_field}' is not a valid metadata filter field. "
+                    f"Valid fields: {sorted(VALID_METADATA_FILTER_COLUMNS)}"
+                )
+
+            if isinstance(filter_value, str):
+                new_filters[filter_field] = [filter_value]
+            elif isinstance(filter_value, list):
+                new_filters[filter_field] = filter_value
+            else:
+                new_filters[filter_field] = [str(filter_value)]
+
+        # Resolve current series codes
+        current_codes = self.resolve_series_codes()
+
+        if not current_codes:
+            raise SeriesNotFoundError("Cannot filter empty QuerySet")
+
+        # Get metadata for current series codes
+        metadata_filters = {MetadataColumns.SERIES_CODE: current_codes}
+        if self._validation_repository is not None:
+            metadata_df = self._validation_repository.filter_with_validation(
+                filters=metadata_filters, exclude=False
+            )
+        else:
+            metadata_df = self._metadata_repository.filter(filters=metadata_filters, exclude=False)
+
+        if metadata_df.empty:
+            raise SeriesNotFoundError(f"No metadata found for series codes: {current_codes}")
+
+        # Apply exclude filters to the metadata (exclude series matching the filters)
+        for filter_field, filter_values in new_filters.items():
+            if filter_values:
+                mask = ~metadata_df[filter_field].isin(filter_values)
+                metadata_df = metadata_df[mask]
+
+        if metadata_df.empty:
+            raise SeriesNotFoundError(f"No series remain after excluding filters: {new_filters}")
+
+        # Extract filtered series codes
+        filtered_codes = sorted(metadata_df[MetadataColumns.SERIES_CODE].dropna().unique().tolist())
+
+        # Create new QuerySet with filtered series codes
+        return QuerySet(
+            metadata_repository=self._metadata_repository,
+            value_repository=self._value_repository,
+            metadata_filters=None,
+            validation_repository=self._validation_repository,
+            exclude=False,
+            series_codes=filtered_codes,
+        )
+
+    def union(self, other: "QuerySet") -> "QuerySet":
+        """Create a new QuerySet representing the union of two QuerySets.
+
+        Resolves series codes from both QuerySets and creates a new QuerySet
+        with the union of their series codes. The result bypasses metadata filtering.
+
+        Args:
+            other: Another QuerySet to union with
+
+        Returns:
+            New QuerySet instance with unioned series codes
+
+        Raises:
+            ValueError: If QuerySets don't share the same repositories
+        """
+        # Validate that both QuerySets use the same repositories
+        if (
+            self._metadata_repository is not other._metadata_repository
+            or self._value_repository is not other._value_repository
+        ):
+            raise ValueError(
+                "Cannot union QuerySets with different repository instances. "
+                "Both QuerySets must be created from the same DataAPI instance."
+            )
+
+        # Resolve series codes from both QuerySets
+        self_codes = set(self.resolve_series_codes())
+        other_codes = set(other.resolve_series_codes())
+
+        # Union the series codes
+        unioned_codes = sorted(list(self_codes | other_codes))
+
+        # Create new QuerySet with unioned series codes
+        # Filters are None, exclude is False (series_code mode bypasses filtering)
+        return QuerySet(
+            metadata_repository=self._metadata_repository,
+            value_repository=self._value_repository,
+            metadata_filters=None,
+            validation_repository=self._validation_repository,
+            exclude=False,
+            series_codes=unioned_codes,
+        )

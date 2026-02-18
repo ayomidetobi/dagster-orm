@@ -145,9 +145,7 @@ def ingest_bloomberg_data_daily(
         )
 
         # Filter out series codes that already have data
-        series_codes_to_fetch = [
-            sc for sc in series_codes if not data_exists_map.get(sc, False)
-        ]
+        series_codes_to_fetch = [sc for sc in series_codes if not data_exists_map.get(sc, False)]
 
         if not series_codes_to_fetch:
             context.log.info(

@@ -216,3 +216,103 @@ class ValueRepository:
         final_sql = adapted_sql.replace("SELECT *", custom_select.strip())
 
         return final_sql, builder_params
+
+    def get_last_values(
+        self,
+        series_codes: List[str],
+        tickersource: TickerSource = TickerSource.BLOOMBERG,
+    ) -> pd.DataFrame:
+        """Get latest (max timestamp) row per series_code using window function.
+
+        Args:
+            series_codes: List of series code identifiers
+            tickersource: Ticker source (default: TickerSource.BLOOMBERG)
+
+        Returns:
+            DataFrame with series_code, timestamp, and value columns (one row per series_code)
+
+        Raises:
+            MetadataResolutionError: If loading fails
+        """
+        if not series_codes:
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
+
+        try:
+            union_parts = []
+            all_params: List = []
+
+            for series_code in series_codes:
+                try:
+                    uri = self._s3_adapter.get_value_data_uri(series_code, tickersource)
+                    sql, params = self._build_series_query_sql(
+                        series_code, uri, None, None, None, None
+                    )
+
+                    union_parts.append(f"({sql})")
+                    if params:
+                        all_params.extend(params)
+
+                except Exception:
+                    continue
+
+            if not union_parts:
+                return pd.DataFrame(
+                    columns=[
+                        ValueColumns.SERIES_CODE,
+                        ValueColumns.TIMESTAMP,
+                        ValueColumns.VALUE,
+                    ]
+                )
+
+            # Use QUALIFY with window function to get latest row per series_code
+            # QUALIFY is supported in DuckDB
+            union_query = f"""
+                SELECT series_code, timestamp, value
+                FROM (
+                    {' UNION ALL '.join(union_parts)}
+                ) AS all_data
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY series_code
+                    ORDER BY timestamp DESC
+                ) = 1
+                ORDER BY series_code
+            """
+
+            if all_params:
+                result = self._repository.execute_raw_sql(union_query, all_params)
+            else:
+                result = self._repository.execute_raw_sql(union_query)
+
+            return result
+
+        except Exception as exc:
+            raise MetadataResolutionError(f"Failed to load last values: {exc}") from exc
+
+    def get_all_values(
+        self, series_codes: List[str], tickersource: TickerSource = TickerSource.BLOOMBERG
+    ) -> pd.DataFrame:
+        """Get all values from all specified series for a given ticker source.
+
+        Args:
+            series_codes: List of series code identifiers
+            tickersource: Ticker source (default: TickerSource.BLOOMBERG)
+
+        Returns:
+            DataFrame with series_code, timestamp, and value columns for all series
+        """
+        if not series_codes:
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
+
+        # Use existing batch method to get all values
+        return self.get_batch_series_data(
+            series_codes=series_codes,
+            tickersource=tickersource,
+            start=None,
+            end=None,
+            order_by=None,
+            limit=None,
+        )

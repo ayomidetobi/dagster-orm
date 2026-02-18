@@ -5,6 +5,11 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from duckdb_tinyorm_py import QueryBuilder
 
+from dagster_quickstart.orm.data_api_helpers import (
+    filter_existing_by_date_range,
+    merge_and_deduplicate,
+    prepare_new_dataframe,
+)
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
@@ -106,6 +111,7 @@ class DataAPI:
             value_repository=self._value_repository,
             metadata_filters=normalized_filters,
             validation_repository=self._validation_repository,
+            exclude=False,
         )
 
     def load_metadata_from_s3(self) -> pd.DataFrame:
@@ -319,117 +325,37 @@ class DataAPI:
 
         return ticker_map
 
-
-    def _prepare_new_dataframe(
-        self, points: List[Dict[str, Any]], series_code: str
-    ) -> Optional[pd.DataFrame]:
-        """Prepare new data points as DataFrame with required columns.
-
-        Ensures timestamps are timezone-aware and normalized to UTC.
+    def get_excluding(self, **filters: Any) -> QuerySet:
+        """Create QuerySet with inverted metadata filters (exclude matching values).
 
         Args:
-            points: List of data point dicts with 'timestamp' and 'value' keys
-            series_code: Series code identifier
+            **filters: Keyword arguments mapping metadata column names to filter values.
+                Values can be single strings or lists of strings.
+                Example: country=["usa"] will exclude rows where country="usa"
 
         Returns:
-            Prepared DataFrame with UTC-normalized timestamps or None if invalid
-        """
-        if not points:
-            return None
-
-        required_columns = ["timestamp", "value"]
-        if not self._validation_repository.validate_data_points_structure(
-            points, required_columns
-        ):
-            return None
-
-        df = pd.DataFrame(points)
-        if df.empty:
-            return None
-
-        df = df.copy()
-        df[ValueColumns.SERIES_CODE] = series_code
-        df = normalize_pandas_timestamp_to_utc(df, ValueColumns.TIMESTAMP)
-        return df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]].copy()
-
-    def _filter_existing_by_date_range(
-        self, existing_df: pd.DataFrame, start_date: Any, end_date: Any
-    ) -> pd.DataFrame:
-        """Filter existing DataFrame to exclude rows in date range.
-
-        Operates on a copy to prevent in-place mutation.
-        Excludes rows where DATE(timestamp) BETWEEN start_date AND end_date (inclusive).
-
-        Args:
-            existing_df: DataFrame with existing data
-            start_date: Start date (datetime or date string)
-            end_date: End date (datetime or date string)
-
-        Returns:
-            Filtered DataFrame with UTC-normalized timestamps
-        """
-        df = existing_df.copy()
-        df = normalize_pandas_timestamp_to_utc(df, ValueColumns.TIMESTAMP)
-
-        # Normalize dates to UTC for comparison
-        start_date_utc = normalize_date_to_utc(start_date)
-        end_date_utc = normalize_date_to_utc(end_date)
-
-        # Normalize timestamps to dates for comparison
-        df_dates = df[ValueColumns.TIMESTAMP].dt.normalize()
-
-        # Exclude rows where DATE(timestamp) BETWEEN start_date AND end_date (inclusive)
-        mask = ~((df_dates >= start_date_utc) & (df_dates <= end_date_utc))
-        filtered_df = df[mask].copy()
-
-        # Ensure only required columns
-        filtered_df = filtered_df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]].copy()
-
-        return filtered_df
-
-    def _merge_and_deduplicate(
-        self, existing_df: pd.DataFrame, new_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """Merge existing and new data, deduplicate, and order by timestamp.
-
-        Ensures required columns exist, prioritizes new data in deduplication,
-        and returns a clean dataframe with reset index.
-
-        Args:
-            existing_df: DataFrame with existing data
-            new_df: DataFrame with new data
-
-        Returns:
-            Merged, deduplicated, sorted DataFrame with reset index
+            QuerySet instance configured with inverted filters
 
         Raises:
-            ValueError: If required columns are missing
+            InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
-        # Verify required columns exist
-        self._validation_repository.validate_value_dataframe_columns(existing_df, "existing_df")
-        self._validation_repository.validate_value_dataframe_columns(new_df, "new_df")
+        normalized_filters: Dict[str, List[str]] = {}
 
-        existing_df = existing_df.copy()
-        new_df = new_df.copy()
-        existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
-        new_df = normalize_pandas_timestamp_to_utc(new_df, ValueColumns.TIMESTAMP)
+        for filter_field, filter_value in filters.items():
+            if isinstance(filter_value, str):
+                normalized_filters[filter_field] = [filter_value]
+            elif isinstance(filter_value, list):
+                normalized_filters[filter_field] = filter_value
+            else:
+                normalized_filters[filter_field] = [str(filter_value)]
 
-        # Merge dataframes
-        merged_df = pd.concat([existing_df, new_df], ignore_index=True)
-
-        # Deduplicate by (series_code, timestamp), prioritizing new rows (keep='last')
-        merged_df = merged_df.drop_duplicates(
-            subset=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP], keep="last"
+        return QuerySet(
+            metadata_repository=self._metadata_repository,
+            value_repository=self._value_repository,
+            metadata_filters=normalized_filters,
+            validation_repository=self._validation_repository,
+            exclude=True,
         )
-
-        # Sort by timestamp ascending
-        merged_df = merged_df.sort_values(ValueColumns.TIMESTAMP, ascending=True)
-
-        # Reset index and ensure only required columns
-        required_cols = [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-        merged_df = merged_df[required_cols].reset_index(drop=True)
-
-        return merged_df
 
     def check_data_exists_for_date_range(
         self,
@@ -522,7 +448,7 @@ class DataAPI:
             return saved_paths
 
         for series_code, points in data_points.items():
-            new_df = self._prepare_new_dataframe(points, series_code)
+            new_df = prepare_new_dataframe(points, series_code, self._validation_repository)
             if new_df is None:
                 continue
 
@@ -548,11 +474,9 @@ class DataAPI:
                 ].copy()
 
                 if force_refresh and start_date and end_date:
-                    existing_df = self._filter_existing_by_date_range(
-                        existing_df, start_date, end_date
-                    )
+                    existing_df = filter_existing_by_date_range(existing_df, start_date, end_date)
 
-                final_df = self._merge_and_deduplicate(existing_df, new_df)
+                final_df = merge_and_deduplicate(existing_df, new_df, self._validation_repository)
 
             # Ensure final dataframe has consistent dtypes and only required columns
             final_df = final_df[
@@ -567,3 +491,47 @@ class DataAPI:
             saved_paths[series_code] = relative_path
 
         return saved_paths
+
+    def get_last_values(
+        self,
+        series_codes: List[str],
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+    ) -> pd.DataFrame:
+        """Get latest (max timestamp) value for each series_code.
+
+        Args:
+            series_codes: List of series codes to get last values for
+            ticker_source: Ticker source (default: TickerSource.BLOOMBERG)
+
+        Returns:
+            DataFrame with series_code, timestamp, and value columns (one row per series_code)
+        """
+        return self._value_repository.get_last_values(series_codes, ticker_source)
+
+    def get_values(self, ticker_source: Optional[TickerSource] = None) -> pd.DataFrame:
+        """Get all values for all series (optionally filtered by ticker_source).
+
+        Args:
+            ticker_source: Optional ticker source filter (default: None, gets all)
+
+        Returns:
+            DataFrame with series_code, timestamp, and value columns for all series
+        """
+        # Default to BLOOMBERG if not specified
+        if ticker_source is None:
+            ticker_source = TickerSource.BLOOMBERG
+
+        # Get all series codes for the given ticker_source
+        query_filters: Dict[str, List[str]] = {MetadataColumns.TICKER_SOURCE: [ticker_source.value]}
+
+        metadata_df = self.get(**query_filters).info()
+
+        if metadata_df.empty:
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
+
+        series_codes = metadata_df[MetadataColumns.SERIES_CODE].unique().tolist()
+
+        # Get all values for these series
+        return self._value_repository.get_all_values(series_codes, ticker_source)
