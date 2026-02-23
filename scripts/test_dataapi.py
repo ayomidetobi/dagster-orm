@@ -137,171 +137,172 @@ data_api = DataAPI(duckdb_resource)
 #     print(f"Regions in get_excluding(region='North America'): {sorted(exclude_regions)}")
 #     print(f"North America excluded: {'North America' not in exclude_regions}")
 
-# # Example 7: Test union() - unite 3 queries
-# print_separator("Example 7: Test union() - unite 3 queries")
-# # Create three different QuerySets
-# qs1 = data_api.get(asset_class=["Equity"])
-# qs2 = data_api.get(asset_class=["Commodity"])
-# qs3 = data_api.get(asset_class=["Fixed Income"])
+# Example 7: Test union() - unite multiple queries
+print_separator("Example 7: Test union() - unite multiple queries")
+# Create three different QuerySets
+data_equity = data_api.get(asset_class=["Equity"])
+data_commodity = data_api.get(asset_class=["Commodity"])
+data_fixed_income = data_api.get(asset_class=["Fixed Income"])
 
-# # Get info for each to see what we're working with
-# qs1_info = qs1.info()
-# qs2_info = qs2.info()
-# qs3_info = qs3.info()
+# Get info for each to see what we're working with
+equity_info = data_equity.info()
+commodity_info = data_commodity.info()
+fixed_income_info = data_fixed_income.info()
 
-# print(f"QuerySet 1 (Equity): {len(qs1_info)} series")
-# print(f"QuerySet 2 (Commodity): {len(qs2_info)} series")
-# print(f"QuerySet 3 (Fixed Income): {len(qs3_info)} series")
+print(f"Equity dataset: {len(equity_info)} series")
+print(f"Commodity dataset: {len(commodity_info)} series")
+print(f"Fixed Income dataset: {len(fixed_income_info)} series")
 
-# # Get series codes for each
-# qs1_codes = set(qs1_info['series_code'].unique())
-# qs2_codes = set(qs2_info['series_code'].unique())
-# qs3_codes = set(qs3_info['series_code'].unique())
+# Get series codes for each
+equity_codes = set(equity_info['series_code'].unique())
+commodity_codes = set(commodity_info['series_code'].unique())
+fixed_income_codes = set(fixed_income_info['series_code'].unique())
 
-# print(f"\nQuerySet 1 series codes: {sorted(qs1_codes)}")
-# print(f"QuerySet 2 series codes: {sorted(qs2_codes)}")
-# print(f"QuerySet 3 series codes: {sorted(qs3_codes)}")
+print(f"\nEquity series codes: {sorted(equity_codes)}")
+print(f"Commodity series codes: {sorted(commodity_codes)}")
+print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
 
-# # Union all three QuerySets
-# print("\nUniting QuerySet 1 and QuerySet 2...")
-# qs_union_12 = qs1.union(qs2)
-# qs_union_12_info = qs_union_12.info()
-# qs_union_12_codes = set(qs_union_12_info['series_code'].unique())
+# Test union with two QuerySets
+print("\nUniting Equity and Commodity datasets...")
+combined_equity_commodity = data_equity.union(data_commodity)
+combined_info = combined_equity_commodity.info()
+combined_codes = set(combined_info['series_code'].unique())
 
-# print(f"Union of QS1 and QS2: {len(qs_union_12_info)} series")
-# print(f"Union series codes: {sorted(qs_union_12_codes)}")
-# print(f"Expected union size: {len(qs1_codes | qs2_codes)}")
-# print(f"Union correct: {qs_union_12_codes == (qs1_codes | qs2_codes)}")
+print(f"Union of Equity and Commodity: {len(combined_info)} series")
+print(f"Union series codes: {sorted(combined_codes)}")
+print(f"Expected union size: {len(equity_codes | commodity_codes)}")
+print(f"Union correct: {combined_codes == (equity_codes | commodity_codes)}")
 
-# # Now union with the third QuerySet
-# print("\nUniting (QS1 ∪ QS2) with QS3...")
-# qs_union_all = qs_union_12.union(qs3)
-# qs_union_all_info = qs_union_all.info()
-# qs_union_all_codes = set(qs_union_all_info['series_code'].unique())
+# Test union with multiple QuerySets at once
+print("\nUniting all three datasets at once...")
+combined_all = data_equity.union(data_commodity, data_fixed_income)
+combined_all_info = combined_all.info()
+combined_all_codes = set(combined_all_info['series_code'].unique())
 
-# print(f"Final union (all 3): {len(qs_union_all_info)} series")
-# print(f"Final union series codes: {sorted(qs_union_all_codes)}")
-# print(f"Expected union size: {len(qs1_codes | qs2_codes | qs3_codes)}")
-# print(f"Union correct: {qs_union_all_codes == (qs1_codes | qs2_codes | qs3_codes)}")
+print(f"Final union (all 3): {len(combined_all_info)} series")
+print(f"Final union series codes: {sorted(combined_all_codes)}")
+print(f"Expected union size: {len(equity_codes | commodity_codes | fixed_income_codes)}")
+print(f"Union correct: {combined_all_codes == (equity_codes | commodity_codes | fixed_income_codes)}")
 
-# # Verify original QuerySets are unchanged
-# print("\nVerifying original QuerySets are unchanged...")
-# qs1_after = qs1.info()
-# qs2_after = qs2.info()
-# qs3_after = qs3.info()
-# print(f"QS1 unchanged: {len(qs1_after) == len(qs1_info)}")
-# print(f"QS2 unchanged: {len(qs2_after) == len(qs2_info)}")
-# print(f"QS3 unchanged: {len(qs3_after) == len(qs3_info)}")
+# Verify original QuerySets are unchanged
+print("\nVerifying original QuerySets are unchanged...")
+equity_after = data_equity.info()
+commodity_after = data_commodity.info()
+fixed_income_after = data_fixed_income.info()
+print(f"Equity unchanged: {len(equity_after) == len(equity_info)}")
+print(f"Commodity unchanged: {len(commodity_after) == len(commodity_info)}")
+print(f"Fixed Income unchanged: {len(fixed_income_after) == len(fixed_income_info)}")
 
-# # Test that we can get values from the unioned QuerySet
-# print("\nTesting value() on unioned QuerySet...")
-# try:
-#     union_values = qs_union_all.value(
-#         ValueQueryParams(
-#             start="2025-01-01",
-#             end="2025-12-31",
-#         )
-#     )
-#     print(f"Successfully retrieved {len(union_values)} value rows from unioned QuerySet")
-#     if not union_values.empty:
-#         print(f"Unique series codes in values: {union_values['series_code'].nunique()}")
-#         print(f"Series codes: {sorted(union_values['series_code'].unique())}")
-# except Exception as e:
-#     print(f"Note: Could not retrieve values (may need data loaded): {e}")
-
-# Example 8: Test chained filter() - Dataset → Subset → Smaller subset
-print_separator("Example 8: Test chained filter() - Dataset → Subset → Smaller subset")
-# Start with a dataset
-dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
-dataset_info = dataset.info()
-print(f"Initial dataset: {len(dataset_info)} series")
-print(f"Asset classes: {sorted(dataset_info['asset_class'].unique())}")
-
-# Filter to a subset
-subset = dataset.filter(asset_class=["Equity", "Commodity"])
-subset_info = subset.info()
-print(f"\nAfter filter(asset_class=['Equity', 'Commodity']): {len(subset_info)} series")
-print(f"Asset classes: {sorted(subset_info['asset_class'].unique())}")
-
-# Filter to a smaller subset
-smaller_subset = subset.filter(region="North America")
-smaller_subset_info = smaller_subset.info()
-print(f"\nAfter filter(region='North America'): {len(smaller_subset_info)} series")
-print(f"Regions: {sorted(smaller_subset_info['region'].unique())}")
-print(f"Asset classes: {sorted(smaller_subset_info['asset_class'].unique())}")
-
-# Verify original dataset is unchanged
-print(f"\nOriginal dataset unchanged: {len(dataset.info()) == len(dataset_info)}")
-print(f"Subset unchanged: {len(subset.info()) == len(subset_info)}")
-
-# Test that we can get values from the filtered QuerySet
-print("\nTesting value() on filtered QuerySet...")
+# Test that we can get values from the unioned QuerySet
+print("\nTesting value() on unioned QuerySet...")
 try:
-    filtered_values = smaller_subset.value(
+    union_values = combined_all.value(
         ValueQueryParams(
             start="2025-01-01",
             end="2025-12-31",
         )
     )
-    print(filtered_values.head(10))
-    print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
-    if not filtered_values.empty:
-        print(f"Unique series codes: {filtered_values['series_code'].nunique()}")
-        print(filtered_values.head(10))
+    print(f"Successfully retrieved value data from unioned QuerySet")
+    print(f"Shape: {union_values.shape}")
+    if not union_values.empty:
+        print(f"Columns: {list(union_values.columns)}")
+        print(f"\nFirst few rows:\n{union_values.head()}")
 except Exception as e:
     print(f"Note: Could not retrieve values (may need data loaded): {e}")
 
-# Example 9: Test chained filter_exclude() - Dataset → Exclude → Exclude more
-print_separator("Example 9: Test chained filter_exclude() - Dataset → Exclude → Exclude more")
-# Start with a dataset
-dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
-dataset_info = dataset.info()
-print(f"Initial dataset: {len(dataset_info)} series")
-print(f"Asset classes: {sorted(dataset_info['asset_class'].unique())}")
-print(f"Regions: {sorted(dataset_info['region'].dropna().unique())}")
+# # Example 8: Test chained filter() - Dataset → Subset → Smaller subset
+# print_separator("Example 8: Test chained filter() - Dataset → Subset → Smaller subset")
+# # Start with a dataset
+# dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
+# dataset_info = dataset.info()
+# print(f"Initial dataset: {len(dataset_info)} series")
+# print(f"Asset classes: {sorted(dataset_info['asset_class'].unique())}")
 
-# Exclude some asset classes
-excluded_subset = dataset.filter_exclude(asset_class=["Fixed Income"])
-excluded_subset_info = excluded_subset.info()
-print(f"\nAfter filter_exclude(asset_class=['Fixed Income']): {len(excluded_subset_info)} series")
-print(f"Asset classes: {sorted(excluded_subset_info['asset_class'].unique())}")
+# # Filter to a subset
+# subset = dataset.filter(asset_class=["Equity", "Commodity"])
+# subset_info = subset.info()
+# print(f"\nAfter filter(asset_class=['Equity', 'Commodity']): {len(subset_info)} series")
+# print(f"Asset classes: {sorted(subset_info['asset_class'].unique())}")
 
-# Exclude more (regions)
-smaller_excluded = excluded_subset.filter_exclude(region="North America")
-smaller_excluded_info = smaller_excluded.info()
-print(f"\nAfter filter_exclude(region='North America'): {len(smaller_excluded_info)} series")
-print(f"Regions: {sorted(smaller_excluded_info['region'].dropna().unique())}")
-print(f"Asset classes: {sorted(smaller_excluded_info['asset_class'].unique())}")
+# # Filter to a smaller subset
+# smaller_subset = subset.filter(region="North America")
+# smaller_subset_info = smaller_subset.info()
+# print(f"\nAfter filter(region='North America'): {len(smaller_subset_info)} series")
+# print(f"Regions: {sorted(smaller_subset_info['region'].unique())}")
+# print(f"Asset classes: {sorted(smaller_subset_info['asset_class'].unique())}")
 
-# Verify original dataset is unchanged
-print(f"\nOriginal dataset unchanged: {len(dataset.info()) == len(dataset_info)}")
-print(f"Excluded subset unchanged: {len(excluded_subset.info()) == len(excluded_subset_info)}")
+# # Verify original dataset is unchanged
+# print(f"\nOriginal dataset unchanged: {len(dataset.info()) == len(dataset_info)}")
+# print(f"Subset unchanged: {len(subset.info()) == len(subset_info)}")
 
-# Test that we can get values from the filtered QuerySet
-print("\nTesting value() on filtered QuerySet...")
-try:
-    filtered_values = smaller_excluded.get_last_values()
-    print(filtered_values.head(10))
-    print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
-    if not filtered_values.empty:
-        print(f"Unique series codes: {filtered_values['series_code'].nunique()}")
-except Exception as e:
-    print(f"Note: Could not retrieve values (may need data loaded): {e}")
+# # Test that we can get values from the filtered QuerySet
+# print("\nTesting value() on filtered QuerySet...")
+# try:
+#     filtered_values = smaller_subset.value(
+#         ValueQueryParams(
+#             start="2025-01-01",
+#             end="2025-12-31",
+#         )
+#     )
+#     print(filtered_values.head(10))
+#     print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
+#     if not filtered_values.empty:
+#         print(f"Unique series codes: {filtered_values['series_code'].nunique()}")
+#         print(filtered_values.head(10))
+# except Exception as e:
+#     print(f"Note: Could not retrieve values (may need data loaded): {e}")
 
-# Example 10: Test mixing filter() and filter_exclude()
-print_separator("Example 10: Test mixing filter() and filter_exclude()")
-mixed_dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
-print(f"Initial: {len(mixed_dataset.info())} series")
+# # Example 9: Test chained filter_exclude() - Dataset → Exclude → Exclude more
+# print_separator("Example 9: Test chained filter_exclude() - Dataset → Exclude → Exclude more")
+# # Start with a dataset
+# dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
+# dataset_info = dataset.info()
+# print(f"Initial dataset: {len(dataset_info)} series")
+# print(f"Asset classes: {sorted(dataset_info['asset_class'].unique())}")
+# print(f"Regions: {sorted(dataset_info['region'].dropna().unique())}")
 
-# First filter (include)
-filtered = mixed_dataset.filter(asset_class=["Equity", "Commodity"])
-print(f"After filter(asset_class=['Equity', 'Commodity']): {len(filtered.info())} series")
+# # Exclude some asset classes
+# excluded_subset = dataset.filter_exclude(asset_class=["Fixed Income"])
+# excluded_subset_info = excluded_subset.info()
+# print(f"\nAfter filter_exclude(asset_class=['Fixed Income']): {len(excluded_subset_info)} series")
+# print(f"Asset classes: {sorted(excluded_subset_info['asset_class'].unique())}")
 
-# Then exclude
-excluded = filtered.filter_exclude(region="North America")
-excluded_info = excluded.info()
-print(f"After filter_exclude(region='North America'): {len(excluded_info)} series")
-print(f"Regions: {sorted(excluded_info['region'].dropna().unique())}")
-print(f"Asset classes: {sorted(excluded_info['asset_class'].unique())}")
+# # Exclude more (regions)
+# smaller_excluded = excluded_subset.filter_exclude(region="North America")
+# smaller_excluded_info = smaller_excluded.info()
+# print(f"\nAfter filter_exclude(region='North America'): {len(smaller_excluded_info)} series")
+# print(f"Regions: {sorted(smaller_excluded_info['region'].dropna().unique())}")
+# print(f"Asset classes: {sorted(smaller_excluded_info['asset_class'].unique())}")
+
+# # Verify original dataset is unchanged
+# print(f"\nOriginal dataset unchanged: {len(dataset.info()) == len(dataset_info)}")
+# print(f"Excluded subset unchanged: {len(excluded_subset.info()) == len(excluded_subset_info)}")
+
+# # Test that we can get values from the filtered QuerySet
+# print("\nTesting value() on filtered QuerySet...")
+# try:
+#     filtered_values = smaller_excluded.get_last_values()
+#     print(filtered_values.head(10))
+#     print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
+#     if not filtered_values.empty:
+#         print(f"Unique series codes: {filtered_values['series_code'].nunique()}")
+# except Exception as e:
+#     print(f"Note: Could not retrieve values (may need data loaded): {e}")
+
+# # Example 10: Test mixing filter() and filter_exclude()
+# print_separator("Example 10: Test mixing filter() and filter_exclude()")
+# mixed_dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
+# print(f"Initial: {len(mixed_dataset.info())} series")
+
+# # First filter (include)
+# filtered = mixed_dataset.filter(asset_class=["Equity", "Commodity"])
+# print(f"After filter(asset_class=['Equity', 'Commodity']): {len(filtered.info())} series")
+
+# # Then exclude
+# excluded = filtered.filter_exclude(region="North America")
+# excluded_info = excluded.info()
+# print(f"After filter_exclude(region='North America'): {len(excluded_info)} series")
+# print(f"Regions: {sorted(excluded_info['region'].dropna().unique())}")
+# print(f"Asset classes: {sorted(excluded_info['asset_class'].unique())}")
 
 print_separator("All tests completed!")

@@ -436,37 +436,55 @@ class QuerySet:
             series_codes=filtered_codes,
         )
 
-    def union(self, other: "QuerySet") -> "QuerySet":
-        """Create a new QuerySet representing the union of two QuerySets.
+    def union(self, *others: "QuerySet") -> "QuerySet":
+        """Create a new QuerySet representing the union of multiple QuerySets.
 
-        Resolves series codes from both QuerySets and creates a new QuerySet
-        with the union of their series codes. The result bypasses metadata filtering.
+        Resolves series codes from this QuerySet and all provided QuerySets, then creates
+        a new QuerySet with the union of all their series codes. The result bypasses metadata filtering.
 
         Args:
-            other: Another QuerySet to union with
+            *others: One or more QuerySets to union with this QuerySet
 
         Returns:
-            New QuerySet instance with unioned series codes
+            New QuerySet instance with unioned series codes from all QuerySets
 
         Raises:
-            ValueError: If QuerySets don't share the same repositories
-        """
-        # Validate that both QuerySets use the same repositories
-        if (
-            self._metadata_repository is not other._metadata_repository
-            or self._value_repository is not other._value_repository
-        ):
-            raise ValueError(
-                "Cannot union QuerySets with different repository instances. "
-                "Both QuerySets must be created from the same DataAPI instance."
-            )
+            ValueError: If any QuerySets don't share the same repositories, or if no QuerySets provided
 
-        # Resolve series codes from both QuerySets
-        self_codes = set(self.resolve_series_codes())
-        other_codes = set(other.resolve_series_codes())
+        Examples:
+            # Union two datasets
+            data_equity = data_api.get(asset_class=["Equity"])
+            data_fx = data_api.get(asset_class=["FX"])
+            combined = data_equity.union(data_fx)
+
+            # Union multiple datasets
+            data_equity = data_api.get(asset_class=["Equity"])
+            data_fx = data_api.get(asset_class=["FX"])
+            data_usa = data_api.get(country=["USA"])
+            combined = data_equity.union(data_fx, data_usa)
+        """
+        if not others:
+            raise ValueError("At least one QuerySet must be provided to union()")
+
+        # Validate that all QuerySets use the same repositories
+        all_querysets = [self] + list(others)
+        for other in others:
+            if (
+                self._metadata_repository is not other._metadata_repository
+                or self._value_repository is not other._value_repository
+            ):
+                raise ValueError(
+                    "Cannot union QuerySets with different repository instances. "
+                    "All QuerySets must be created from the same DataAPI instance."
+                )
+
+        # Resolve series codes from all QuerySets
+        all_codes = set()
+        for queryset in all_querysets:
+            all_codes.update(queryset.resolve_series_codes())
 
         # Union the series codes
-        unioned_codes = sorted(list(self_codes | other_codes))
+        unioned_codes = sorted(list(all_codes))
 
         # Create new QuerySet with unioned series codes
         # Filters are None, exclude is False (series_code mode bypasses filtering)
