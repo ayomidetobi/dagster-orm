@@ -243,9 +243,11 @@ try:
             end="2025-12-31",
         )
     )
+    print(filtered_values.head(10))
     print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
     if not filtered_values.empty:
         print(f"Unique series codes: {filtered_values['series_code'].nunique()}")
+        print(filtered_values.head(10))
 except Exception as e:
     print(f"Note: Could not retrieve values (may need data loaded): {e}")
 
@@ -278,12 +280,8 @@ print(f"Excluded subset unchanged: {len(excluded_subset.info()) == len(excluded_
 # Test that we can get values from the filtered QuerySet
 print("\nTesting value() on filtered QuerySet...")
 try:
-    filtered_values = smaller_excluded.value(
-        ValueQueryParams(
-            start="2025-01-01",
-            end="2025-12-31",
-        )
-    )
+    filtered_values = smaller_excluded.get_last_values()
+    print(filtered_values.head(10))
     print(f"Successfully retrieved {len(filtered_values)} value rows from filtered QuerySet")
     if not filtered_values.empty:
         print(f"Unique series codes: {filtered_values['series_code'].nunique()}")

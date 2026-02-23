@@ -18,6 +18,7 @@ from dagster_quickstart.orm.schema import (
     VALID_METADATA_FILTER_COLUMNS,
     MetadataColumns,
     TickerSource,
+    ValueColumns,
 )
 
 
@@ -246,7 +247,8 @@ class QuerySet:
             tickersource: Ticker source (default: TickerSource.BLOOMBERG)
 
         Returns:
-            DataFrame with series_code, timestamp, and value columns
+            DataFrame with timestamp as index, series_code as columns, and values as cell values.
+            Timestamps are timezone-aware UTC and sorted ascending.
 
         Raises:
             SeriesNotFoundError: If no series match the filters
@@ -268,7 +270,21 @@ class QuerySet:
             limit=params.limit if params else None,
         )
 
-        return value_df
+        # Return empty DataFrame unchanged
+        if value_df.empty:
+            return value_df
+
+        # Pivot to wide format: timestamp as index, series_code as columns
+        pivoted_df = value_df.pivot(
+            index=ValueColumns.TIMESTAMP,
+            columns=ValueColumns.SERIES_CODE,
+            values=ValueColumns.VALUE,
+        )
+        # Ensure timestamps remain timezone-aware UTC and sort ascending
+        # if not pivoted_df.empty:
+        #     pivoted_df = pivoted_df.sort_index(ascending=True)
+
+        return pivoted_df
 
     def filter(self, **filters: Any) -> "QuerySet":
         """Apply additional filters to this QuerySet, creating a new filtered QuerySet.
@@ -462,3 +478,85 @@ class QuerySet:
             exclude=False,
             series_codes=unioned_codes,
         )
+
+    def get_last_values(
+        self,
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+    ) -> pd.DataFrame:
+        """Get latest (max timestamp) value for each series_code in this QuerySet.
+
+        Args:
+            ticker_source: Ticker source (default: TickerSource.BLOOMBERG)
+
+        Returns:
+            DataFrame with timestamp as index, series_code as columns, and values as cell values.
+            Timestamps are timezone-aware UTC and sorted ascending.
+
+        Raises:
+            SeriesNotFoundError: If no series match the filters
+        """
+        resolved_series_codes = self.resolve_series_codes()
+
+        if not resolved_series_codes:
+            raise SeriesNotFoundError(f"No series found matching filters: {self._metadata_filters}")
+
+        result_df = self._value_repository.get_last_values(resolved_series_codes, ticker_source)
+
+        # Return empty DataFrame unchanged
+        if result_df.empty:
+            return result_df
+
+        # Pivot to wide format: timestamp as index, series_code as columns
+        pivoted_df = result_df.pivot(
+            index=ValueColumns.TIMESTAMP,
+            columns=ValueColumns.SERIES_CODE,
+            values=ValueColumns.VALUE,
+        )
+
+        # Ensure timestamps remain timezone-aware UTC and sort ascending
+        if not pivoted_df.empty:
+            pivoted_df = pivoted_df.sort_index(ascending=True)
+
+        return pivoted_df
+
+    def get_values(
+        self,
+        ticker_source: Optional[TickerSource] = None,
+    ) -> pd.DataFrame:
+        """Get all values for all series in this QuerySet (optionally filtered by ticker_source).
+
+        Args:
+            ticker_source: Optional ticker source filter (default: None, uses BLOOMBERG)
+
+        Returns:
+            DataFrame with timestamp as index, series_code as columns, and values as cell values.
+            Timestamps are timezone-aware UTC and sorted ascending.
+        """
+        # Default to BLOOMBERG if not specified
+        if ticker_source is None:
+            ticker_source = TickerSource.BLOOMBERG
+
+        resolved_series_codes = self.resolve_series_codes()
+
+        if not resolved_series_codes:
+            return pd.DataFrame()
+
+        # Get all values for these series
+        result_df = self._value_repository.get_all_values(resolved_series_codes, ticker_source)
+
+        # Return empty DataFrame unchanged
+        if result_df.empty:
+            return result_df
+
+        # Pivot to wide format: timestamp as index, series_code as columns
+        pivoted_df = result_df.pivot(
+            index=ValueColumns.TIMESTAMP,
+            columns=ValueColumns.SERIES_CODE,
+            values=ValueColumns.VALUE,
+        )
+
+        # Ensure timestamps remain timezone-aware UTC and sort ascending
+        if not pivoted_df.empty:
+            pivoted_df = pivoted_df.sort_index(ascending=True)
+
+        return pivoted_df
