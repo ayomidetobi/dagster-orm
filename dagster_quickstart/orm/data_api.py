@@ -299,27 +299,65 @@ class DataAPI:
         Args:
             series_codes: List of series codes to get tickers for
             field_type: Optional field_type filter
-            ticker_source: Optional ticker_source filter (default: BLOOMBERG)
+            ticker_source: Optional ticker_source (default: BLOOMBERG)
 
         Returns:
             Dict mapping series_code to ticker
+
+        Raises:
+            ValueError: If ticker_source is not supported or corresponding ticker column doesn't exist
         """
         if not series_codes:
             return {}
+
+        # Default to BLOOMBERG if not specified
+        if ticker_source is None:
+            ticker_source = TickerSource.BLOOMBERG
+
+        # Map ticker_source to the corresponding ticker and field column names
+        ticker_column_map = {
+            TickerSource.BLOOMBERG: MetadataColumns.BBG_TICKER,
+            TickerSource.MDS: MetadataColumns.MDS_TICKER,
+        }
+
+        field_column_map = {
+            TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
+            TickerSource.MDS: MetadataColumns.MDS_FIELD,
+        }
+
+        if ticker_source not in ticker_column_map:
+            raise ValueError(
+                f"Ticker source '{ticker_source.value}' is not supported. "
+                f"Supported sources: {[ts.value for ts in ticker_column_map.keys()]}"
+            )
+
+        ticker_column = ticker_column_map[ticker_source]
+        field_column = field_column_map[ticker_source]
 
         query_filters: Dict[str, List[str]] = {
             MetadataColumns.SERIES_CODE: series_codes,
         }
 
+        # if field_type:
+        #     query_filters[field_column] = [field_type]
+
         metadata_df = self.get(**query_filters).info()
+        print(f"metadata_df: {metadata_df}")
 
         if metadata_df.empty:
             return {}
 
+        # Check if the ticker column exists in the dataframe
+        if ticker_column not in metadata_df.columns:
+            raise ValueError(
+                f"Ticker column '{ticker_column}' not found in metadata. "
+                f"Available columns: {list(metadata_df.columns)}"
+            )
+
         ticker_map = {}
         for _, row in metadata_df.iterrows():
             series_code = row[MetadataColumns.SERIES_CODE]
-            ticker = row[MetadataColumns.TICKER]
+            ticker = row.get(ticker_column)
             if pd.notna(ticker) and ticker:
                 ticker_map[series_code] = str(ticker)
 

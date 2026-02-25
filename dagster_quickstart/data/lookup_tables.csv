@@ -1,15 +1,15 @@
-id,asset_class,product_type,sub_asset_class,data_type,structure_type,market_segment,field_type,ticker_source,country,currency,region,term,tenor
-1,Equity,Stock,Common Stock,Price,Simple,Primary Market,Last Price,Bloomberg,US,USD,North America,Long-term,10Y
-2,Fixed Income,Bond,Preferred Stock,Volume,Complex,Secondary Market,Open Interest,LSEG,UK,GBP,Europe,Medium-term,5Y
-3,Commodity,Index,Corporate Bond,Open Interest,Structured Product,OTC,Open Price,Hawkeye,Canada,CAD,Asia Pacific,Short-term,1Y
-4,Currency,Composite,Government Bond,Yield,Derivative,Exchange Traded,High Price,Ramp,Germany,EUR,Latin America,Ultra-short-term,3Y
-5,Derivative,ETF,Municipal Bond,Spread,Synthetic,Private Market,Low Price,OneTick,France,JPY,Middle East,Very Long-term,1M
-6,Alternative Investment,Mutual Fund,Crude Oil,Volatility,Leveraged,Public Market,Volume,Internal,Japan,CNY,Africa,Intermediate-term,2Y
-7,Real Estate,Option,Gold,Market Cap,Inverse,,Bid Price,Manual Entry,China,AUD,Oceania,Near-term,6M
-8,Cash,Future,Silver,Dividend,,,Ask Price,,Australia,BRL,Eastern Europe,Extended-term,3M
-9,,Swap,Natural Gas,Corporate Action,,,Mid Price,,Brazil,INR,Western Europe,Brief-term,7Y
-10,,Forward,Forex Spot,,,,Settlement Price,,India,MXN,Southeast Asia,Sustained-term,9M
-11,,Warrant,Forex Forward,,,,,,Mexico,KRW,East Asia,Limited-term,15Y
-12,,Certificate,Equity Index,,,,,,South Korea,CHF,South Asia,Extended Long-term,4Y
-13,,,Bond Index,,,,,,Italy,SEK,Central America,Short Medium-term,8M
-14,,,Commodity Index,,,,,,Spain,NOK,Scandinavia,Medium Long-term,20Y
+asset_class,product_type,sub_asset_class,structure_type,market_segment,region,currency,country,term,tenor,bbg_field,bbg_data_type,mds_field,mds_data_type
+Equity,Stock,Common Stock,Simple,Primary Market,North America,USD,United States,Ultra-short-term,1M,PX_LAST,Price,OPEN_INT,Volume
+Fixed Income,Bond,Preferred Stock,Complex,Secondary Market,Europe,EUR,Germany,Short-term,3M,PX_OPEN,Volume,YIELD,Yield
+Commodity,Index,Corporate Bond,Structured Product,OTC,Asia Pacific,JPY,Japan,Near-term,6M,PX_HIGH,Open Interest,SPREAD,Spread
+Currency,Composite,Government Bond,Derivative,Exchange Traded,Latin America,MXN,Mexico,Medium-term,1Y,PX_LOW,Yield,BID,Bid
+Derivative,ETF,Municipal Bond,Synthetic,Private Market,Middle East,SAR,Saudi Arabia,Intermediate-term,2Y,ASK,Ask,ASK,Ask
+Alternative Investment,Mutual Fund,Crude Oil,Leveraged,Public Market,Africa,ZAR,South Africa,Long-term,3Y,TRD_VOL,Trade Volume,MID,Mid
+Real Estate,Option,Gold,Inverse,Primary Market,Oceania,AUD,Australia,Very Long-term,5Y,OPEN_INT,Open Interest,LAST,Last
+Cash,Future,Silver,Standard,Secondary Market,Eastern Europe,RUB,Russia,Extended-term,7Y,DIVIDEND,Dividend,HIGH,High
+Other,Swap,Natural Gas,Hybrid,OTC,Western Europe,GBP,United Kingdom,Extended Long-term,10Y,MKT_CAP,Market Cap,LOW,Low
+Structured Product,Forward,Forex Spot,Convertible,Exchange Traded,Southeast Asia,SGD,Singapore,Brief-term,15Y,SETTLE,Settlement,SETTLE,Settlement
+Private Asset,Warrant,Forex Forward,Callable,Private Market,East Asia,CNY,China,Sustained-term,20Y,RETURN,Return,RETURN,Return
+Public Asset,Certificate,Equity Index,Putable,Public Market,South Asia,INR,India,Limited-term,30Y,INDEX_VAL,Index Level,INDEX_VAL,Index Level
+Hybrid Asset,Note,Bond Index,Perpetual,Primary Market,Central America,SEK,Sweden,Short Medium-term,40Y,TOT_RETURN,Total Return,TOT_RETURN,Total Return
+Digital Asset,Token,Commodity Index,Zero Coupon,Secondary Market,Scandinavia,NOK,Norway,Medium Long-term,50Y,PERFORMANCE,Performance,PERFORMANCE,Performance

@@ -34,6 +34,12 @@ class MetadataColumns:
     TENOR = "tenor"
     STRUCTURE_TYPE = "structure_type"
     TICKER_SOURCE = "ticker_source"
+    BBG_TICKER = "bbg_ticker"
+    MDS_TICKER = "mds_ticker"
+    BBG_FIELD = "bbg_field"
+    BBG_DATA_TYPE = "bbg_data_type"
+    MDS_FIELD = "mds_field"
+    MDS_DATA_TYPE = "mds_data_type"
     DATA_SOURCE = "data_source"
     SERIES_NAME = "series_name"
     VALID_FROM = "valid_from"
@@ -60,6 +66,7 @@ class TickerSource(str, Enum):
     ONETICK = "OneTick"
     MANUAL_ENTRY = "Manual Entry"
     INTERNAL = "Internal"
+    MDS = "MDS"
 
 
 class ControlTableType(str, Enum):
@@ -85,7 +92,6 @@ class PreviewColumns:
     SERIES_CODE = "series_code"
     SERIES_NAME = "series_name"
     ASSET_CLASS = "asset_class"
-    TICKER_SOURCE = "ticker_source"
 
     @classmethod
     def get_default_columns(cls) -> List[str]:
@@ -98,7 +104,6 @@ class PreviewColumns:
             cls.SERIES_CODE,
             cls.SERIES_NAME,
             cls.ASSET_CLASS,
-            cls.TICKER_SOURCE,
         ]
 
 

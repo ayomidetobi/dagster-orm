@@ -26,16 +26,19 @@ VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.TICKER_SOURCE,
     MetadataColumns.DATA_SOURCE,
     MetadataColumns.SERIES_NAME,
+    MetadataColumns.BBG_TICKER,
+    MetadataColumns.MDS_TICKER,
+    MetadataColumns.BBG_FIELD,
+    MetadataColumns.MDS_FIELD,
+    MetadataColumns.BBG_DATA_TYPE,
+    MetadataColumns.MDS_DATA_TYPE,
 }
 
 LOOKUP_TABLE_PROCESSING_ORDER = [
     "asset_class",
     "product_type",
-    "data_type",
     "structure_type",
     "market_segment",
-    "field_type",
-    "ticker_source",
     "sub_asset_class",
     "region",
     "currency",
