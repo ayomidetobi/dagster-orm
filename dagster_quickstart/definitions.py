@@ -2,6 +2,7 @@ from dagster import Definitions
 from decouple import config
 
 from dagster_quickstart.assets import (
+    calculate_derived_series,
     ingest_bloomberg_data_backfill,
     ingest_bloomberg_data_daily,
     load_lookup_tables_to_s3,
@@ -20,6 +21,7 @@ all_assets = [
     load_series_dependencies_to_s3,
     ingest_bloomberg_data_daily,
     ingest_bloomberg_data_backfill,
+    calculate_derived_series,
 ]
 
 all_asset_checks = [

@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+from decouple import config
 from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.orm.data_api_helpers import (
@@ -21,6 +22,7 @@ from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableMa
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_value_data_path
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
+from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 from dagster_quickstart.utils.datetime_utils import (
     normalize_date_to_utc,
@@ -43,7 +45,7 @@ class DataAPI:
         values_df = dataset.value(ValueQueryParams(start="2024-01-01", end="2024-12-31"))
     """
 
-    def __init__(self, duckdb_resource: DuckDBResource):
+    def __init__(self, duckdb_resource: Optional[DuckDBResource] = None):
         """Initialize DataAPI with DuckDB resource.
 
         Sets up dependency injection: connection -> DuckDbRepository -> repositories -> QuerySet
@@ -52,10 +54,31 @@ class DataAPI:
             duckdb_resource: DuckDBResource instance with connection and S3 access configured
 
         Raises:
-            ConnectionBindingError: If duckdb_resource is None or invalid
+            ConnectionBindingError: If duckdb_resource is invalid or cannot be created
         """
+        # If no resource is provided, try to construct one from environment variables.
         if duckdb_resource is None:
-            raise ConnectionBindingError("DuckDB resource cannot be None")
+            bucket = config("S3_BUCKET", default=None)
+            access_key = config("S3_ACCESS_KEY", default=None)
+            secret_key = config("S3_SECRET_KEY", default=None)
+            region = config("S3_REGION", default=None)
+
+            if not all([bucket, access_key, secret_key, region]):
+                raise ConnectionBindingError(
+                    "DuckDB resource not provided and S3 configuration is incomplete. "
+                    "Either pass an explicit DuckDBResource or set S3_BUCKET, "
+                    "S3_ACCESS_KEY, S3_SECRET_KEY and S3_REGION environment variables."
+                )
+
+            duckdb_cacher = duckdb_datacacher(
+                bucket=bucket,
+                access_key=access_key,
+                secret_key=secret_key,
+                region=region,
+            )
+            duckdb_resource = DuckDBResource(cacher=duckdb_cacher)
+            # setup_for_execution only needs to bind the connection; context is unused here.
+            duckdb_resource.setup_for_execution(None)
 
         if not hasattr(duckdb_resource, "_con"):
             raise ConnectionBindingError(

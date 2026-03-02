@@ -17,7 +17,6 @@ from decouple import config
 
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.query_params import ValueQueryParams
-from dagster_quickstart.orm.schema import TickerSource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 
@@ -49,8 +48,8 @@ duckdb_cacher = duckdb_datacacher(
 duckdb_resource = DuckDBResource(cacher=duckdb_cacher)
 duckdb_resource.setup_for_execution(None)
 
-# Create DataAPI instance
-data_api = DataAPI(duckdb_resource)
+# Create DataAPI instance (will use environment variables by default)
+data_api = DataAPI()
 
 # # Example 1: Query metadata with filters
 # print_separator("Example 1: Query metadata")
@@ -154,9 +153,9 @@ print(f"Commodity dataset: {len(commodity_info)} series")
 print(f"Fixed Income dataset: {len(fixed_income_info)} series")
 
 # Get series codes for each
-equity_codes = set(equity_info['series_code'].unique())
-commodity_codes = set(commodity_info['series_code'].unique())
-fixed_income_codes = set(fixed_income_info['series_code'].unique())
+equity_codes = set(equity_info["series_code"].unique())
+commodity_codes = set(commodity_info["series_code"].unique())
+fixed_income_codes = set(fixed_income_info["series_code"].unique())
 
 print(f"\nEquity series codes: {sorted(equity_codes)}")
 print(f"Commodity series codes: {sorted(commodity_codes)}")
@@ -166,7 +165,7 @@ print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
 print("\nUniting Equity and Commodity datasets...")
 combined_equity_commodity = data_equity.union(data_commodity)
 combined_info = combined_equity_commodity.info()
-combined_codes = set(combined_info['series_code'].unique())
+combined_codes = set(combined_info["series_code"].unique())
 
 print(f"Union of Equity and Commodity: {len(combined_info)} series")
 print(f"Union series codes: {sorted(combined_codes)}")
@@ -177,12 +176,14 @@ print(f"Union correct: {combined_codes == (equity_codes | commodity_codes)}")
 print("\nUniting all three datasets at once...")
 combined_all = data_equity.union(data_commodity, data_fixed_income)
 combined_all_info = combined_all.info()
-combined_all_codes = set(combined_all_info['series_code'].unique())
+combined_all_codes = set(combined_all_info["series_code"].unique())
 
 print(f"Final union (all 3): {len(combined_all_info)} series")
 print(f"Final union series codes: {sorted(combined_all_codes)}")
 print(f"Expected union size: {len(equity_codes | commodity_codes | fixed_income_codes)}")
-print(f"Union correct: {combined_all_codes == (equity_codes | commodity_codes | fixed_income_codes)}")
+print(
+    f"Union correct: {combined_all_codes == (equity_codes | commodity_codes | fixed_income_codes)}"
+)
 
 # Verify original QuerySets are unchanged
 print("\nVerifying original QuerySets are unchanged...")
@@ -202,7 +203,7 @@ try:
             end="2025-12-31",
         )
     )
-    print(f"Successfully retrieved value data from unioned QuerySet")
+    print("Successfully retrieved value data from unioned QuerySet")
     print(f"Shape: {union_values.shape}")
     if not union_values.empty:
         print(f"Columns: {list(union_values.columns)}")

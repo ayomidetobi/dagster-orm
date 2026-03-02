@@ -4,6 +4,7 @@ Uses ORM layer (DataAPI) for all operations - no raw SQL in asset code.
 All temp table management, queries, and S3 operations go through the ORM.
 """
 
+from dagster_quickstart.assets.derived import calculate_derived_series
 from dagster_quickstart.assets.ingestion.bloomberg import (
     ingest_bloomberg_data_backfill,
     ingest_bloomberg_data_daily,
@@ -19,6 +20,7 @@ from dagster_quickstart.assets.load_series_dependencies import (
 )
 
 __all__ = [
+    "calculate_derived_series",
     "load_lookup_tables_to_s3",
     "load_meta_series_to_s3",
     "load_series_dependencies_to_s3",
