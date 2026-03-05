@@ -43,6 +43,8 @@ FIELD_TYPE_PARTITIONS = StaticPartitionsDefinition(
 @asset(
     partitions_def=FIELD_TYPE_PARTITIONS,
     required_resource_keys={"duckdb", "pypdl"},
+    name="ingest_bloomberg_data_daily",
+    deps=["load_lookup_tables_to_s3", "load_meta_series_to_s3", "load_series_dependencies_to_s3"],
 )
 def ingest_bloomberg_data_daily(
     context: AssetExecutionContext,

@@ -1,0 +1,46 @@
+ops:
+  load_lookup_tables_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/lookup_tables.csv"
+      temp_table_name: "lookup_tables_temp"
+      control_table_type: "lookup"
+  
+  load_meta_series_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/meta_series.csv"
+      temp_table_name: "meta_series_temp"
+      control_table_type: "metadata"
+      preview_limit: 10
+      preview_columns:
+        - "series_code"
+        - "field_type"
+        - "description"
+  
+  load_series_dependencies_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/series_dependencies.csv"
+      temp_table_name: "series_dependencies_temp"
+      control_table_type: "series_dependencies"
+  
+  ingest_bloomberg_data_daily:
+    config:
+      mode: "daily"
+      force_refresh: false
+      use_dummy_data: true
+      start_date: "2025-12-01"
+      end_date: null
+  
+  ingest_bloomberg_data_backfill:
+    config:
+      mode: "backfill"
+      force_refresh: true
+      use_dummy_data: true
+      series_codes: []
+      start_date: "2025-12-01"
+      end_date: null
+  
+  calculate_derived_series:
+    config:
+      start_date: "2025-12-01"
+      # end_date defaults to current date if not provided
+      control_table_type: "series_dependencies"

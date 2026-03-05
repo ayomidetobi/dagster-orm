@@ -11,7 +11,16 @@ from dagster_quickstart.assets import (
     validate_metadata_against_lookup,
     validate_parent_series_count,
 )
+from dagster_quickstart.jobs import (
+    all_assets_job,
+    bloomberg_backfill_ingestion_job,
+    bloomberg_daily_ingestion_job,
+    calculate_derived_series_job,
+    load_control_tables_job,
+    populate_value_data_job,
+)
 from dagster_quickstart.orm.io_manager import duckdb_io_manager
+from dagster_quickstart.schedule import populate_value_data_schedule
 from dagster_quickstart.resources import DuckDBResource, PyPDLResource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 
@@ -56,8 +65,23 @@ resources = {
     "duckdb_io_manager": duckdb_io_manager,
 }
 
+all_jobs = [
+    load_control_tables_job,
+    bloomberg_daily_ingestion_job,
+    bloomberg_backfill_ingestion_job,
+    calculate_derived_series_job,
+    populate_value_data_job,
+    all_assets_job,
+]
+
+all_schedules = [
+    populate_value_data_schedule,
+]
+
 defs = Definitions(
     assets=all_assets,
     asset_checks=all_asset_checks,
+    jobs=all_jobs,
+    schedules=all_schedules,
     resources=resources,
 )

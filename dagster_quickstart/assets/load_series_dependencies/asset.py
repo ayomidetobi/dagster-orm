@@ -15,7 +15,11 @@ from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbReposi
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 
 
-@asset(required_resource_keys={"duckdb"})
+@asset(
+    required_resource_keys={"duckdb"},
+    name="load_series_dependencies_to_s3",
+    deps=["load_meta_series_to_s3"],
+)
 def load_series_dependencies_to_s3(
     context: AssetExecutionContext, config: LoadSeriesDependenciesConfig
 ) -> MaterializeResult:

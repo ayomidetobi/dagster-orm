@@ -1,0 +1,23 @@
+ops:
+  load_lookup_tables_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/lookup_tables.csv"
+      temp_table_name: "lookup_tables_temp"
+      control_table_type: "lookup"
+  
+  load_meta_series_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/meta_series.csv"
+      temp_table_name: "meta_series_temp"
+      control_table_type: "metadata"
+      preview_limit: 10
+      preview_columns:
+        - "series_code"
+        - "field_type"
+        - "description"
+  
+  load_series_dependencies_to_s3:
+    config:
+      csv_path: "dagster_quickstart/data/series_dependencies.csv"
+      temp_table_name: "series_dependencies_temp"
+      control_table_type: "series_dependencies"

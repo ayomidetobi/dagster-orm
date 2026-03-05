@@ -108,7 +108,11 @@ def _calculate_derived_value(calc_type: str, parent_values: List[float]) -> floa
         raise ValueError(f"Unknown calculation type: {calc_type}")
 
 
-@asset(required_resource_keys={"duckdb"})
+@asset(
+    required_resource_keys={"duckdb"},
+    name="calculate_derived_series",
+    deps=["ingest_bloomberg_data_daily"],
+)
 def calculate_derived_series(
     context: AssetExecutionContext, config: DerivedConfig
 ) -> MaterializeResult:
