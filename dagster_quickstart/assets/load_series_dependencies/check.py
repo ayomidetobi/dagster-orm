@@ -10,6 +10,10 @@ from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 from dagster_quickstart.orm.schema import ControlTableType
 from dagster_quickstart.orm.schema.constants import CALCULATION_FORMULA_TYPES
 from dagster_quickstart.orm.schema.sql_scripts import VALIDATE_PARENT_SERIES_COUNT_QUERY
+from dagster_quickstart.assets.utils.duplicate_checks import (
+    find_duplicate_keys,
+    log_duplicate_errors,
+)
 
 MAX_ERROR_DETAILS = 10
 MAX_METADATA_ROWS = 20
@@ -123,39 +127,93 @@ def validate_parent_series_count(
             )
 
         invalid_count = len(invalid_df)
+        duplicate_df = find_duplicate_keys(
+            duckdb_repo=duckdb_repo,
+            parquet_source=parquet_source,
+            column="child_series_code",
+        )
+        duplicate_count = len(duplicate_df)
 
-        if invalid_count > 0:
-            error_summary = _build_error_summary(invalid_df, invalid_count)
-            description = (
-                f"Found {invalid_count} row(s) with incorrect parent series count. "
-                f"Errors: {error_summary}"
-            )
+        if invalid_count > 0 or duplicate_count > 0:
+            issues = []
+            if invalid_count > 0:
+                issues.append(
+                    f"{invalid_count} row(s) with incorrect parent series count"
+                )
+            if duplicate_count > 0:
+                issues.append(
+                    f"{duplicate_count} duplicate series_code/child_series_code value(s)"
+                )
 
-            context.log.error(f"Validation failed: {description}")
-            _log_validation_errors(context, invalid_df)
+            description = "Found " + " and ".join(issues) + "."
 
-            invalid_details = invalid_df.head(MAX_METADATA_ROWS)[
-                ["child_series_code", "calc_type", "parent_count", "required_count", "error"]
-            ].to_dict("records")
+            if invalid_count > 0:
+                error_summary = _build_error_summary(invalid_df, invalid_count)
+                description += f" Parent series count errors: {error_summary}"
+                context.log.error(
+                    f"Validation failed for parent series count: {error_summary}"
+                )
+                _log_validation_errors(context, invalid_df)
+
+            duplicate_details = None
+            if duplicate_count > 0:
+                duplicate_examples = []
+                for _, row in duplicate_df.head(MAX_ERROR_DETAILS).iterrows():
+                    duplicate_examples.append(
+                        f"{row['child_series_code']} (occurrences={int(row['duplicate_count'])})"
+                    )
+                duplicate_summary = "; ".join(duplicate_examples)
+                description += f" Duplicate series_code values: {duplicate_summary}"
+
+                log_duplicate_errors(
+                    context=context,
+                    duplicate_df=duplicate_df,
+                    key_column="child_series_code",
+                    location_label="series dependencies",
+                )
+
+                duplicate_details = duplicate_df.head(MAX_METADATA_ROWS)[
+                    ["child_series_code", "duplicate_count"]
+                ].to_dict("records")
+
+            metadata = {
+                "invalid_count": invalid_count,
+                "duplicate_count": duplicate_count,
+                "total_count": total_count,
+                "s3_uri": s3_uri,
+            }
+
+            if invalid_count > 0:
+                metadata["invalid_details"] = invalid_df.head(MAX_METADATA_ROWS)[
+                    [
+                        "child_series_code",
+                        "calc_type",
+                        "parent_count",
+                        "required_count",
+                        "error",
+                    ]
+                ].to_dict("records")
+
+            if duplicate_details is not None:
+                metadata["duplicate_details"] = duplicate_details
 
             return AssetCheckResult(
                 passed=False,
                 severity=AssetCheckSeverity.ERROR,
                 description=description,
-                metadata={
-                    "invalid_count": invalid_count,
-                    "total_count": total_count,
-                    "invalid_details": invalid_details,
-                    "s3_uri": s3_uri,
-                },
+                metadata=metadata,
             )
 
         return AssetCheckResult(
             passed=True,
-            description=f"All {total_count} series dependency row(s) have correct parent series count",
+            description=(
+                f"All {total_count} series dependency row(s) have correct parent "
+                "series count and no duplicate series_code/child_series_code values"
+            ),
             metadata={
                 "total_count": total_count,
                 "invalid_count": 0,
+                "duplicate_count": 0,
                 "s3_uri": s3_uri,
             },
         )
