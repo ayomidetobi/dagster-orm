@@ -51,30 +51,30 @@ duckdb_resource.setup_for_execution(None)
 # Create DataAPI instance (will use environment variables by default)
 data_api = DataAPI()
 
-# # Example 1: Query metadata with filters
-# print_separator("Example 1: Query metadata")
-# dataset = data_api.get(
-#     asset_class=["Commodity", "Equity"],
-# )
+# Example 1: Query metadata with filters
+print_separator("Example 1: Query metadata")
+dataset = data_api.get(
+    asset_class=["Commodity", "Equity"],
+)
 
-# metadata_df = dataset.info()
-# print(f"Found {len(metadata_df)} metadata rows")
-# print(f"Columns: {', '.join(metadata_df.columns)}")
-# if not metadata_df.empty:
-#     print(f"\nFirst row:\n{metadata_df}")
+metadata_df = dataset.info()
+print(f"Found {len(metadata_df)} metadata rows")
+print(f"Columns: {', '.join(metadata_df.columns)}")
+if not metadata_df.empty:
+    print(f"\nFirst row:\n{metadata_df}")
 
-# # Example 2: Get value data for the filtered series
-# print_separator("Example 2: Get value data")
-# values_df = dataset.value(
-#     ValueQueryParams(
-#         start="2025-02-01",
-#         end="2026-02-16",
-#     )
-# )
-# print(values_df.head(10))
-# if not values_df.empty:
-#     print(f"Columns: {', '.join(values_df.columns)}")
-#     print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")
+# Example 2: Get value data for the filtered series
+print_separator("Example 2: Get value data")
+values_df = dataset.value(
+    ValueQueryParams(
+        start="2025-02-01",
+        end="2026-02-16",
+    )
+)
+print(values_df.head(10))
+if not values_df.empty:
+    print(f"Columns: {', '.join(values_df.columns)}")
+    # print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")
 
 # # Example 3: Test get_excluding - exclude certain regions
 # print_separator("Example 3: Test get_excluding (exclude region='North America')")
@@ -136,80 +136,80 @@ data_api = DataAPI()
 #     print(f"Regions in get_excluding(region='North America'): {sorted(exclude_regions)}")
 #     print(f"North America excluded: {'North America' not in exclude_regions}")
 
-# Example 7: Test union() - unite multiple queries
-print_separator("Example 7: Test union() - unite multiple queries")
-# Create three different QuerySets
-data_equity = data_api.get(asset_class=["Equity"])
-data_commodity = data_api.get(asset_class=["Commodity"])
-data_fixed_income = data_api.get(asset_class=["Fixed Income"])
+# # Example 7: Test union() - unite multiple queries
+# print_separator("Example 7: Test union() - unite multiple queries")
+# # Create three different QuerySets
+# data_equity = data_api.get(asset_class=["Equity"])
+# data_commodity = data_api.get(asset_class=["Commodity"])
+# data_fixed_income = data_api.get(asset_class=["Fixed Income"])
 
-# Get info for each to see what we're working with
-equity_info = data_equity.info()
-commodity_info = data_commodity.info()
-fixed_income_info = data_fixed_income.info()
+# # Get info for each to see what we're working with
+# equity_info = data_equity.info()
+# commodity_info = data_commodity.info()
+# fixed_income_info = data_fixed_income.info()
 
-print(f"Equity dataset: {len(equity_info)} series")
-print(f"Commodity dataset: {len(commodity_info)} series")
-print(f"Fixed Income dataset: {len(fixed_income_info)} series")
+# print(f"Equity dataset: {len(equity_info)} series")
+# print(f"Commodity dataset: {len(commodity_info)} series")
+# print(f"Fixed Income dataset: {len(fixed_income_info)} series")
 
-# Get series codes for each
-equity_codes = set(equity_info["series_code"].unique())
-commodity_codes = set(commodity_info["series_code"].unique())
-fixed_income_codes = set(fixed_income_info["series_code"].unique())
+# # Get series codes for each
+# equity_codes = set(equity_info["series_code"].unique())
+# commodity_codes = set(commodity_info["series_code"].unique())
+# fixed_income_codes = set(fixed_income_info["series_code"].unique())
 
-print(f"\nEquity series codes: {sorted(equity_codes)}")
-print(f"Commodity series codes: {sorted(commodity_codes)}")
-print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
+# print(f"\nEquity series codes: {sorted(equity_codes)}")
+# print(f"Commodity series codes: {sorted(commodity_codes)}")
+# print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
 
-# Test union with two QuerySets
-print("\nUniting Equity and Commodity datasets...")
-combined_equity_commodity = data_equity.union(data_commodity)
-combined_info = combined_equity_commodity.info()
-combined_codes = set(combined_info["series_code"].unique())
+# # Test union with two QuerySets
+# print("\nUniting Equity and Commodity datasets...")
+# combined_equity_commodity = data_equity.union(data_commodity)
+# combined_info = combined_equity_commodity.info()
+# combined_codes = set(combined_info["series_code"].unique())
 
-print(f"Union of Equity and Commodity: {len(combined_info)} series")
-print(f"Union series codes: {sorted(combined_codes)}")
-print(f"Expected union size: {len(equity_codes | commodity_codes)}")
-print(f"Union correct: {combined_codes == (equity_codes | commodity_codes)}")
+# print(f"Union of Equity and Commodity: {len(combined_info)} series")
+# print(f"Union series codes: {sorted(combined_codes)}")
+# print(f"Expected union size: {len(equity_codes | commodity_codes)}")
+# print(f"Union correct: {combined_codes == (equity_codes | commodity_codes)}")
 
-# Test union with multiple QuerySets at once
-print("\nUniting all three datasets at once...")
-combined_all = data_equity.union(data_commodity, data_fixed_income)
-combined_all_info = combined_all.info()
-combined_all_codes = set(combined_all_info["series_code"].unique())
+# # Test union with multiple QuerySets at once
+# print("\nUniting all three datasets at once...")
+# combined_all = data_equity.union(data_commodity, data_fixed_income)
+# combined_all_info = combined_all.info()
+# combined_all_codes = set(combined_all_info["series_code"].unique())
 
-print(f"Final union (all 3): {len(combined_all_info)} series")
-print(f"Final union series codes: {sorted(combined_all_codes)}")
-print(f"Expected union size: {len(equity_codes | commodity_codes | fixed_income_codes)}")
-print(
-    f"Union correct: {combined_all_codes == (equity_codes | commodity_codes | fixed_income_codes)}"
-)
+# print(f"Final union (all 3): {len(combined_all_info)} series")
+# print(f"Final union series codes: {sorted(combined_all_codes)}")
+# print(f"Expected union size: {len(equity_codes | commodity_codes | fixed_income_codes)}")
+# print(
+#     f"Union correct: {combined_all_codes == (equity_codes | commodity_codes | fixed_income_codes)}"
+# )
 
-# Verify original QuerySets are unchanged
-print("\nVerifying original QuerySets are unchanged...")
-equity_after = data_equity.info()
-commodity_after = data_commodity.info()
-fixed_income_after = data_fixed_income.info()
-print(f"Equity unchanged: {len(equity_after) == len(equity_info)}")
-print(f"Commodity unchanged: {len(commodity_after) == len(commodity_info)}")
-print(f"Fixed Income unchanged: {len(fixed_income_after) == len(fixed_income_info)}")
+# # Verify original QuerySets are unchanged
+# print("\nVerifying original QuerySets are unchanged...")
+# equity_after = data_equity.info()
+# commodity_after = data_commodity.info()
+# fixed_income_after = data_fixed_income.info()
+# print(f"Equity unchanged: {len(equity_after) == len(equity_info)}")
+# print(f"Commodity unchanged: {len(commodity_after) == len(commodity_info)}")
+# print(f"Fixed Income unchanged: {len(fixed_income_after) == len(fixed_income_info)}")
 
-# Test that we can get values from the unioned QuerySet
-print("\nTesting value() on unioned QuerySet...")
-try:
-    union_values = combined_all.value(
-        ValueQueryParams(
-            start="2025-01-01",
-            end="2025-12-31",
-        )
-    )
-    print("Successfully retrieved value data from unioned QuerySet")
-    print(f"Shape: {union_values.shape}")
-    if not union_values.empty:
-        print(f"Columns: {list(union_values.columns)}")
-        print(f"\nFirst few rows:\n{union_values.head()}")
-except Exception as e:
-    print(f"Note: Could not retrieve values (may need data loaded): {e}")
+# # Test that we can get values from the unioned QuerySet
+# print("\nTesting value() on unioned QuerySet...")
+# try:
+#     union_values = combined_all.value(
+#         ValueQueryParams(
+#             start="2025-01-01",
+#             end="2025-12-31",
+#         )
+#     )
+#     print("Successfully retrieved value data from unioned QuerySet")
+#     print(f"Shape: {union_values.shape}")
+#     if not union_values.empty:
+#         print(f"Columns: {list(union_values.columns)}")
+#         print(f"\nFirst few rows:\n{union_values.head()}")
+# except Exception as e:
+#     print(f"Note: Could not retrieve values (may need data loaded): {e}")
 
 # # Example 8: Test chained filter() - Dataset → Subset → Smaller subset
 # print_separator("Example 8: Test chained filter() - Dataset → Subset → Smaller subset")
