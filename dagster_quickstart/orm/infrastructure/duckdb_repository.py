@@ -129,7 +129,12 @@ class DuckDbRepository:
         except Exception as exc:
             raise InvalidQueryError(f"Error executing raw SQL: {exc!s}") from exc
 
-    def copy_builder_to_parquet(self, query_builder: QueryBuilder, destination_uri: str) -> None:
+    def copy_builder_to_parquet(
+        self,
+        query_builder: QueryBuilder,
+        destination_uri: str,
+        compression: Optional[str] = None,
+    ) -> None:
         """Copy query results to Parquet file.
 
         Uses QueryBuilder to build SELECT query, then wraps it in COPY statement.
@@ -137,13 +142,18 @@ class DuckDbRepository:
         Args:
             query_builder: QueryBuilder instance with SELECT query configured
             destination_uri: Full URI to destination Parquet file (S3 or local)
+            compression: Optional Parquet codec (e.g. ZSTD, SNAPPY). Omit for DuckDB default.
 
         Raises:
             InvalidQueryError: If copy operation fails
         """
         try:
             select_sql, params = query_builder.build()
-            copy_sql = f"COPY ({select_sql}) TO '{destination_uri}' (FORMAT PARQUET)"
+            esc = destination_uri.replace("'", "''")
+            fmt = "FORMAT PARQUET"
+            if compression:
+                fmt = f"{fmt}, COMPRESSION {compression.upper()}"
+            copy_sql = f"COPY ({select_sql}) TO '{esc}' ({fmt})"
             if params:
                 self._connection.execute(copy_sql, params)
             else:

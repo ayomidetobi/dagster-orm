@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+import pandas as pd
 from dagster import (
     AssetExecutionContext,
     MaterializeResult,
@@ -21,7 +22,7 @@ from dagster_quickstart.assets.ingestion.bloomberg.config import (
     IngestionMode,
 )
 from dagster_quickstart.orm.data_api import DataAPI
-from dagster_quickstart.orm.schema import TickerSource
+from dagster_quickstart.orm.schema import TickerSource, ValueColumns
 from dagster_quickstart.utils.datetime_utils import ensure_utc
 from dagster_quickstart.utils.pypdl_helpers import (
     build_pypdl_request_params,
@@ -152,6 +153,231 @@ def _build_ingestion_invalid_details(
     return rows
 
 
+def _transform_layer_long_dataframe(
+    tickers: List[str],
+    ticker_to_series_code: Dict[str, str],
+    data_points: Dict[str, Any],
+    request_dates: List[datetime],
+) -> Tuple[pd.DataFrame, Dict[str, TickerMergeStats]]:
+    """Merge per-ticker API payloads into one long-format frame (timestamp, series_code, value)."""
+    rows: List[Dict[str, Any]] = []
+    merge_stats_by_ticker: Dict[str, TickerMergeStats] = {}
+    for ticker in tickers:
+        series_code = ticker_to_series_code.get(ticker)
+        if not series_code:
+            continue
+        raw = data_points.get(ticker)
+        merged, stats = _merge_ticker_points_with_null_fill(
+            raw if isinstance(raw, list) else None,
+            request_dates,
+        )
+        merge_stats_by_ticker[ticker] = stats
+        for point in merged:
+            rows.append(
+                {
+                    ValueColumns.TIMESTAMP: point["timestamp"],
+                    ValueColumns.SERIES_CODE: series_code,
+                    ValueColumns.VALUE: point.get("value"),
+                }
+            )
+    if not rows:
+        return (
+            pd.DataFrame(
+                columns=[
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.VALUE,
+                ]
+            ),
+            merge_stats_by_ticker,
+        )
+    return pd.DataFrame(rows), merge_stats_by_ticker
+
+
+def _materialize_bloomberg_wide_partition(
+    context: AssetExecutionContext,
+    config: BloombergIngestionConfig,
+    field_type: str,
+    series_codes: List[str],
+    metadata_series_count: int,
+) -> MaterializeResult:
+    """Fetch → long → pivot → monthly wide Parquet partitions (shared daily/backfill path)."""
+    duckdb_resource = context.resources.duckdb
+    pypdl_resource = context.resources.pypdl
+    data_api = DataAPI(duckdb_resource)
+
+    start_date = config.get_start_date()
+    end_date = config.get_end_date()
+
+    series_code_to_ticker = data_api.get_tickers(
+        series_codes=series_codes,
+        field_type=field_type,
+        ticker_source=TickerSource.BLOOMBERG,
+    )
+
+    if not series_code_to_ticker:
+        context.log.warning(
+            f"No tickers found for {len(series_codes)} series codes",
+            extra={"field_type": field_type, "series_count": len(series_codes)},
+        )
+        return MaterializeResult(
+            metadata={
+                "field_type": field_type,
+                "series_count": metadata_series_count,
+                "partitions_written": 0,
+                "wide_row_count_max": 0,
+                "wide_column_count": 0,
+                "partition_paths_sample": MetadataValue.json([]),
+            }
+        )
+
+    if not config.force_refresh:
+        data_exists_map = data_api.check_wide_data_exists_for_date_range(
+            series_codes=series_codes,
+            start_date=start_date,
+            end_date=end_date,
+            field_type=field_type,
+            ticker_source=TickerSource.BLOOMBERG,
+        )
+        series_codes_to_fetch = [sc for sc in series_codes if not data_exists_map.get(sc, False)]
+
+        if not series_codes_to_fetch:
+            context.log.info(
+                "All series have wide-partition coverage for date range; skipping PyPDL",
+                extra={
+                    "field_type": field_type,
+                    "series_count": len(series_codes),
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                },
+            )
+            return MaterializeResult(
+                metadata={
+                    "field_type": field_type,
+                    "series_count": metadata_series_count,
+                    "tickers_fetched": 0,
+                    "partitions_written": 0,
+                    "wide_row_count_max": 0,
+                    "wide_column_count": 0,
+                    "partition_paths_sample": MetadataValue.json([]),
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "skipped": True,
+                }
+            )
+
+        series_codes = series_codes_to_fetch
+        series_code_to_ticker = {
+            sc: t for sc, t in series_code_to_ticker.items() if sc in series_codes_to_fetch
+        }
+        context.log.info(
+            f"Wide idempotency: fetching {len(series_codes_to_fetch)} series, "
+            f"skipping {len(data_exists_map) - len(series_codes_to_fetch)} with full coverage",
+            extra={"field_type": field_type},
+        )
+
+    ticker_to_series_code = {v: k for k, v in series_code_to_ticker.items()}
+    tickers = list(ticker_to_series_code.keys())
+
+    context.log.info(
+        f"Fetching data for {len(tickers)} tickers",
+        extra={"field_type": field_type, "ticker_count": len(tickers)},
+    )
+
+    data_source, _, _, _ = build_pypdl_request_params(
+        field_name=field_type,
+        tickers=tickers,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    data_points, error_reason = fetch_bloomberg_data(
+        pypdl_resource=pypdl_resource,
+        data_source=data_source,
+        start_date=start_date,
+        end_date=end_date,
+        series_codes=series_codes,
+        context=context,
+        data_codes=tickers,
+        use_dummy_data=config.use_dummy_data,
+    )
+
+    if error_reason:
+        context.log.warning(
+            "PyPDL fetch failed; persisting null-filled rows for requested range",
+            extra={
+                "field_type": field_type,
+                "error_reason": error_reason,
+                "ticker_count": len(tickers),
+            },
+        )
+
+    if data_points is None:
+        data_points = {}
+
+    request_dates = _dates_inclusive_utc(start_date, end_date)
+    long_df, merge_stats_by_ticker = _transform_layer_long_dataframe(
+        tickers=tickers,
+        ticker_to_series_code=ticker_to_series_code,
+        data_points=data_points,
+        request_dates=request_dates,
+    )
+
+    invalid_details_full = _build_ingestion_invalid_details(
+        tickers=tickers,
+        ticker_to_series_code=ticker_to_series_code,
+        error_reason=error_reason,
+        merge_stats_by_ticker=merge_stats_by_ticker,
+    )
+    invalid_count = len(invalid_details_full)
+    invalid_series_codes_sorted = sorted({r["series_code"] for r in invalid_details_full})
+
+    write_stats = data_api.save_bloomberg_wide_from_long(
+        long_df=long_df,
+        field_type=field_type,
+        ticker_source=TickerSource.BLOOMBERG,
+        start_date=start_date,
+        end_date=end_date,
+        force_refresh=config.force_refresh,
+    )
+
+    context.log.info(
+        "Wide partition write complete",
+        extra={
+            "field_type": field_type,
+            "partitions_written": write_stats["partitions_written"],
+            "wide_row_count_max": write_stats["row_count_max"],
+            "wide_column_count": write_stats["column_count"],
+        },
+    )
+
+    max_paths = 20
+    paths = write_stats["written_relative_paths"][:max_paths]
+
+    result_metadata: Dict[str, Any] = {
+        "field_type": field_type,
+        "series_count": metadata_series_count,
+        "tickers_fetched": len(tickers),
+        "partitions_written": write_stats["partitions_written"],
+        "wide_row_count_max": write_stats["row_count_max"],
+        "wide_column_count": write_stats["column_count"],
+        "data_points_saved": int(len(long_df)),
+        "partition_paths_sample": MetadataValue.json(paths),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "invalid_count": invalid_count,
+    }
+    if invalid_count > 0:
+        result_metadata["invalid_details"] = MetadataValue.json(
+            invalid_details_full[:MAX_INVALID_METADATA_ROWS]
+        )
+        result_metadata["invalid_series_codes"] = MetadataValue.json(invalid_series_codes_sorted)
+    if error_reason:
+        result_metadata["pypdl_error_reason"] = _truncate_invalid_value(error_reason)
+
+    return MaterializeResult(metadata=result_metadata)
+
+
 # Define field_type partitions
 FIELD_TYPE_PARTITIONS = StaticPartitionsDefinition(
     [
@@ -177,37 +403,28 @@ def ingest_bloomberg_data_daily(
     context: AssetExecutionContext,
     config: BloombergIngestionConfig,
 ) -> MaterializeResult:
-    """Daily ingestion asset for Bloomberg data via PyPDL.
+    """Daily ingestion: PyPDL fetch, pivot to wide time-by-series matrix, monthly Parquet partitions.
 
-    Fetches time-series data for all series matching the partition's field_type
-    and saves to S3. Uses series_code from partition or fetches from metadata.
+    Storage layout: ``value-data/wide/{source}/field_type={ft}/year=YYYY/month=MM/data.parquet``.
 
     Args:
         context: Dagster asset execution context
         config: BloombergIngestionConfig with ingestion settings
 
     Returns:
-        MaterializeResult with ingestion metadata for this partition
+        MaterializeResult with partitions_written, row/column counts, and sample paths
     """
-    # Ensure mode is DAILY
     if config.mode != IngestionMode.DAILY:
         raise ValueError(
             f"ingest_bloomberg_data_daily requires mode=IngestionMode.DAILY, got {config.mode}"
         )
 
-    duckdb_resource = context.resources.duckdb
-    pypdl_resource = context.resources.pypdl
-    data_api = DataAPI(duckdb_resource)
-
-    # Get field_type from partition
     field_type = context.partition_key
-
-    # Get date range from config (defaults to today)
     start_date = config.get_start_date()
     end_date = config.get_end_date()
 
     context.log.info(
-        f"Starting daily ingestion for field_type={field_type}",
+        f"Starting daily wide ingestion for field_type={field_type}",
         extra={
             "field_type": field_type,
             "start_date": start_date.isoformat(),
@@ -216,9 +433,10 @@ def ingest_bloomberg_data_daily(
         },
     )
 
-    # Get series codes for this field_type
+    data_api = DataAPI(context.resources.duckdb)
     series_codes = data_api.get_series_codes(
         field_type=field_type,
+        ticker_source=TickerSource.BLOOMBERG,
     )
 
     if not series_codes:
@@ -230,8 +448,11 @@ def ingest_bloomberg_data_daily(
             metadata={
                 "field_type": field_type,
                 "series_count": 0,
+                "partitions_written": 0,
+                "wide_row_count_max": 0,
+                "wide_column_count": 0,
                 "data_points_saved": 0,
-                "s3_paths": MetadataValue.json([]),
+                "partition_paths_sample": MetadataValue.json([]),
             }
         )
 
@@ -240,211 +461,81 @@ def ingest_bloomberg_data_daily(
         extra={"field_type": field_type, "series_count": len(series_codes)},
     )
 
-    # Get ticker mapping for all series codes (returns series_code -> ticker)
-    series_code_to_ticker = data_api.get_tickers(
-        series_codes=series_codes,
-        field_type=field_type,
-        ticker_source=TickerSource.BLOOMBERG,
+    metadata_series_count = len(series_codes)
+    return _materialize_bloomberg_wide_partition(
+        context,
+        config,
+        field_type,
+        series_codes,
+        metadata_series_count,
     )
-
-    if not series_code_to_ticker:
-        context.log.warning(
-            f"No tickers found for {len(series_codes)} series codes",
-            extra={"field_type": field_type, "series_count": len(series_codes)},
-        )
-        return MaterializeResult(
-            metadata={
-                "field_type": field_type,
-                "series_count": len(series_codes),
-                "data_points_saved": 0,
-                "s3_paths": MetadataValue.json([]),
-            }
-        )
-
-    # Track original series count for metadata
-    original_series_count = len(series_codes)
-
-    # Check if data already exists for idempotency (skip PyPDL query if force_refresh=False)
-    if not config.force_refresh:
-        data_exists_map = data_api.check_data_exists_for_date_range(
-            series_codes=series_codes,
-            start_date=start_date,
-            end_date=end_date,
-            ticker_source=TickerSource.BLOOMBERG,
-        )
-
-        # Filter out series codes that already have data
-        series_codes_to_fetch = [sc for sc in series_codes if not data_exists_map.get(sc, False)]
-
-        if not series_codes_to_fetch:
-            context.log.info(
-                f"All {len(series_codes)} series already have data for date range, skipping PyPDL query",
-                extra={
-                    "field_type": field_type,
-                    "series_count": len(series_codes),
-                    "start_date": start_date.isoformat(),
-                    "end_date": end_date.isoformat(),
-                },
-            )
-            return MaterializeResult(
-                metadata={
-                    "field_type": field_type,
-                    "series_count": len(series_codes),
-                    "tickers_fetched": 0,
-                    "series_saved": 0,
-                    "data_points_saved": 0,
-                    "s3_paths": MetadataValue.json([]),
-                    "start_date": start_date.isoformat(),
-                    "end_date": end_date.isoformat(),
-                    "skipped": True,
-                }
-            )
-
-        # Update series_codes and ticker mappings to only include those that need fetching
-        series_codes = series_codes_to_fetch
-        series_code_to_ticker = {
-            sc: ticker
-            for sc, ticker in series_code_to_ticker.items()
-            if sc in series_codes_to_fetch
-        }
-
-        context.log.info(
-            f"Skipping {len(data_exists_map) - len(series_codes_to_fetch)} series with existing data, "
-            f"fetching {len(series_codes_to_fetch)} series",
-            extra={
-                "field_type": field_type,
-                "series_to_fetch": len(series_codes_to_fetch),
-                "series_skipped": len(data_exists_map) - len(series_codes_to_fetch),
-            },
-        )
-
-    # Reverse mapping for save_value_data_to_s3 (needs ticker -> series_code)
-    ticker_to_series_code = {v: k for k, v in series_code_to_ticker.items()}
-    tickers = list(ticker_to_series_code.keys())
-
-    context.log.info(
-        f"Fetching data for {len(tickers)} tickers",
-        extra={"field_type": field_type, "ticker_count": len(tickers)},
-    )
-
-    # Build PyPDL request parameters
-    data_source, _, _, _ = build_pypdl_request_params(
-        field_name=field_type,
-        tickers=tickers,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    # Fetch data from PyPDL
-    data_points, error_reason = fetch_bloomberg_data(
-        pypdl_resource=pypdl_resource,
-        data_source=data_source,
-        start_date=start_date,
-        end_date=end_date,
-        series_codes=series_codes,
-        context=context,
-        data_codes=tickers,
-        use_dummy_data=config.use_dummy_data,
-    )
-
-    if error_reason:
-        context.log.warning(
-            "PyPDL fetch failed; persisting null values for full requested date range per series",
-            extra={
-                "field_type": field_type,
-                "error_reason": error_reason,
-                "ticker_count": len(tickers),
-            },
-        )
-
-    if data_points is None:
-        data_points = {}
-
-    request_dates = _dates_inclusive_utc(start_date, end_date)
-
-    # Convert ticker-keyed results to series_code keys; fill missing tickers/days with None
-    data_points_by_series_code: Dict[str, List[Dict[str, Any]]] = {}
-    merge_stats_by_ticker: Dict[str, TickerMergeStats] = {}
-    for ticker in tickers:
-        series_code = ticker_to_series_code.get(ticker)
-        if not series_code:
-            continue
-        raw = data_points.get(ticker)
-        merged, stats = _merge_ticker_points_with_null_fill(
-            raw if isinstance(raw, list) else None,
-            request_dates,
-        )
-        data_points_by_series_code[series_code] = merged
-        merge_stats_by_ticker[ticker] = stats
-
-    invalid_details_full = _build_ingestion_invalid_details(
-        tickers=tickers,
-        ticker_to_series_code=ticker_to_series_code,
-        error_reason=error_reason,
-        merge_stats_by_ticker=merge_stats_by_ticker,
-    )
-    invalid_count = len(invalid_details_full)
-    invalid_series_codes_sorted = sorted({r["series_code"] for r in invalid_details_full})
-
-    # Save data to S3 using series_code keys
-    saved_paths = data_api.save_value_data_to_s3(
-        data_points=data_points_by_series_code,
-        ticker_source=TickerSource.BLOOMBERG,
-        force_refresh=config.force_refresh,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    # Calculate total data points saved
-    total_data_points = sum(len(points) for points in data_points_by_series_code.values())
-
-    context.log.info(
-        f"Saved data for {len(saved_paths)} series to S3",
-        extra={
-            "field_type": field_type,
-            "series_saved": len(saved_paths),
-            "total_data_points": total_data_points,
-        },
-    )
-
-    # Limit number of S3 paths reported in metadata to avoid overly large payloads
-    max_s3_paths = 20
-    s3_paths_list = list(saved_paths.values())
-    limited_s3_paths = s3_paths_list[:max_s3_paths]
-
-    result_metadata: Dict[str, Any] = {
-        "field_type": field_type,
-        "series_count": original_series_count,
-        "tickers_fetched": len(tickers),
-        "series_saved": len(saved_paths),
-        "data_points_saved": total_data_points,
-        "s3_paths": MetadataValue.json(limited_s3_paths),
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "invalid_count": invalid_count,
-    }
-    if invalid_count > 0:
-        result_metadata["invalid_details"] = MetadataValue.json(
-            invalid_details_full[:MAX_INVALID_METADATA_ROWS]
-        )
-        result_metadata["invalid_series_codes"] = MetadataValue.json(invalid_series_codes_sorted)
-    if error_reason:
-        result_metadata["pypdl_error_reason"] = _truncate_invalid_value(error_reason)
-
-    return MaterializeResult(metadata=result_metadata)
 
 
 @asset(
     partitions_def=FIELD_TYPE_PARTITIONS,
     required_resource_keys={"duckdb", "pypdl"},
+    deps=["load_lookup_tables_to_s3", "load_meta_series_to_s3", "load_series_dependencies_to_s3"],
 )
 def ingest_bloomberg_data_backfill(
     context: AssetExecutionContext,
     config: BloombergIngestionConfig,
 ) -> MaterializeResult:
-    """Daily ingestion asset for Bloomberg data via PyPDL.
+    """Backfill selected ``series_codes`` into the same wide monthly partitions as daily ingestion.
 
-    Fetches time-series data for all series matching the partition's field_type
-    and saves to S3 via DataAPI. Partitioned by field_type for parallel processing.
+    Only series present in metadata for the partition ``field_type`` are processed; others are
+    ignored. Merging updates only the affected columns and timestamps; other series in the
+    partition are preserved.
     """
-    pass  # TODO: Implement this
+    if config.mode != IngestionMode.BACKFILL:
+        raise ValueError(
+            f"ingest_bloomberg_data_backfill requires mode=IngestionMode.BACKFILL, got {config.mode}"
+        )
+    if not config.series_codes:
+        raise ValueError("ingest_bloomberg_data_backfill requires non-empty config.series_codes")
+
+    field_type = context.partition_key
+    start_date = config.get_start_date()
+    end_date = config.get_end_date()
+
+    context.log.info(
+        f"Starting Bloomberg wide backfill for field_type={field_type}",
+        extra={
+            "field_type": field_type,
+            "requested_series": len(config.series_codes),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+    )
+
+    data_api = DataAPI(context.resources.duckdb)
+    allowed = set(
+        data_api.get_series_codes(
+            field_type=field_type,
+            ticker_source=TickerSource.BLOOMBERG,
+        )
+    )
+    series_codes = [sc for sc in config.series_codes if sc in allowed]
+
+    if not series_codes:
+        context.log.warning(
+            "No requested series_codes match metadata for this field_type partition",
+            extra={"field_type": field_type},
+        )
+        return MaterializeResult(
+            metadata={
+                "field_type": field_type,
+                "series_count": 0,
+                "partitions_written": 0,
+                "wide_row_count_max": 0,
+                "wide_column_count": 0,
+                "partition_paths_sample": MetadataValue.json([]),
+            }
+        )
+
+    return _materialize_bloomberg_wide_partition(
+        context,
+        config,
+        field_type,
+        series_codes,
+        metadata_series_count=len(series_codes),
+    )

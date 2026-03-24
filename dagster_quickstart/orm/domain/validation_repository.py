@@ -46,8 +46,8 @@ class ValidationRepository:
     ) -> Tuple[QueryBuilder, List]:
         """Build QueryBuilder with WHERE clauses for filters.
 
-        Note: QueryBuilder.where_in() uses named parameters, but DuckDB needs
-        positional parameters. We handle IN clauses manually with ? placeholders.
+        Single-value filters use ``col = ?`` / ``col != ?`` with values in ``param_values`` so
+        bind order matches ``IN`` clauses (DuckDB positional parameters).
 
         Args:
             filters: Optional dictionary mapping column names to filter values
@@ -65,7 +65,8 @@ class ValidationRepository:
                     # Exclude mode: ignore empty lists, use NOT IN for non-empty lists
                     if filter_values:
                         if len(filter_values) == 1:
-                            query_builder.where(filter_field, "!=", filter_values[0])
+                            query_builder.where_clauses.append(f"{filter_field} != ?")
+                            param_values.append(filter_values[0])
                         else:
                             placeholders = ", ".join(["?"] * len(filter_values))
                             query_builder.where_clauses.append(
@@ -77,9 +78,8 @@ class ValidationRepository:
                     if not filter_values:
                         query_builder.where_clauses.append("1=0")
                     elif len(filter_values) == 1:
-                        # Use QueryBuilder.where() which handles parameters internally
-                        query_builder.where(filter_field, "=", filter_values[0])
-                        # Don't add to param_values - query_builder.build() will return it
+                        query_builder.where_clauses.append(f"{filter_field} = ?")
+                        param_values.append(filter_values[0])
                     else:
                         # For IN clauses, manually add placeholders and track parameters
                         # because QueryBuilder.where_in() uses named params but DuckDB needs positional

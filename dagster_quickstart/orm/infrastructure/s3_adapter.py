@@ -8,6 +8,8 @@ from dagster_quickstart.orm.s3_paths import (
     build_full_s3_uri,
     build_s3_control_table_path,
     build_s3_value_data_path,
+    build_s3_wide_field_glob_relative,
+    build_s3_wide_value_partition_path,
 )
 from dagster_quickstart.orm.schema import (
     S3_PARQUET_FILE_NAME,
@@ -62,6 +64,28 @@ class S3Adapter:
             Full S3 URI (e.g., 's3://bucket/control/lookup/data.parquet')
         """
         relative_path = build_s3_control_table_path("lookup", S3_PARQUET_FILE_NAME)
+        return build_full_s3_uri(relative_path, self._bucket)
+
+    def get_wide_value_partition_uri(
+        self,
+        field_type: str,
+        year: int,
+        month: int,
+        tickersource: TickerSource = TickerSource.BLOOMBERG,
+    ) -> str:
+        """Full S3 URI for a wide-format monthly value partition."""
+        relative_path = build_s3_wide_value_partition_path(
+            field_type, year, month, tickersource, S3_PARQUET_FILE_NAME
+        )
+        return build_full_s3_uri(relative_path, self._bucket)
+
+    def get_wide_field_glob_uri(
+        self,
+        field_type: str,
+        tickersource: TickerSource = TickerSource.BLOOMBERG,
+    ) -> str:
+        """Full S3 URI glob for all monthly Parquet files under a vendor field partition."""
+        relative_path = build_s3_wide_field_glob_relative(field_type, tickersource)
         return build_full_s3_uri(relative_path, self._bucket)
 
     def get_value_data_uri(

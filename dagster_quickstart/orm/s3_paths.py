@@ -25,6 +25,46 @@ def build_s3_control_table_path(control_type: str, filename: str = S3_PARQUET_FI
     return f"{S3_BASE_PATH_CONTROL}/{control_type}/{filename}"
 
 
+def build_s3_wide_value_partition_path(
+    field_type: str,
+    year: int,
+    month: int,
+    tickersource: TickerSource = TickerSource.BLOOMBERG,
+    filename: str = S3_PARQUET_FILE_NAME,
+) -> str:
+    """Relative S3 path for wide-format value Parquet (hive-style year/month).
+
+    One file per (ticker source, field_type, year, month) with rows=timestamp,
+    columns=series_code. Does not partition by series_code.
+
+    Args:
+        field_type: Bloomberg field / partition key (e.g. PX_LAST).
+        year: Calendar year.
+        month: Calendar month (1-12).
+        tickersource: Data vendor / ticker source.
+        filename: Parquet file name.
+
+    Returns:
+        Relative path under the bucket.
+    """
+    return (
+        f"{S3_BASE_PATH_VALUE_DATA}/wide/{tickersource.value}/"
+        f"field_type={field_type}/year={year:04d}/month={month:02d}/{filename}"
+    )
+
+
+def build_s3_wide_field_glob_relative(
+    field_type: str,
+    tickersource: TickerSource = TickerSource.BLOOMBERG,
+    filename: str = S3_PARQUET_FILE_NAME,
+) -> str:
+    """Relative path glob under one vendor field (all year/month Parquet files)."""
+    return (
+        f"{S3_BASE_PATH_VALUE_DATA}/wide/{tickersource.value}/"
+        f"field_type={field_type}/**/{filename}"
+    )
+
+
 def build_s3_value_data_path(
     series_code: str,
     tickersource: TickerSource = TickerSource.BLOOMBERG,

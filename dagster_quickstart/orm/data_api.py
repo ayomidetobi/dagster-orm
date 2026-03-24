@@ -1,6 +1,7 @@
 """DataAPI class for semantic ORM layer."""
 
-from typing import Any, Dict, List, Optional
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from decouple import config
@@ -20,14 +21,40 @@ from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
-from dagster_quickstart.orm.s3_paths import build_s3_value_data_path
+from dagster_quickstart.orm.s3_paths import (
+    build_s3_value_data_path,
+    build_s3_wide_value_partition_path,
+)
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
+from dagster_quickstart.orm.wide_value_storage import (
+    dates_by_year_month,
+    iter_year_months,
+    merge_wide_partition,
+    pivot_long_to_wide,
+    slice_wide_for_month,
+    wide_series_covers_dates,
+)
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 from dagster_quickstart.utils.datetime_utils import (
     normalize_date_to_utc,
     normalize_pandas_timestamp_to_utc,
 )
+
+_FIELD_COLUMN_BY_TICKER_SOURCE = {
+    TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
+    TickerSource.MDS: MetadataColumns.MDS_FIELD,
+}
+
+
+def _metadata_vendor_field_column(ticker_source: TickerSource) -> str:
+    """Metadata Parquet column for vendor field code (e.g. PX_LAST, YIELD)."""
+    if ticker_source not in _FIELD_COLUMN_BY_TICKER_SOURCE:
+        raise ValueError(
+            f"No field column for ticker_source={ticker_source!r}; "
+            f"supported: {list(_FIELD_COLUMN_BY_TICKER_SOURCE.keys())}"
+        )
+    return _FIELD_COLUMN_BY_TICKER_SOURCE[ticker_source]
 
 
 class DataAPI:
@@ -97,12 +124,16 @@ class DataAPI:
         self._metadata_repository = MetadataRepository(
             duckdb_repository, parquet_adapter, s3_adapter
         )
-        self._value_repository = ValueRepository(duckdb_repository, parquet_adapter, s3_adapter)
         self._temp_table_manager = temp_table_manager
 
-        # Create ValidationRepository for wide-format lookup table validation
         self._validation_repository = ValidationRepository(
             duckdb_repository, parquet_adapter, s3_adapter, temp_table_manager
+        )
+        self._value_repository = ValueRepository(
+            duckdb_repository,
+            parquet_adapter,
+            s3_adapter,
+            validation_repository=self._validation_repository,
         )
 
     def get(self, **filters: Any) -> QuerySet:
@@ -168,7 +199,9 @@ class DataAPI:
         series_code: str,
         tickersource: TickerSource = TickerSource.BLOOMBERG,
     ) -> pd.DataFrame:
-        """Load value data for a specific series_code from S3 Parquet file.
+        """Load value data for a specific series_code from S3.
+
+        Bloomberg/MDS rows come from wide monthly partitions; other sources use legacy long Parquet.
 
         Args:
             series_code: Series code identifier
@@ -183,18 +216,22 @@ class DataAPI:
         self,
         dataframe: pd.DataFrame,
         relative_path: str,
+        parquet_compression: Optional[str] = None,
     ) -> None:
         """Save DataFrame to S3 as Parquet file.
 
         Args:
             dataframe: DataFrame to save
             relative_path: Relative S3 path (without bucket)
+            parquet_compression: Optional Parquet codec (e.g. zstd, snappy) for COPY.
         """
         temp_table_name = self._temp_table_manager.create_temp_table_from_dataframe(dataframe)
         full_uri = self._metadata_repository._s3_adapter.get_relative_path_uri(relative_path)
 
         query_builder = QueryBuilder(temp_table_name)
-        self._metadata_repository._repository.copy_builder_to_parquet(query_builder, full_uri)
+        self._metadata_repository._repository.copy_builder_to_parquet(
+            query_builder, full_uri, compression=parquet_compression
+        )
         self._temp_table_manager.drop_temp_table(temp_table_name)
 
     def get_or_create_temp_table(
@@ -287,8 +324,11 @@ class DataAPI:
         """Get list of series codes from metadata.
 
         Args:
-            field_type: Optional field_type filter
-            ticker_source: Optional ticker_source filter (default: BLOOMBERG)
+            field_type: Optional vendor field code (e.g. PX_LAST). Filter uses ``bbg_field`` when
+                ``ticker_source`` is Bloomberg (default), or ``mds_field`` when MDS.
+            ticker_source: Selects which vendor field column applies to ``field_type`` (Bloomberg vs
+                MDS). Metadata Parquet has no ``ticker_source`` column, so this does not add a SQL
+                filter—only ``bbg_field`` / ``mds_field`` does.
             **filters: Additional metadata filters
 
         Returns:
@@ -303,6 +343,13 @@ class DataAPI:
                 query_filters[filter_field] = filter_value
             else:
                 query_filters[filter_field] = [str(filter_value)]
+
+        if field_type:
+            source_for_field = (
+                ticker_source if ticker_source is not None else TickerSource.BLOOMBERG
+            )
+            field_col = _metadata_vendor_field_column(source_for_field)
+            query_filters[field_col] = [field_type]
 
         metadata_df = self.get(**query_filters).info()
 
@@ -321,8 +368,9 @@ class DataAPI:
 
         Args:
             series_codes: List of series codes to get tickers for
-            field_type: Optional field_type filter
-            ticker_source: Optional ticker_source (default: BLOOMBERG)
+            field_type: Optional vendor field code; matched on ``bbg_field`` or ``mds_field`` per
+                ``ticker_source`` (default Bloomberg).
+            ticker_source: Which vendor ticker column to read (``bbg_ticker`` vs ``mds_ticker``).
 
         Returns:
             Dict mapping series_code to ticker
@@ -343,11 +391,6 @@ class DataAPI:
             TickerSource.MDS: MetadataColumns.MDS_TICKER,
         }
 
-        field_column_map = {
-            TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
-            TickerSource.MDS: MetadataColumns.MDS_FIELD,
-        }
-
         if ticker_source not in ticker_column_map:
             raise ValueError(
                 f"Ticker source '{ticker_source.value}' is not supported. "
@@ -355,17 +398,16 @@ class DataAPI:
             )
 
         ticker_column = ticker_column_map[ticker_source]
-        field_column = field_column_map[ticker_source]
 
         query_filters: Dict[str, List[str]] = {
             MetadataColumns.SERIES_CODE: series_codes,
         }
 
-        # if field_type:
-        #     query_filters[field_column] = [field_type]
+        if field_type:
+            field_col = _metadata_vendor_field_column(ticker_source)
+            query_filters[field_col] = [field_type]
 
         metadata_df = self.get(**query_filters).info()
-        print(f"metadata_df: {metadata_df}")
 
         if metadata_df.empty:
             return {}
@@ -439,8 +481,31 @@ class DataAPI:
         start_date_utc = normalize_date_to_utc(start_date)
         end_date_utc = normalize_date_to_utc(end_date)
 
-        result: Dict[str, bool] = {}
+        if ticker_source in (TickerSource.BLOOMBERG, TickerSource.MDS):
+            field_map = self._value_repository.get_vendor_field_map(
+                series_codes, ticker_source
+            )
+            by_field: Dict[str, List[str]] = defaultdict(list)
+            for sc in series_codes:
+                vf = field_map.get(sc)
+                if vf:
+                    by_field[vf].append(sc)
+            result: Dict[str, bool] = {}
+            for vf, codes in by_field.items():
+                sub = self.check_wide_data_exists_for_date_range(
+                    series_codes=codes,
+                    start_date=start_date,
+                    end_date=end_date,
+                    field_type=vf,
+                    ticker_source=ticker_source,
+                )
+                result.update(sub)
+            for sc in series_codes:
+                if sc not in result:
+                    result[sc] = False
+            return result
 
+        result = {}
         for series_code in series_codes:
             existing_df = self._value_repository.get_series_data(
                 series_code=series_code,
@@ -462,6 +527,145 @@ class DataAPI:
             result[series_code] = has_overlap
 
         return result
+
+    def read_wide_value_partition(
+        self,
+        field_type: str,
+        year: int,
+        month: int,
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+    ) -> pd.DataFrame:
+        """Load a monthly wide Parquet partition as a DataFrame (timestamp index, series columns)."""
+        relative_path = build_s3_wide_value_partition_path(
+            field_type, year, month, ticker_source
+        )
+        uri = self._metadata_repository._s3_adapter.get_relative_path_uri(relative_path)
+        esc = uri.replace("'", "''")
+        sql = f"SELECT * FROM read_parquet('{esc}')"
+        try:
+            df = self._metadata_repository._repository.execute_raw_sql(sql)
+        except Exception:
+            return pd.DataFrame()
+        if df.empty or ValueColumns.TIMESTAMP not in df.columns:
+            return pd.DataFrame()
+        df = normalize_pandas_timestamp_to_utc(df, ValueColumns.TIMESTAMP)
+        return df.set_index(ValueColumns.TIMESTAMP).sort_index()
+
+    def write_wide_value_partition(
+        self,
+        wide_df: pd.DataFrame,
+        field_type: str,
+        year: int,
+        month: int,
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+        parquet_compression: str = "zstd",
+    ) -> str:
+        """Write one wide monthly partition (overwrites object). Returns relative S3 path."""
+        relative_path = build_s3_wide_value_partition_path(
+            field_type, year, month, ticker_source
+        )
+        if wide_df.empty:
+            return relative_path
+
+        out = wide_df.sort_index()
+        if out.index.name != ValueColumns.TIMESTAMP:
+            if ValueColumns.TIMESTAMP in out.columns:
+                out = out.set_index(ValueColumns.TIMESTAMP)
+            else:
+                raise ValueError("wide_df must have timestamp index or column")
+        out = out.reset_index()
+        out = normalize_pandas_timestamp_to_utc(out, ValueColumns.TIMESTAMP)
+        self.save_dataframe_to_s3(
+            out,
+            relative_path,
+            parquet_compression=parquet_compression,
+        )
+        return relative_path
+
+    def check_wide_data_exists_for_date_range(
+        self,
+        series_codes: List[str],
+        start_date: Any,
+        end_date: Any,
+        field_type: str,
+        ticker_source: TickerSource = TickerSource.BLOOMBERG,
+    ) -> Dict[str, bool]:
+        """Per-series coverage: True only if all UTC dates in range are non-null in wide partitions."""
+        if not series_codes:
+            return {}
+        start_date_utc = normalize_date_to_utc(start_date)
+        end_date_utc = normalize_date_to_utc(end_date)
+        by_month = dates_by_year_month(start_date_utc.to_pydatetime(), end_date_utc.to_pydatetime())
+        result: Dict[str, bool] = {sc: True for sc in series_codes}
+        for (year, month), dlist in by_month.items():
+            wide = self.read_wide_value_partition(field_type, year, month, ticker_source)
+            for sc in series_codes:
+                if not result[sc]:
+                    continue
+                if not wide_series_covers_dates(wide, sc, dlist):
+                    result[sc] = False
+        return result
+
+    def save_bloomberg_wide_from_long(
+        self,
+        long_df: pd.DataFrame,
+        field_type: str,
+        ticker_source: TickerSource,
+        start_date: Any,
+        end_date: Any,
+        force_refresh: bool,
+    ) -> Dict[str, Any]:
+        """Pivot long value data and merge/write monthly wide partitions.
+
+        Returns:
+            Dict with partitions_written, row_count_max (max rows in any written partition),
+            column_count (series columns in pivot), written_relative_paths.
+        """
+        if long_df.empty:
+            return {
+                "partitions_written": 0,
+                "row_count_max": 0,
+                "column_count": 0,
+                "written_relative_paths": [],
+            }
+
+        need_cols = {ValueColumns.TIMESTAMP, ValueColumns.SERIES_CODE, ValueColumns.VALUE}
+        if not need_cols.issubset(long_df.columns):
+            raise ValueError(f"long_df must contain columns {need_cols}")
+
+        wide = pivot_long_to_wide(long_df)
+        strip_range: Optional[Tuple[Any, Any]] = None
+        if force_refresh:
+            strip_range = (
+                normalize_date_to_utc(start_date).to_pydatetime(),
+                normalize_date_to_utc(end_date).to_pydatetime(),
+            )
+
+        written_paths: List[str] = []
+        row_max = 0
+        for year, month in iter_year_months(
+            normalize_date_to_utc(start_date).to_pydatetime(),
+            normalize_date_to_utc(end_date).to_pydatetime(),
+        ):
+            inc = slice_wide_for_month(wide, year, month)
+            if inc.empty:
+                continue
+            existing = self.read_wide_value_partition(field_type, year, month, ticker_source)
+            merged = merge_wide_partition(existing, inc, strip_range)
+            if merged.empty:
+                continue
+            rel = self.write_wide_value_partition(
+                merged, field_type, year, month, ticker_source
+            )
+            written_paths.append(rel)
+            row_max = max(row_max, len(merged))
+
+        return {
+            "partitions_written": len(written_paths),
+            "row_count_max": row_max,
+            "column_count": int(wide.shape[1]),
+            "written_relative_paths": written_paths,
+        }
 
     def save_value_data_to_s3(
         self,

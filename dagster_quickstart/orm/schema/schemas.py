@@ -28,11 +28,13 @@ class MetadataColumns:
     COUNTRY = "country"
     CURRENCY = "currency"
     TICKER = "ticker"
+    # Not present on metadata Parquet; use BBG_FIELD / MDS_FIELD by vendor.
     FIELD_TYPE = "field_type"
     REGION = "region"
     TERM = "term"
     TENOR = "tenor"
     STRUCTURE_TYPE = "structure_type"
+    # Not on metadata Parquet; vendor is implied by bbg_* vs mds_* columns.
     TICKER_SOURCE = "ticker_source"
     BBG_TICKER = "bbg_ticker"
     MDS_TICKER = "mds_ticker"
