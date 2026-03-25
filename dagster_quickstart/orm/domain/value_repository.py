@@ -1,11 +1,10 @@
-"""Value repository for loading value data from parquet files."""
+"""Value repository: load series data from wide monthly Parquet partitions only."""
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
-from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.exceptions import MetadataResolutionError
@@ -13,14 +12,19 @@ from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbReposi
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
-from dagster_quickstart.orm.wide_value_storage import (
+from dagster_quickstart.orm.schema.constants import INTERNAL_WIDE_PARTITION_FIELD
+from dagster_quickstart.utils.datetime_utils import (
+    ensure_utc,
     iter_year_months,
-    wide_table_to_long,
+    normalize_date_to_utc,
+    utc_now,
 )
-from dagster_quickstart.utils.datetime_utils import ensure_utc, normalize_date_to_utc, utc_now
+from dagster_quickstart.utils.pandas_wide import select_series_columns_as_long_df
 
 
-_WIDE_TICKER_SOURCES = frozenset({TickerSource.BLOOMBERG, TickerSource.MDS})
+_WIDE_TICKER_SOURCES = frozenset(
+    {TickerSource.BLOOMBERG, TickerSource.MDS, TickerSource.INTERNAL}
+)
 
 
 class ValueRepository:
@@ -61,18 +65,19 @@ class ValueRepository:
             return MetadataColumns.BBG_FIELD
         if tickersource == TickerSource.MDS:
             return MetadataColumns.MDS_FIELD
+        if tickersource == TickerSource.INTERNAL:
+            return MetadataColumns.BBG_FIELD
         raise ValueError(f"No vendor field column for ticker source {tickersource!r}")
 
     def get_vendor_field_map(
         self, series_codes: List[str], tickersource: TickerSource
     ) -> Dict[str, str]:
-        """Public: series_code → vendor field partition key (``bbg_field`` / ``mds_field``)."""
+        """series_code → vendor field partition key (bbg_field / mds_field / DERIVED)."""
         return self._resolve_vendor_field_map(series_codes, tickersource)
 
     def _resolve_vendor_field_map(
         self, series_codes: List[str], tickersource: TickerSource
     ) -> Dict[str, str]:
-        """Map series_code → vendor field code (PX_LAST, YIELD, …) from validated metadata."""
         out: Dict[str, str] = {}
         if (
             not series_codes
@@ -91,13 +96,15 @@ class ValueRepository:
             v = row.get(col)
             if sc is None or pd.isna(sc):
                 continue
+            sc_str = str(sc).strip()
             if pd.isna(v) or not str(v).strip():
+                if tickersource == TickerSource.INTERNAL:
+                    out[sc_str] = INTERNAL_WIDE_PARTITION_FIELD
                 continue
-            out[str(sc).strip()] = str(v).strip()
+            out[sc_str] = str(v).strip()
         return out
 
     def _read_wide_parquet_parts_to_df(self, uris: List[str]) -> pd.DataFrame:
-        """Load and concatenate Parquet files; skip missing or failing objects."""
         parts: List[pd.DataFrame] = []
         for uri in uris:
             try:
@@ -112,7 +119,7 @@ class ValueRepository:
             return pd.DataFrame()
         return pd.concat(parts, ignore_index=True)
 
-    def _read_wide_combined_long(
+    def _read_wide_as_long(
         self,
         series_codes: List[str],
         vendor_field: str,
@@ -120,7 +127,6 @@ class ValueRepository:
         start: Optional[str],
         end: Optional[str],
     ) -> pd.DataFrame:
-        """Read wide layout for one vendor field partition set; return long rows for series_codes."""
         empty = pd.DataFrame(
             columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
         )
@@ -160,7 +166,7 @@ class ValueRepository:
         if wide_df.empty:
             return empty
 
-        return wide_table_to_long(wide_df, codes, start=start, end=end)
+        return select_series_columns_as_long_df(wide_df, codes, start=start, end=end)
 
     def _finalize_long_df(
         self,
@@ -186,23 +192,18 @@ class ValueRepository:
         limit: Optional[int] = None,
     ) -> pd.DataFrame:
         """Load value data for a single series_code."""
-        if self._uses_wide_storage(tickersource):
-            try:
-                fmap = self._resolve_vendor_field_map([series_code], tickersource)
-                vf = fmap.get(series_code)
-                if not vf:
-                    return pd.DataFrame(
-                        columns=[
-                            ValueColumns.SERIES_CODE,
-                            ValueColumns.TIMESTAMP,
-                            ValueColumns.VALUE,
-                        ]
-                    )
-                long_df = self._read_wide_combined_long(
-                    [series_code], vf, tickersource, start, end
-                )
-                return self._finalize_long_df(long_df, order_by, limit)
-            except Exception:
+        if not self._uses_wide_storage(tickersource):
+            return pd.DataFrame(
+                columns=[
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.VALUE,
+                ]
+            )
+        try:
+            fmap = self._resolve_vendor_field_map([series_code], tickersource)
+            vf = fmap.get(series_code)
+            if not vf:
                 return pd.DataFrame(
                     columns=[
                         ValueColumns.SERIES_CODE,
@@ -210,23 +211,15 @@ class ValueRepository:
                         ValueColumns.VALUE,
                     ]
                 )
-
-        try:
-            uri = self._s3_adapter.get_value_data_uri(series_code, tickersource)
-            sql, params = self._build_series_query_sql(
-                series_code, uri, start, end, order_by, limit
-            )
-
-            if params:
-                result = self._repository.execute_raw_sql(sql, params)
-            else:
-                result = self._repository.execute_raw_sql(sql)
-
-            return result
-
+            long_df = self._read_wide_as_long([series_code], vf, tickersource, start, end)
+            return self._finalize_long_df(long_df, order_by, limit)
         except Exception:
             return pd.DataFrame(
-                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+                columns=[
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.VALUE,
+                ]
             )
 
     def get_batch_series_data(
@@ -244,53 +237,22 @@ class ValueRepository:
                 columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
             )
 
-        if self._uses_wide_storage(tickersource):
-            try:
-                fmap = self._resolve_vendor_field_map(series_codes, tickersource)
-                by_field: Dict[str, List[str]] = defaultdict(list)
-                for sc in series_codes:
-                    vf = fmap.get(sc)
-                    if vf:
-                        by_field[vf].append(sc)
-                parts: List[pd.DataFrame] = []
-                for vf, codes in by_field.items():
-                    parts.append(
-                        self._read_wide_combined_long(
-                            codes, vf, tickersource, start, end
-                        )
-                    )
-                if not parts:
-                    return pd.DataFrame(
-                        columns=[
-                            ValueColumns.SERIES_CODE,
-                            ValueColumns.TIMESTAMP,
-                            ValueColumns.VALUE,
-                        ]
-                    )
-                out = pd.concat(parts, ignore_index=True)
-                return self._finalize_long_df(out, order_by, limit)
-            except Exception as exc:
-                raise MetadataResolutionError(f"Failed to load value data batch: {exc}") from exc
+        if not self._uses_wide_storage(tickersource):
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
 
         try:
-            union_parts = []
-            all_params: List = []
-
-            for series_code in series_codes:
-                try:
-                    uri = self._s3_adapter.get_value_data_uri(series_code, tickersource)
-                    sql, params = self._build_series_query_sql(
-                        series_code, uri, start, end, None, None
-                    )
-
-                    union_parts.append(f"({sql})")
-                    if params:
-                        all_params.extend(params)
-
-                except Exception:
-                    continue
-
-            if not union_parts:
+            fmap = self._resolve_vendor_field_map(series_codes, tickersource)
+            by_field: Dict[str, List[str]] = defaultdict(list)
+            for sc in series_codes:
+                vf = fmap.get(sc)
+                if vf:
+                    by_field[vf].append(sc)
+            parts: List[pd.DataFrame] = []
+            for vf, codes in by_field.items():
+                parts.append(self._read_wide_as_long(codes, vf, tickersource, start, end))
+            if not parts:
                 return pd.DataFrame(
                     columns=[
                         ValueColumns.SERIES_CODE,
@@ -298,153 +260,52 @@ class ValueRepository:
                         ValueColumns.VALUE,
                     ]
                 )
-
-            order_by_column = order_by or ValueColumns.TIMESTAMP
-            order_by_clause = f" ORDER BY {order_by_column}"
-            limit_clause = f" LIMIT {limit}" if limit else ""
-
-            union_query = f"""
-                SELECT * FROM (
-                    {' UNION ALL '.join(union_parts)}
-                )
-                {order_by_clause}
-                {limit_clause}
-            """
-
-            if all_params:
-                result = self._repository.execute_raw_sql(union_query, all_params)
-            else:
-                result = self._repository.execute_raw_sql(union_query)
-
-            return result
-
+            out = pd.concat(parts, ignore_index=True)
+            return self._finalize_long_df(out, order_by, limit)
         except Exception as exc:
             raise MetadataResolutionError(f"Failed to load value data batch: {exc}") from exc
-
-    def _build_series_query_sql(
-        self,
-        series_code: str,
-        uri: str,
-        start: Optional[str],
-        end: Optional[str],
-        order_by: Optional[str],
-        limit: Optional[int],
-    ) -> Tuple[str, List]:
-        """Build SQL query for a single legacy long-format series using QueryBuilder."""
-        query_builder = QueryBuilder("_parquet_source")
-
-        if start:
-            query_builder.where(ValueColumns.TIMESTAMP, ">=", start)
-        if end:
-            query_builder.where(ValueColumns.TIMESTAMP, "<=", end)
-
-        order_by_column = order_by or ValueColumns.TIMESTAMP
-        query_builder.order_by(order_by_column)
-
-        if limit:
-            query_builder.limit(limit)
-
-        base_sql, builder_params = query_builder.build()
-
-        parquet_source = self._parquet_adapter.build_parquet_source(uri)
-        adapted_sql = base_sql.replace("FROM _parquet_source", f"FROM {parquet_source}")
-
-        custom_select = f"""
-            SELECT 
-                '{series_code}' AS {ValueColumns.SERIES_CODE},
-                {ValueColumns.TIMESTAMP},
-                {ValueColumns.VALUE}
-        """
-        final_sql = adapted_sql.replace("SELECT *", custom_select.strip())
-
-        return final_sql, builder_params
 
     def get_last_values(
         self,
         series_codes: List[str],
         tickersource: TickerSource = TickerSource.BLOOMBERG,
     ) -> pd.DataFrame:
-        """Get latest (max timestamp) row per series_code."""
+        """Latest (max timestamp) row per series_code."""
         if not series_codes:
             return pd.DataFrame(
                 columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
             )
 
-        if self._uses_wide_storage(tickersource):
-            try:
-                all_long = self.get_batch_series_data(
-                    series_codes=series_codes,
-                    tickersource=tickersource,
-                    start=None,
-                    end=None,
-                    order_by=None,
-                    limit=None,
-                )
-                if all_long.empty:
-                    return all_long
-                all_long = all_long.sort_values(ValueColumns.TIMESTAMP, ascending=False)
-                return (
-                    all_long.groupby(ValueColumns.SERIES_CODE, as_index=False)
-                    .head(1)
-                    .sort_values(ValueColumns.SERIES_CODE)
-                    .reset_index(drop=True)
-                )
-            except Exception as exc:
-                raise MetadataResolutionError(f"Failed to load last values: {exc}") from exc
+        if not self._uses_wide_storage(tickersource):
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
 
         try:
-            union_parts = []
-            all_params: List = []
-
-            for series_code in series_codes:
-                try:
-                    uri = self._s3_adapter.get_value_data_uri(series_code, tickersource)
-                    sql, params = self._build_series_query_sql(
-                        series_code, uri, None, None, None, None
-                    )
-
-                    union_parts.append(f"({sql})")
-                    if params:
-                        all_params.extend(params)
-
-                except Exception:
-                    continue
-
-            if not union_parts:
-                return pd.DataFrame(
-                    columns=[
-                        ValueColumns.SERIES_CODE,
-                        ValueColumns.TIMESTAMP,
-                        ValueColumns.VALUE,
-                    ]
-                )
-
-            union_query = f"""
-                SELECT series_code, timestamp, value
-                FROM (
-                    {' UNION ALL '.join(union_parts)}
-                ) AS all_data
-                QUALIFY ROW_NUMBER() OVER (
-                    PARTITION BY series_code
-                    ORDER BY timestamp DESC
-                ) = 1
-                ORDER BY series_code
-            """
-
-            if all_params:
-                result = self._repository.execute_raw_sql(union_query, all_params)
-            else:
-                result = self._repository.execute_raw_sql(union_query)
-
-            return result
-
+            all_long = self.get_batch_series_data(
+                series_codes=series_codes,
+                tickersource=tickersource,
+                start=None,
+                end=None,
+                order_by=None,
+                limit=None,
+            )
+            if all_long.empty:
+                return all_long
+            all_long = all_long.sort_values(ValueColumns.TIMESTAMP, ascending=False)
+            return (
+                all_long.groupby(ValueColumns.SERIES_CODE, as_index=False)
+                .head(1)
+                .sort_values(ValueColumns.SERIES_CODE)
+                .reset_index(drop=True)
+            )
         except Exception as exc:
             raise MetadataResolutionError(f"Failed to load last values: {exc}") from exc
 
     def get_all_values(
         self, series_codes: List[str], tickersource: TickerSource = TickerSource.BLOOMBERG
     ) -> pd.DataFrame:
-        """Get all values from all specified series for a given ticker source."""
+        """All values for the given series."""
         return self.get_batch_series_data(
             series_codes=series_codes,
             tickersource=tickersource,

@@ -18,7 +18,11 @@ from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 from dagster_quickstart.orm.schema import TickerSource, ValueColumns
-from dagster_quickstart.orm.schema.constants import CALCULATION_FORMULA_TYPES
+from dagster_quickstart.orm.schema.constants import (
+    CALCULATION_FORMULA_TYPES,
+    INTERNAL_WIDE_PARTITION_FIELD,
+)
+from dagster_quickstart.utils.pandas_wide import series_points_dict_to_wide_dataframe
 
 
 def _calculate_spread(parent_values: List[float]) -> float:
@@ -274,16 +278,22 @@ def calculate_derived_series(
 
     # Save all calculated data to S3
     total_data_points = 0
-    saved_paths: Dict[str, str] = {}
+    partition_paths: list[str] = []
 
     if all_calculated_data:
-        saved_paths = data_api.save_value_data_to_s3(
-            data_points=all_calculated_data,
-            ticker_source=TickerSource.INTERNAL,  # Derived series use INTERNAL ticker source
-            force_refresh=True,
+        data_api.validate_date_range_for_force_refresh(
+            True, config.start_date, config.end_date
+        )
+        wide_df = series_points_dict_to_wide_dataframe(all_calculated_data)
+        write_stats = data_api.write_wide_value_partitions(
+            wide_df=wide_df,
+            field_type=INTERNAL_WIDE_PARTITION_FIELD,
+            ticker_source=TickerSource.INTERNAL,
             start_date=config.start_date,
             end_date=config.end_date,
+            force_refresh=True,
         )
+        partition_paths = list(write_stats.get("written_relative_paths", []))
         total_data_points = sum(len(points) for points in all_calculated_data.values())
 
     context.log.info(
@@ -302,7 +312,7 @@ def calculate_derived_series(
         "series_failed": series_failed,
         "start_date": config.start_date,
         "end_date": config.end_date,
-        "s3_paths": MetadataValue.json(list(saved_paths.values())),
+        "wide_partition_paths": MetadataValue.json(partition_paths),
     }
 
     if failed_series:

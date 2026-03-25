@@ -7,11 +7,6 @@ import pandas as pd
 from decouple import config
 from duckdb_tinyorm_py import QueryBuilder
 
-from dagster_quickstart.orm.data_api_helpers import (
-    filter_existing_by_date_range,
-    merge_and_deduplicate,
-    prepare_new_dataframe,
-)
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
@@ -21,22 +16,18 @@ from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
-from dagster_quickstart.orm.s3_paths import (
-    build_s3_value_data_path,
-    build_s3_wide_value_partition_path,
-)
+from dagster_quickstart.orm.s3_paths import build_s3_wide_value_partition_path
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
-from dagster_quickstart.orm.wide_value_storage import (
-    dates_by_year_month,
-    iter_year_months,
-    merge_wide_partition,
-    pivot_long_to_wide,
-    slice_wide_for_month,
-    wide_series_covers_dates,
+from dagster_quickstart.orm.storage.wide_partition import (
+    merge_wide_monthly_partition,
+    slice_wide_for_calendar_month,
+    wide_frame_covers_utc_dates,
 )
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 from dagster_quickstart.utils.datetime_utils import (
+    dates_by_year_month,
+    iter_year_months,
     normalize_date_to_utc,
     normalize_pandas_timestamp_to_utc,
 )
@@ -199,13 +190,7 @@ class DataAPI:
         series_code: str,
         tickersource: TickerSource = TickerSource.BLOOMBERG,
     ) -> pd.DataFrame:
-        """Load value data for a specific series_code from S3.
-
-        Bloomberg/MDS rows come from wide monthly partitions; other sources use legacy long Parquet.
-
-        Args:
-            series_code: Series code identifier
-            tickersource: Ticker source (default: TickerSource.BLOOMBERG)
+        """Load value data for a series from wide monthly Parquet partitions.
 
         Returns:
             DataFrame with series_code, timestamp, and value columns
@@ -314,6 +299,14 @@ class DataAPI:
             table_name: Name of temporary table to drop
         """
         self._temp_table_manager.drop_temp_table(table_name)
+
+    def validate_date_range_for_force_refresh(
+        self, force_refresh: bool, start_date: Any, end_date: Any
+    ) -> None:
+        """Validate start/end when ``force_refresh`` is enabled."""
+        self._validation_repository.validate_date_range_for_force_refresh(
+            force_refresh, start_date, end_date
+        )
 
     def get_series_codes(
         self,
@@ -478,54 +471,32 @@ class DataAPI:
         Returns:
             Dict mapping series_code to bool indicating if data exists
         """
-        start_date_utc = normalize_date_to_utc(start_date)
-        end_date_utc = normalize_date_to_utc(end_date)
+        if ticker_source not in (
+            TickerSource.BLOOMBERG,
+            TickerSource.MDS,
+            TickerSource.INTERNAL,
+        ):
+            return {sc: False for sc in series_codes}
 
-        if ticker_source in (TickerSource.BLOOMBERG, TickerSource.MDS):
-            field_map = self._value_repository.get_vendor_field_map(
-                series_codes, ticker_source
+        field_map = self._value_repository.get_vendor_field_map(series_codes, ticker_source)
+        by_field: Dict[str, List[str]] = defaultdict(list)
+        for sc in series_codes:
+            vf = field_map.get(sc)
+            if vf:
+                by_field[vf].append(sc)
+        result: Dict[str, bool] = {}
+        for vf, codes in by_field.items():
+            sub = self.check_wide_data_exists_for_date_range(
+                series_codes=codes,
+                start_date=start_date,
+                end_date=end_date,
+                field_type=vf,
+                ticker_source=ticker_source,
             )
-            by_field: Dict[str, List[str]] = defaultdict(list)
-            for sc in series_codes:
-                vf = field_map.get(sc)
-                if vf:
-                    by_field[vf].append(sc)
-            result: Dict[str, bool] = {}
-            for vf, codes in by_field.items():
-                sub = self.check_wide_data_exists_for_date_range(
-                    series_codes=codes,
-                    start_date=start_date,
-                    end_date=end_date,
-                    field_type=vf,
-                    ticker_source=ticker_source,
-                )
-                result.update(sub)
-            for sc in series_codes:
-                if sc not in result:
-                    result[sc] = False
-            return result
-
-        result = {}
-        for series_code in series_codes:
-            existing_df = self._value_repository.get_series_data(
-                series_code=series_code,
-                tickersource=ticker_source,
-            )
-
-            if existing_df.empty:
-                result[series_code] = False
-                continue
-
-            existing_df = existing_df.copy()
-            existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
-
-            existing_dates = existing_df[ValueColumns.TIMESTAMP].dt.normalize()
-            has_overlap = (
-                (existing_dates >= start_date_utc) & (existing_dates <= end_date_utc)
-            ).any()
-
-            result[series_code] = has_overlap
-
+            result.update(sub)
+        for sc in series_codes:
+            if sc not in result:
+                result[sc] = False
         return result
 
     def read_wide_value_partition(
@@ -602,26 +573,32 @@ class DataAPI:
             for sc in series_codes:
                 if not result[sc]:
                     continue
-                if not wide_series_covers_dates(wide, sc, dlist):
+                if not wide_frame_covers_utc_dates(wide, sc, dlist):
                     result[sc] = False
         return result
 
-    def save_bloomberg_wide_from_long(
+    def write_wide_value_partitions(
         self,
-        long_df: pd.DataFrame,
+        wide_df: pd.DataFrame,
         field_type: str,
         ticker_source: TickerSource,
         start_date: Any,
         end_date: Any,
         force_refresh: bool,
     ) -> Dict[str, Any]:
-        """Pivot long value data and merge/write monthly wide partitions.
+        """Merge and write monthly wide Parquet partitions for the given date span.
+
+        Args:
+            wide_df: Wide frame (DatetimeIndex UTC, one column per series_code).
+            field_type: Vendor field partition (e.g. PX_LAST, or DERIVED for internal series).
+            ticker_source: Bloomberg, MDS, or Internal.
+            start_date, end_date: Span used to iterate months and optional strip range.
+            force_refresh: When True, strip existing rows in [start_date, end_date] before merge.
 
         Returns:
-            Dict with partitions_written, row_count_max (max rows in any written partition),
-            column_count (series columns in pivot), written_relative_paths.
+            Dict with partitions_written, row_count_max, column_count, written_relative_paths.
         """
-        if long_df.empty:
+        if wide_df.empty:
             return {
                 "partitions_written": 0,
                 "row_count_max": 0,
@@ -629,11 +606,7 @@ class DataAPI:
                 "written_relative_paths": [],
             }
 
-        need_cols = {ValueColumns.TIMESTAMP, ValueColumns.SERIES_CODE, ValueColumns.VALUE}
-        if not need_cols.issubset(long_df.columns):
-            raise ValueError(f"long_df must contain columns {need_cols}")
-
-        wide = pivot_long_to_wide(long_df)
+        wide = wide_df.sort_index()
         strip_range: Optional[Tuple[Any, Any]] = None
         if force_refresh:
             strip_range = (
@@ -643,15 +616,12 @@ class DataAPI:
 
         written_paths: List[str] = []
         row_max = 0
-        for year, month in iter_year_months(
-            normalize_date_to_utc(start_date).to_pydatetime(),
-            normalize_date_to_utc(end_date).to_pydatetime(),
-        ):
-            inc = slice_wide_for_month(wide, year, month)
+        for year, month in iter_year_months(start_date, end_date):
+            inc = slice_wide_for_calendar_month(wide, year, month)
             if inc.empty:
                 continue
             existing = self.read_wide_value_partition(field_type, year, month, ticker_source)
-            merged = merge_wide_partition(existing, inc, strip_range)
+            merged = merge_wide_monthly_partition(existing, inc, strip_range)
             if merged.empty:
                 continue
             rel = self.write_wide_value_partition(
@@ -666,93 +636,3 @@ class DataAPI:
             "column_count": int(wide.shape[1]),
             "written_relative_paths": written_paths,
         }
-
-    def save_value_data_to_s3(
-        self,
-        data_points: Dict[str, List[Dict[str, Any]]],
-        ticker_source: TickerSource = TickerSource.BLOOMBERG,
-        force_refresh: bool = False,
-        start_date: Optional[Any] = None,
-        end_date: Optional[Any] = None,
-    ) -> Dict[str, str]:
-        """Save value data points to S3 for multiple series with merge logic.
-
-        Handles existing files by:
-        - If no existing file: Write new data ordered by timestamp
-        - If existing file AND force_refresh=False: Load all existing, merge with new,
-          deduplicate by (series_code, timestamp), prioritize new rows, order by timestamp
-        - If existing file AND force_refresh=True: Load existing but exclude rows where
-          DATE(timestamp) BETWEEN start_date AND end_date, merge with new, deduplicate,
-          order by timestamp
-
-        All timestamps are normalized to UTC before processing.
-
-        Args:
-            data_points: Dict mapping series_code to list of data point dicts
-                Each data point dict should have 'timestamp' and 'value' keys
-            ticker_source: Ticker source (default: BLOOMBERG)
-            force_refresh: If True, exclude existing data for date range before merging
-            start_date: Start date for force_refresh exclusion (datetime or date string)
-            end_date: End date for force_refresh exclusion (datetime or date string)
-
-        Returns:
-            Dict mapping series_code to S3 path where data was saved
-
-        Raises:
-            ValueError: If force_refresh=True but start_date or end_date is missing,
-                or if start_date > end_date
-        """
-        # Validate date parameters when force_refresh is True
-        self._validation_repository.validate_date_range_for_force_refresh(
-            force_refresh, start_date, end_date
-        )
-
-        saved_paths: Dict[str, str] = {}
-
-        if not data_points:
-            return saved_paths
-
-        for series_code, points in data_points.items():
-            new_df = prepare_new_dataframe(points, series_code, self._validation_repository)
-            if new_df is None:
-                continue
-
-            existing_df = self._value_repository.get_series_data(
-                series_code=series_code,
-                tickersource=ticker_source,
-            )
-
-            if existing_df.empty:
-                # No existing data: use new data, ensure sorted and UTC-normalized
-                final_df = new_df.sort_values(ValueColumns.TIMESTAMP, ascending=True).reset_index(
-                    drop=True
-                )
-            else:
-                existing_df = existing_df.copy()
-                existing_df = normalize_pandas_timestamp_to_utc(existing_df, ValueColumns.TIMESTAMP)
-
-                # Ensure existing_df has required columns
-                if ValueColumns.SERIES_CODE not in existing_df.columns:
-                    existing_df[ValueColumns.SERIES_CODE] = series_code
-                existing_df = existing_df[
-                    [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-                ].copy()
-
-                if force_refresh and start_date and end_date:
-                    existing_df = filter_existing_by_date_range(existing_df, start_date, end_date)
-
-                final_df = merge_and_deduplicate(existing_df, new_df, self._validation_repository)
-
-            # Ensure final dataframe has consistent dtypes and only required columns
-            final_df = final_df[
-                [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-            ].copy()
-            final_df = final_df.sort_values(ValueColumns.TIMESTAMP, ascending=True).reset_index(
-                drop=True
-            )
-
-            relative_path = build_s3_value_data_path(series_code, ticker_source)
-            self.save_dataframe_to_s3(final_df, relative_path)
-            saved_paths[series_code] = relative_path
-
-        return saved_paths

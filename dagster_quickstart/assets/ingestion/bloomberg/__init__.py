@@ -1,10 +1,8 @@
 """Bloomberg ingestion assets package."""
 
-from .asset import (
-    FIELD_TYPE_PARTITIONS,
-    ingest_bloomberg_data_backfill,
-    ingest_bloomberg_data_daily,
-)
+from dagster_quickstart.assets.ingestion import FIELD_TYPE_PARTITIONS
+
+from .asset import ingest_bloomberg_data_backfill, ingest_bloomberg_data_daily
 
 __all__ = [
     "ingest_bloomberg_data_daily",

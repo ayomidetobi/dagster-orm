@@ -51,80 +51,80 @@ duckdb_resource.setup_for_execution(None)
 # Create DataAPI instance (will use environment variables by default)
 data_api = DataAPI()
 
-# Example 1: Query metadata with filters
-print_separator("Example 1: Query metadata")
-dataset = data_api.get(
-    asset_class=["Commodity", "Equity"],
-)
+# # Example 1: Query metadata with filters
+# print_separator("Example 1: Query metadata")
+# dataset = data_api.get(
+#     series_code=["SX0998_PX_LAST"],
+# )
 
-metadata_df = dataset.info()
-print(f"Found {len(metadata_df)} metadata rows")
-print(f"Columns: {', '.join(metadata_df.columns)}")
-if not metadata_df.empty:
-    print(f"\nFirst row:\n{metadata_df}")
+# metadata_df = dataset.info()
+# print(f"Found {len(metadata_df)} metadata rows")
+# print(f"Columns: {', '.join(metadata_df.columns)}")
+# if not metadata_df.empty:
+#     print(f"\nFirst row:\n{metadata_df}")
 
-# Example 2: Get value data for the filtered series
-print_separator("Example 2: Get value data")
-values_df = dataset.value(
-    ValueQueryParams(
-        start="2025-02-01",
-        end="2026-02-16",
-    )
-)
-print(values_df.head(10))
-if not values_df.empty:
-    print(f"Columns: {', '.join(values_df.columns)}")
-    # print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")
-
-# # Example 3: Test get_excluding - exclude certain regions
-# print_separator("Example 3: Test get_excluding (exclude region='North America')")
-# exclude_dataset = data_api.get_excluding(region="North America")
-# exclude_metadata_df = exclude_dataset.info()
-# print(f"Found {len(exclude_metadata_df)} metadata rows (excluding region='North America')")
-# if not exclude_metadata_df.empty:
-#     print(f"Regions in result: {exclude_metadata_df['region'].unique().tolist()}")
-#     print(f"\nFirst few rows:\n{exclude_metadata_df[['series_code', 'region', 'asset_class']].head()}")
-
-# # Example 4: Test get_last_values - get latest value for specific series
-# print_separator("Example 4: Test get_last_values")
-# # First, get some series codes to test with
-# test_series_codes = data_api.get_series_codes(asset_class=["Equity"])
-# if test_series_codes:
-#     # Use first 3 series codes for testing
-#     test_codes = test_series_codes[:3]
-#     print(f"Testing with series codes: {test_codes}")
-#     last_values_df = data_api.get_last_values(
-#         series_codes=test_codes,
-#         ticker_source=TickerSource.BLOOMBERG
+# # Example 2: Get value data for the filtered series
+# print_separator("Example 2: Get value data")
+# values_df = dataset.value(
+#     ValueQueryParams(
+#         start="2025-02-01",
+#         end="2026-02-16",
 #     )
-#     print(f"Found {len(last_values_df)} last values")
-#     if not last_values_df.empty:
-#         print(f"\nLast values:\n{last_values_df}")
-#     else:
-#         print("No last values found (may need value data to be loaded first)")
-# else:
-#     print("No series codes found to test with")
+# )
+# print(values_df.head(10))
+# if not values_df.empty:
+#     print(f"Columns: {', '.join(values_df.columns)}")
+#     # print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")
 
-# # Example 5: Test get_values - get all values for a ticker source
-# print_separator("Example 5: Test get_values (all values for Bloomberg ticker source)")
-# all_values_df = data_api.get_values(ticker_source=TickerSource.BLOOMBERG)
-# print(f"Found {len(all_values_df)} total value rows for Bloomberg")
-# if not all_values_df.empty:
-#     print(f"Columns: {', '.join(all_values_df.columns)}")
-#     print(f"Unique series codes: {all_values_df['series_code'].nunique()}")
-#     print(f"Date range: {all_values_df['timestamp'].min()} to {all_values_df['timestamp'].max()}")
-#     print(f"\nFirst 10 rows:\n{all_values_df.head(10)}")
-# else:
-#     print("No values found for Bloomberg ticker source")
+# Example 3: Test get_excluding - exclude certain regions
+print_separator("Example 3: Test get_excluding (exclude region='North America')")
+exclude_dataset = data_api.get_excluding(region="North America")
+exclude_metadata_df = exclude_dataset.info()
+print(f"Found {len(exclude_metadata_df)} metadata rows (excluding region='North America')")
+if not exclude_metadata_df.empty:
+    print(f"Regions in result: {exclude_metadata_df['region'].unique().tolist()}")
+    print(f"\nFirst few rows:\n{exclude_metadata_df[['series_code', 'region', 'asset_class']].head()}")
 
-# # Example 6: Compare get() vs get_excluding()
-# print_separator("Example 6: Compare get() vs get_excluding()")
-# # Get all Equity series
-# all_equity = data_api.get(asset_class=["Equity"])
-# all_equity_df = all_equity.info()
-# print(f"get(asset_class=['Equity']): {len(all_equity_df)} rows")
+# Example 4: Test get_last_values - get latest value for specific series
+print_separator("Example 4: Test get_last_values")
+# First, get some series codes to test with
+test_series_codes = data_api.get_series_codes(asset_class=["Equity"])
+if test_series_codes:
+    # Use first 3 series codes for testing
+    test_codes = test_series_codes[:3]
+    print(f"Testing with series codes: {test_codes}")
+    last_values_df = exclude_dataset.get_last_values(
+        # series_codes=test_codes,
+        # ticker_source=TickerSource.BLOOMBERG
+    )
+    print(f"Found {len(last_values_df)} last values")
+    if not last_values_df.empty:
+        print(f"\nLast values:\n{last_values_df}")
+    else:
+        print("No last values found (may need value data to be loaded first)")
+else:
+    print("No series codes found to test with")
 
-# # Exclude North America region
+# Example 5: Test get_values - get all values for a ticker source
+print_separator("Example 5: Test get_values (all values for Bloomberg ticker source)")
+all_values_df = exclude_dataset.get_values()
+print(f"Found {len(all_values_df)} total value rows for Bloomberg")
+if not all_values_df.empty:
+    # print(f"Columns: {', '.join(all_values_df.columns)}")
+    # print(f"Unique series codes: {all_values_df['series_code'].nunique()}")
+    # print(f"Date range: {all_values_df['timestamp'].min()} to {all_values_df['timestamp'].max()}")
+    print(f"\nFirst 10 rows:\n{all_values_df.head(10)}")
+else:
+    print("No values found for Bloomberg ticker source")
+
+# Example 6: Compare get() vs get_excluding()
+print_separator("Example 6: Compare get() vs get_excluding()")
+# Get all Equity series
+all_equity = data_api.get(asset_class=["Equity"])
+all_equity_df = all_equity.info()
+print(f"get(asset_class=['Equity']): {len(all_equity_df)} rows")
+
+# Exclude North America region
 # exclude_na = data_api.get_excluding(region="North America")
 # exclude_na_df = exclude_na.info()
 # print(f"get_excluding(region='North America'): {len(exclude_na_df)} rows")
@@ -136,30 +136,30 @@ if not values_df.empty:
 #     print(f"Regions in get_excluding(region='North America'): {sorted(exclude_regions)}")
 #     print(f"North America excluded: {'North America' not in exclude_regions}")
 
-# # Example 7: Test union() - unite multiple queries
-# print_separator("Example 7: Test union() - unite multiple queries")
-# # Create three different QuerySets
-# data_equity = data_api.get(asset_class=["Equity"])
-# data_commodity = data_api.get(asset_class=["Commodity"])
-# data_fixed_income = data_api.get(asset_class=["Fixed Income"])
+# Example 7: Test union() - unite multiple queries
+print_separator("Example 7: Test union() - unite multiple queries")
+# Create three different QuerySets
+data_equity = data_api.get(asset_class=["Equity"])
+data_commodity = data_api.get(asset_class=["Commodity"])
+data_fixed_income = data_api.get(asset_class=["Fixed Income"])
 
-# # Get info for each to see what we're working with
-# equity_info = data_equity.info()
-# commodity_info = data_commodity.info()
-# fixed_income_info = data_fixed_income.info()
+# Get info for each to see what we're working with
+equity_info = data_equity.info()
+commodity_info = data_commodity.info()
+fixed_income_info = data_fixed_income.info()
 
-# print(f"Equity dataset: {len(equity_info)} series")
-# print(f"Commodity dataset: {len(commodity_info)} series")
-# print(f"Fixed Income dataset: {len(fixed_income_info)} series")
+print(f"Equity dataset: {len(equity_info)} series")
+print(f"Commodity dataset: {len(commodity_info)} series")
+print(f"Fixed Income dataset: {len(fixed_income_info)} series")
 
-# # Get series codes for each
-# equity_codes = set(equity_info["series_code"].unique())
-# commodity_codes = set(commodity_info["series_code"].unique())
-# fixed_income_codes = set(fixed_income_info["series_code"].unique())
+# Get series codes for each
+equity_codes = set(equity_info["series_code"].unique())
+commodity_codes = set(commodity_info["series_code"].unique())
+fixed_income_codes = set(fixed_income_info["series_code"].unique())
 
-# print(f"\nEquity series codes: {sorted(equity_codes)}")
-# print(f"Commodity series codes: {sorted(commodity_codes)}")
-# print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
+print(f"\nEquity series codes: {sorted(equity_codes)}")
+print(f"Commodity series codes: {sorted(commodity_codes)}")
+print(f"Fixed Income series codes: {sorted(fixed_income_codes)}")
 
 # # Test union with two QuerySets
 # print("\nUniting Equity and Commodity datasets...")

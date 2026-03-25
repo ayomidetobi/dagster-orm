@@ -7,8 +7,8 @@ This module provides utilities for:
 - Normalizing pandas timestamp columns to UTC
 """
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import pandas as pd
@@ -207,3 +207,52 @@ def normalize_date_to_utc(date_value: Any) -> datetime:
         raise ImportError("pandas is required for normalize_date_to_utc")
 
     return pd.to_datetime(date_value, utc=True).normalize()
+
+
+def utc_midnight(dt: datetime) -> datetime:
+    """Normalize to UTC midnight (00:00:00)."""
+    return ensure_utc(dt).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def utc_calendar_days_inclusive(start_date: datetime, end_date: datetime) -> List[datetime]:
+    """UTC midnight for each calendar day from start through end (inclusive)."""
+    start = utc_midnight(start_date)
+    end = utc_midnight(end_date)
+    out: List[datetime] = []
+    current = start
+    while current <= end:
+        out.append(current)
+        current += timedelta(days=1)
+    return out
+
+
+def iter_year_months(start_date: Any, end_date: Any) -> List[Tuple[int, int]]:
+    """Inclusive calendar (year, month) pairs from start through end (UTC-normalized)."""
+    if pd is None:
+        raise ImportError("pandas is required for iter_year_months")
+    start = normalize_date_to_utc(start_date)
+    end = normalize_date_to_utc(end_date)
+    y, m = int(start.year), int(start.month)
+    ey, em = int(end.year), int(end.month)
+    result: List[Tuple[int, int]] = []
+    while (y, m) <= (ey, em):
+        result.append((y, m))
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return result
+
+
+def dates_by_year_month(start_date: Any, end_date: Any) -> Dict[Tuple[int, int], List[datetime]]:
+    """Map (year, month) to UTC midnights in [start_date, end_date] for that month."""
+    if pd is None:
+        raise ImportError("pandas is required for dates_by_year_month")
+    start_ts = normalize_date_to_utc(start_date)
+    end_ts = normalize_date_to_utc(end_date)
+    dr = pd.date_range(start=start_ts, end=end_ts, freq="D", tz="UTC")
+    buckets: Dict[Tuple[int, int], List[datetime]] = {}
+    for ts in dr:
+        dt = ts.to_pydatetime()
+        key = (int(dt.year), int(dt.month))
+        buckets.setdefault(key, []).append(dt)
+    return buckets

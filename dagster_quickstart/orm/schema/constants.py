@@ -48,6 +48,13 @@ S3_BASE_PATH_VALUE_DATA = "value-data"
 S3_BASE_PATH_CONTROL = "control"
 S3_PARQUET_FILE_NAME = "data.parquet"
 
+# Wide Parquet partition key for internally computed (derived) series when metadata has no vendor field.
+INTERNAL_WIDE_PARTITION_FIELD = "DERIVED"
+
+# Dagster run metadata: cap invalid_details rows / string length (e.g. Bloomberg ingestion checks).
+MAX_INVALID_METADATA_ROWS = 20
+MAX_INVALID_VALUE_CHARS = 500
+
 CALCULATION_FORMULA_TYPES: Dict[str, int] = {
     "SPREAD": 2,  # Requires 2 parent series
     "FLY": 3,  # Requires 3 parent series
