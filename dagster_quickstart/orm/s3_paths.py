@@ -4,6 +4,7 @@ from dagster_quickstart.orm.schema import (
     S3_BASE_PATH_CONTROL,
     S3_BASE_PATH_VALUE_DATA,
     S3_PARQUET_FILE_NAME,
+    TableNames,
     TickerSource,
 )
 from dagster_quickstart.resources.duckdb_datacacher import join_s3
@@ -12,16 +13,18 @@ from dagster_quickstart.resources.duckdb_datacacher import join_s3
 def build_s3_control_table_path(control_type: str, filename: str = S3_PARQUET_FILE_NAME) -> str:
     """Build relative S3 path for control table Parquet file.
 
-    Control tables are the system of record for lookup tables and metadata_series.
-    They are versioned by run date (YYYY-MM-DD) and are immutable.
+    Use ``TableNames.METADATA_WILDCARD`` for glob ``control/metadata*/data.parquet`` (both
+    ``metadata`` and ``metadata_derived``). Other values use ``control/<control_type>/``.
 
     Args:
-        control_type: Type of control table ('lookup', 'metadata_series', 'field_map')
+        control_type: e.g. ``lookup``, ``metadata``, ``metadata_derived``, ``metadata*``
         filename: Parquet filename (default: uses S3_PARQUET_FILE_NAME constant)
 
     Returns:
-        Relative S3 path (e.g., 'control/lookup/data.parquet')
+        Relative S3 path (e.g. ``control/metadata/data.parquet``)
     """
+    if control_type == TableNames.METADATA_WILDCARD:
+        return f"{S3_BASE_PATH_CONTROL}/metadata*/{filename}"
     return f"{S3_BASE_PATH_CONTROL}/{control_type}/{filename}"
 
 

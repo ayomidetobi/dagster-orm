@@ -10,7 +10,9 @@ Main entry point:
     # In a Dagster asset:
     duckdb_resource = context.resources.duckdb
     data_api = DataAPI(duckdb_resource)
+    # Omit control_table to use QuerySet default (METADATA_WILDCARD), or pass it as a filter kwarg.
     dataset = data_api.get(asset_class=["fx"], country=["usa"])
+    # dataset = data_api.get(control_table="metadata", asset_class=["fx"], country=["usa"])
     metadata = dataset.info()
     values = dataset.value(ValueQueryParams(start="2024-01-01"))
 """

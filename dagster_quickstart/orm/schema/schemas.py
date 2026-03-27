@@ -13,6 +13,9 @@ class TableNames:
     """Table name constants."""
 
     METADATA = "metadata"
+    METADATA_DERIVED = "metadata_derived"
+    #: S3 segment ``metadata*`` → ``control/metadata*/data.parquet`` (primary + derived).
+    METADATA_WILDCARD = "metadata*"
     VALUE = "value"
 
 
@@ -47,6 +50,7 @@ class MetadataColumns:
     VALID_FROM = "valid_from"
     VALID_TO = "valid_to"
     CALCULATION_FORMULA = "calculation_formula"
+    CALC_TYPE = "calc_type"
     DESCRIPTION = "description"
 
 
@@ -76,8 +80,8 @@ class ControlTableType(str, Enum):
 
     LOOKUP = "lookup"
     METADATA = "metadata"
+    METADATA_DERIVED = "metadata_derived"
     FIELD_MAP = "field_map"
-    SERIES_DEPENDENCIES = "series_dependencies"
 
 
 class TempTableName(str, Enum):
@@ -85,7 +89,7 @@ class TempTableName(str, Enum):
 
     LOOKUP_TABLES = "_temp_lookup_tables"
     META_SERIES = "_temp_meta_series"
-    SERIES_DEPENDENCIES = "_temp_series_dependencies"
+    METADATA_DERIVED = "_temp_metadata_derived"
 
 
 class PreviewColumns:

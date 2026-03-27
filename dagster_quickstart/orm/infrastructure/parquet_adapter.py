@@ -54,7 +54,11 @@ class ParquetAdapter:
         return query_builder
 
     def adapt_query_builder_for_parquet(
-        self, query_builder: QueryBuilder, uri: str
+        self,
+        query_builder: QueryBuilder,
+        uri: str,
+        *,
+        union_by_name: bool = False,
     ) -> tuple[str, list]:
         """Adapt QueryBuilder output to use parquet source.
 
@@ -63,12 +67,17 @@ class ParquetAdapter:
 
         Args:
             query_builder: QueryBuilder instance (built with placeholder table)
-            uri: Full URI to parquet file
+            uri: Full URI to parquet file or glob (e.g. S3)
+            union_by_name: When True, pass ``union_by_name = true`` (multi-file / schema merge)
 
         Returns:
             Tuple of (adapted SQL, parameter list)
         """
         sql, params = query_builder.build()
-        parquet_source = self.build_parquet_source(uri)
+        esc = uri.replace("'", "''")
+        if union_by_name:
+            parquet_source = f"read_parquet('{esc}', union_by_name = true)"
+        else:
+            parquet_source = f"read_parquet('{esc}')"
         adapted_sql = sql.replace(f"FROM {query_builder.table_name}", f"FROM {parquet_source}")
         return adapted_sql, params

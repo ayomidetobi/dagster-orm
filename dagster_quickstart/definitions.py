@@ -71,7 +71,7 @@ all_jobs = [
     bloomberg_backfill_ingestion_job,
     calculate_derived_series_job,
     populate_value_data_job,
-    all_assets_job,
+    # all_assets_job,
 ]
 
 all_schedules = [

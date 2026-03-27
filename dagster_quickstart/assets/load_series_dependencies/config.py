@@ -11,9 +11,9 @@ class LoadSeriesDependenciesConfig(Config):
     Attributes:
         csv_path: Path to the series dependencies CSV file
         temp_table_name: Name for the temporary table
-        control_table_type: Type of control table (default: series_dependencies)
+        control_table_type: Type of control table (default: metadata_derived)
     """
 
     csv_path: str = "dagster_quickstart/data/series_dependencies.csv"
-    temp_table_name: str = TempTableName.SERIES_DEPENDENCIES.value
-    control_table_type: str = ControlTableType.SERIES_DEPENDENCIES.value
+    temp_table_name: str = TempTableName.METADATA_DERIVED.value
+    control_table_type: str = ControlTableType.METADATA_DERIVED.value

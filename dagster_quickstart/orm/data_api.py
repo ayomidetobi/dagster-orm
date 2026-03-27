@@ -17,7 +17,7 @@ from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_wide_value_partition_path
-from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
     slice_wide_for_calendar_month,
@@ -125,6 +125,7 @@ class DataAPI:
             parquet_adapter,
             s3_adapter,
             validation_repository=self._validation_repository,
+            metadata_repository=self._metadata_repository,
         )
 
     def get(self, **filters: Any) -> QuerySet:
@@ -141,6 +142,13 @@ class DataAPI:
         Raises:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
+        filters = dict(filters)
+        control_table = filters.pop("control_table", None)
+        effective_control = control_table or TableNames.METADATA_WILDCARD
+        if effective_control in (TableNames.METADATA_WILDCARD, TableNames.METADATA_DERIVED):
+            if "field_type" in filters and MetadataColumns.CALC_TYPE not in filters:
+                filters[MetadataColumns.CALC_TYPE] = filters.pop("field_type")
+
         normalized_filters: Dict[str, List[str]] = {}
 
         for filter_field, filter_value in filters.items():
@@ -157,6 +165,7 @@ class DataAPI:
             metadata_filters=normalized_filters,
             validation_repository=self._validation_repository,
             exclude=False,
+            control_table=control_table,
         )
 
     def load_metadata_from_s3(self) -> pd.DataFrame:
@@ -344,7 +353,7 @@ class DataAPI:
             field_col = _metadata_vendor_field_column(source_for_field)
             query_filters[field_col] = [field_type]
 
-        metadata_df = self.get(**query_filters).info()
+        metadata_df = self.get(control_table=TableNames.METADATA, **query_filters).info()
 
         if metadata_df.empty:
             return []
@@ -400,7 +409,7 @@ class DataAPI:
             field_col = _metadata_vendor_field_column(ticker_source)
             query_filters[field_col] = [field_type]
 
-        metadata_df = self.get(**query_filters).info()
+        metadata_df = self.get(control_table=TableNames.METADATA, **query_filters).info()
 
         if metadata_df.empty:
             return {}
@@ -425,9 +434,8 @@ class DataAPI:
         """Create QuerySet with inverted metadata filters (exclude matching values).
 
         Args:
-            **filters: Keyword arguments mapping metadata column names to filter values.
-                Values can be single strings or lists of strings.
-                Example: country=["usa"] will exclude rows where country="usa"
+            **filters: Same as :meth:`get`, including optional ``control_table``.
+                Example: ``country=["usa"]`` excludes rows where country is USA.
 
         Returns:
             QuerySet instance configured with inverted filters
@@ -435,6 +443,13 @@ class DataAPI:
         Raises:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
+        filters = dict(filters)
+        control_table = filters.pop("control_table", None)
+        effective_control = control_table or TableNames.METADATA_WILDCARD
+        if effective_control in (TableNames.METADATA_WILDCARD, TableNames.METADATA_DERIVED):
+            if "field_type" in filters and MetadataColumns.CALC_TYPE not in filters:
+                filters[MetadataColumns.CALC_TYPE] = filters.pop("field_type")
+
         normalized_filters: Dict[str, List[str]] = {}
 
         for filter_field, filter_value in filters.items():
@@ -451,6 +466,7 @@ class DataAPI:
             metadata_filters=normalized_filters,
             validation_repository=self._validation_repository,
             exclude=True,
+            control_table=control_table,
         )
 
     def check_data_exists_for_date_range(
@@ -478,7 +494,9 @@ class DataAPI:
         ):
             return {sc: False for sc in series_codes}
 
-        field_map = self._value_repository.get_vendor_field_map(series_codes, ticker_source)
+        field_map = self._value_repository._resolve_vendor_field_map(
+            series_codes, ticker_source
+        )
         by_field: Dict[str, List[str]] = defaultdict(list)
         for sc in series_codes:
             vf = field_map.get(sc)

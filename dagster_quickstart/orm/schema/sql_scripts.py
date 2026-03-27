@@ -9,7 +9,7 @@ VALIDATE_PARENT_SERIES_COUNT_QUERY = """
     WITH validated_data AS (
         SELECT
             COALESCE(parent_series_code, '') AS parent_series_code,
-            COALESCE(child_series_code, '') AS child_series_code,
+            COALESCE(series_code, '') AS series_code,
             UPPER(COALESCE(calc_type, '')) AS calc_type,
             len(
                 list_filter(
@@ -24,7 +24,7 @@ VALIDATE_PARENT_SERIES_COUNT_QUERY = """
         FROM {parquet_source}
     )
     SELECT
-        child_series_code,
+        series_code,
         calc_type,
         parent_count,
         required_count,

@@ -17,6 +17,7 @@ from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.orm.schema import (
     VALID_METADATA_FILTER_COLUMNS,
     MetadataColumns,
+    TableNames,
     TickerSource,
     ValueColumns,
 )
@@ -48,6 +49,7 @@ class QuerySet:
         validation_repository: Optional[ValidationRepository] = None,
         exclude: bool = False,
         series_codes: Optional[List[str]] = None,
+        control_table: Optional[str] = None,
     ):
         """Initialize QuerySet with repositories and filters.
 
@@ -60,6 +62,9 @@ class QuerySet:
             exclude: If True, invert filter logic (exclude matching values)
             series_codes: Optional list of series codes to override filter-based resolution.
                 If set, metadata filtering is bypassed and these codes are used directly.
+            control_table: ``None`` uses ``TableNames.METADATA_WILDCARD`` (``control/metadata*/``).
+                Otherwise ``TableNames.METADATA`` for validated primary catalog only, or
+                ``TableNames.METADATA_DERIVED`` for dependency definitions only.
 
         Raises:
             InvalidFilterFieldError: If any filter field is invalid
@@ -67,6 +72,7 @@ class QuerySet:
         self._metadata_repository = metadata_repository
         self._value_repository = value_repository
         self._series_codes: Optional[List[str]] = series_codes
+        self._control_table = control_table or TableNames.METADATA_WILDCARD
         self._metadata_filters = (
             self._normalize_filters(metadata_filters) if metadata_filters is not None else {}
         )
@@ -109,33 +115,48 @@ class QuerySet:
 
         return normalized_filters
 
+    def _load_metadata_rows(
+        self,
+        filters: Dict[str, List[str]],
+        *,
+        exclude: bool,
+    ) -> pd.DataFrame:
+        """Load metadata for this QuerySet's control table (URI resolved in repositories).
+
+        Primary catalog ``metadata`` optionally goes through lookup validation; other
+        control types use :meth:`MetadataRepository.filter` only.
+        """
+        if self._validation_repository is not None and self._control_table == TableNames.METADATA:
+            return self._validation_repository.filter_with_validation(
+                filters=filters,
+                exclude=exclude,
+                control_type=self._control_table,
+            )
+        return self._metadata_repository.filter(
+            filters=filters,
+            control_type=self._control_table,
+            exclude=exclude,
+        )
+
     def _build_metadata_query(self) -> pd.DataFrame:
         """Build metadata query using metadata repository.
 
         If _series_codes is set, filters by series_code instead of using metadata_filters.
-        If validation_repository is provided, uses filter_with_validation() which
-        performs both filtering and validation in a single SQL query.
+        If validation_repository is provided and control table is primary ``metadata``,
+        uses filter_with_validation() which performs filtering and lookup validation.
 
         Returns:
-            DataFrame with filtered (and validated if validation_repository provided) metadata
+            DataFrame with filtered (and validated when applicable) metadata
 
         Raises:
             MetadataResolutionError: If query execution fails
         """
-        # If series_codes override is set, filter by series_code instead
         if self._series_codes is not None:
             filters = {MetadataColumns.SERIES_CODE: self._series_codes}
         else:
             filters = self._metadata_filters
 
-        if self._validation_repository is not None:
-            metadata_df = self._validation_repository.filter_with_validation(
-                filters=filters, exclude=self._exclude
-            )
-        else:
-            metadata_df = self._metadata_repository.filter(filters=filters, exclude=self._exclude)
-
-        return metadata_df
+        return self._load_metadata_rows(filters, exclude=self._exclude)
 
     def resolve_series_codes(self) -> List[str]:
         """Resolve series codes for this QuerySet.
@@ -205,20 +226,23 @@ class QuerySet:
                     f"Start timestamp '{params.start}' must be <= end timestamp '{params.end}'"
                 )
 
-    def info(self) -> pd.DataFrame:
+    def info(self, *, allow_empty: bool = False) -> pd.DataFrame:
         """Get metadata information for matching series.
+
+        Args:
+            allow_empty: If True, return an empty DataFrame when no rows match instead of raising
 
         Returns:
             DataFrame with metadata columns for all series matching the filters (validated)
 
         Raises:
             MetadataResolutionError: If query execution fails
-            SeriesNotFoundError: If no series match the filters
+            SeriesNotFoundError: If no series match the filters (unless allow_empty)
         """
         try:
             metadata_df = self._build_metadata_query()
 
-            if metadata_df.empty:
+            if metadata_df.empty and not allow_empty:
                 if self._series_codes is not None:
                     raise SeriesNotFoundError(
                         f"No metadata found for series codes: {self._series_codes}"
@@ -326,14 +350,8 @@ class QuerySet:
         if not current_codes:
             raise SeriesNotFoundError("Cannot filter empty QuerySet")
 
-        # Get metadata for current series codes
         metadata_filters = {MetadataColumns.SERIES_CODE: current_codes}
-        if self._validation_repository is not None:
-            metadata_df = self._validation_repository.filter_with_validation(
-                filters=metadata_filters, exclude=False
-            )
-        else:
-            metadata_df = self._metadata_repository.filter(filters=metadata_filters, exclude=False)
+        metadata_df = self._load_metadata_rows(metadata_filters, exclude=False)
 
         if metadata_df.empty:
             raise SeriesNotFoundError(f"No metadata found for series codes: {current_codes}")
@@ -358,6 +376,7 @@ class QuerySet:
             validation_repository=self._validation_repository,
             exclude=False,
             series_codes=filtered_codes,
+            control_table=self._control_table,
         )
 
     def filter_exclude(self, **filters: Any) -> "QuerySet":
@@ -380,7 +399,6 @@ class QuerySet:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
             SeriesNotFoundError: If no series remain after exclusion
         """
-        # Normalize the new filters
         new_filters = {}
         for filter_field, filter_value in filters.items():
             if filter_field not in VALID_METADATA_FILTER_COLUMNS:
@@ -402,14 +420,10 @@ class QuerySet:
         if not current_codes:
             raise SeriesNotFoundError("Cannot filter empty QuerySet")
 
-        # Get metadata for current series codes
-        metadata_filters = {MetadataColumns.SERIES_CODE: current_codes}
-        if self._validation_repository is not None:
-            metadata_df = self._validation_repository.filter_with_validation(
-                filters=metadata_filters, exclude=False
-            )
-        else:
-            metadata_df = self._metadata_repository.filter(filters=metadata_filters, exclude=False)
+        metadata_df = self._load_metadata_rows(
+            {MetadataColumns.SERIES_CODE: current_codes},
+            exclude=False,
+        )
 
         if metadata_df.empty:
             raise SeriesNotFoundError(f"No metadata found for series codes: {current_codes}")
@@ -434,6 +448,7 @@ class QuerySet:
             validation_repository=self._validation_repository,
             exclude=False,
             series_codes=filtered_codes,
+            control_table=self._control_table,
         )
 
     def union(self, *others: "QuerySet") -> "QuerySet":
@@ -477,6 +492,10 @@ class QuerySet:
                     "Cannot union QuerySets with different repository instances. "
                     "All QuerySets must be created from the same DataAPI instance."
                 )
+            if self._control_table != other._control_table:
+                raise ValueError(
+                    "Cannot union QuerySets with different control_table (metadata sources)."
+                )
 
         # Resolve series codes from all QuerySets
         all_codes = set()
@@ -495,6 +514,7 @@ class QuerySet:
             validation_repository=self._validation_repository,
             exclude=False,
             series_codes=unioned_codes,
+            control_table=self._control_table,
         )
 
     def get_last_values(
@@ -560,7 +580,14 @@ class QuerySet:
             return pd.DataFrame()
 
         # Get all values for these series
-        result_df = self._value_repository.get_all_values(resolved_series_codes, ticker_source)
+        result_df = self._value_repository.get_batch_series_data(
+            resolved_series_codes,
+            ticker_source,
+            start=None,
+            end=None,
+            order_by=None,
+            limit=None,
+        )
 
         # Return empty DataFrame unchanged
         if result_df.empty:

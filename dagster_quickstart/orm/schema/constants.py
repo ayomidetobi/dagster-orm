@@ -30,6 +30,8 @@ VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.MDS_FIELD,
     MetadataColumns.BBG_DATA_TYPE,
     MetadataColumns.MDS_DATA_TYPE,
+    # Dependency rows (``metadata_derived``) and ``field_type`` → ``calc_type`` filters.
+    MetadataColumns.CALC_TYPE,
 }
 
 LOOKUP_TABLE_PROCESSING_ORDER = [
@@ -56,8 +58,10 @@ MAX_INVALID_METADATA_ROWS = 20
 MAX_INVALID_VALUE_CHARS = 500
 
 CALCULATION_FORMULA_TYPES: Dict[str, int] = {
-    "SPREAD": 2,  # Requires 2 parent series
-    "FLY": 3,  # Requires 3 parent series
-    "BOX": 4,  # Requires 4 parent series
-    "RATIO": 2,  # Requires 2 parent series
+    "SPREAD": 2,  # parent[0] - parent[1]
+    "FLY": 3,
+    "BOX": 4,
+    "RATIO": 2,  # parent[0] / parent[1]
+    "SPREAD_INV": 2,  # parent[1] - parent[0]
+    "RATIO_INV": 2,  # parent[1] / parent[0]
 }

@@ -63,7 +63,7 @@ def _build_error_summary(invalid_df: pd.DataFrame, invalid_count: int) -> str:
             "unknown" if row["required_count"] is None else str(int(row["required_count"]))
         )
         error_details.append(
-            f"{row['child_series_code']}: {row['error']} "
+            f"{row['series_code']}: {row['error']} "
             f"(calc_type={row['calc_type']}, found={row['parent_count']}, required={required_str})"
         )
 
@@ -82,7 +82,7 @@ def _log_validation_errors(context: AssetCheckExecutionContext, invalid_df: pd.D
         invalid_df: DataFrame containing invalid rows
     """
     for _, row in invalid_df.iterrows():
-        context.log.error(f"Child series {row['child_series_code']}: {row['error']}")
+        context.log.error(f"Series {row['series_code']}: {row['error']}")
 
 
 @asset_check(
@@ -109,7 +109,7 @@ def validate_parent_series_count(
     s3_adapter = S3Adapter(duckdb_resource.get_bucket())
     parquet_adapter = ParquetAdapter()
 
-    relative_path = build_s3_control_table_path(ControlTableType.SERIES_DEPENDENCIES.value)
+    relative_path = build_s3_control_table_path(ControlTableType.METADATA_DERIVED.value)
     s3_uri = s3_adapter.get_relative_path_uri(relative_path)
 
     try:
@@ -130,7 +130,7 @@ def validate_parent_series_count(
         duplicate_df = find_duplicate_keys(
             duckdb_repo=duckdb_repo,
             parquet_source=parquet_source,
-            column="child_series_code",
+            column="series_code",
         )
         duplicate_count = len(duplicate_df)
 
@@ -142,7 +142,7 @@ def validate_parent_series_count(
                 )
             if duplicate_count > 0:
                 issues.append(
-                    f"{duplicate_count} duplicate series_code/child_series_code value(s)"
+                    f"{duplicate_count} duplicate series_code value(s)"
                 )
 
             description = "Found " + " and ".join(issues) + "."
@@ -160,7 +160,7 @@ def validate_parent_series_count(
                 duplicate_examples = []
                 for _, row in duplicate_df.head(MAX_ERROR_DETAILS).iterrows():
                     duplicate_examples.append(
-                        f"{row['child_series_code']} (occurrences={int(row['duplicate_count'])})"
+                        f"{row['series_code']} (occurrences={int(row['duplicate_count'])})"
                     )
                 duplicate_summary = "; ".join(duplicate_examples)
                 description += f" Duplicate series_code values: {duplicate_summary}"
@@ -168,12 +168,12 @@ def validate_parent_series_count(
                 log_duplicate_errors(
                     context=context,
                     duplicate_df=duplicate_df,
-                    key_column="child_series_code",
+                    key_column="series_code",
                     location_label="series dependencies",
                 )
 
                 duplicate_details = duplicate_df.head(MAX_METADATA_ROWS)[
-                    ["child_series_code", "duplicate_count"]
+                    ["series_code", "duplicate_count"]
                 ].to_dict("records")
 
             metadata = {
@@ -186,7 +186,7 @@ def validate_parent_series_count(
             if invalid_count > 0:
                 metadata["invalid_details"] = invalid_df.head(MAX_METADATA_ROWS)[
                     [
-                        "child_series_code",
+                        "series_code",
                         "calc_type",
                         "parent_count",
                         "required_count",
@@ -208,7 +208,7 @@ def validate_parent_series_count(
             passed=True,
             description=(
                 f"All {total_count} series dependency row(s) have correct parent "
-                "series count and no duplicate series_code/child_series_code values"
+                "series count and no duplicate series_code values"
             ),
             metadata={
                 "total_count": total_count,

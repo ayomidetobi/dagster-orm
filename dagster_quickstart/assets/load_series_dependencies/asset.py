@@ -1,7 +1,7 @@
 """Asset for loading series dependencies CSV to S3 as Parquet file.
 
 Uses ORM layer (DataAPI) for all operations - no raw SQL.
-Reads series_dependencies.csv and saves to S3.
+Reads series_dependencies.csv and saves to S3 as ``control/metadata_derived/data.parquet``.
 """
 
 from dagster import AssetExecutionContext, MaterializeResult, asset

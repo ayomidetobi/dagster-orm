@@ -46,14 +46,7 @@ class S3Adapter:
         return self._bucket
 
     def get_metadata_uri(self, control_type: str = TableNames.METADATA) -> str:
-        """Get full S3 URI for metadata control table.
-
-        Args:
-            control_type: Type of control table (default: 'metadata')
-
-        Returns:
-            Full S3 URI (e.g., 's3://bucket/control/metadata/data.parquet')
-        """
+        """Get full S3 URI for a metadata control table (or glob if ``TableNames.METADATA_WILDCARD``)."""
         relative_path = build_s3_control_table_path(control_type, S3_PARQUET_FILE_NAME)
         return build_full_s3_uri(relative_path, self._bucket)
 

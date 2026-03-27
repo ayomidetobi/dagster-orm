@@ -6,9 +6,3 @@ ops:
       use_dummy_data: true
       start_date: "2025-12-01"
       end_date: null  # Will default to current date
-  
-  calculate_derived_series:
-    config:
-      start_date: "2025-12-01"
-      # end_date defaults to current date if not provided
-      control_table_type: "series_dependencies"

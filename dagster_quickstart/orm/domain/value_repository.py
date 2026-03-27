@@ -6,13 +6,13 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.exceptions import MetadataResolutionError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
-from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
-from dagster_quickstart.orm.schema.constants import INTERNAL_WIDE_PARTITION_FIELD
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 from dagster_quickstart.utils.datetime_utils import (
     ensure_utc,
     iter_year_months,
@@ -20,7 +20,6 @@ from dagster_quickstart.utils.datetime_utils import (
     utc_now,
 )
 from dagster_quickstart.utils.pandas_wide import select_series_columns_as_long_df
-
 
 _WIDE_TICKER_SOURCES = frozenset(
     {TickerSource.BLOOMBERG, TickerSource.MDS, TickerSource.INTERNAL}
@@ -32,7 +31,9 @@ class ValueRepository:
 
     Bloomberg and MDS values are read from wide monthly partitions under
     ``value-data/wide/{source}/field_type=.../year=.../month=.../``.
-    Other sources (e.g. INTERNAL derived series) use legacy per-series long Parquet paths.
+    Series defined only in ``metadata_derived`` (empty vendor field, ``calc_type`` set) use that
+    value as the wide ``field_type`` partition (aligned with derived asset materialization).
+    Internal ticker source uses the ``calc_type`` column as the wide partition key when set.
     """
 
     def __init__(
@@ -41,6 +42,7 @@ class ValueRepository:
         parquet_adapter: ParquetAdapter,
         s3_adapter: S3Adapter,
         validation_repository: Optional[ValidationRepository] = None,
+        metadata_repository: Optional[MetadataRepository] = None,
     ):
         """Initialize value repository.
 
@@ -49,11 +51,13 @@ class ValueRepository:
             parquet_adapter: ParquetAdapter for building parquet sources
             s3_adapter: S3Adapter for URI resolution
             validation_repository: Used to resolve ``bbg_field`` / ``mds_field`` for wide reads
+            metadata_repository: Used to resolve ``calc_type`` for series in ``metadata_derived`` only
         """
         self._repository = duckdb_repository
         self._parquet_adapter = parquet_adapter
         self._s3_adapter = s3_adapter
         self._validation_repository = validation_repository
+        self._metadata_repository = metadata_repository
 
     @staticmethod
     def _uses_wide_storage(tickersource: TickerSource) -> bool:
@@ -66,42 +70,73 @@ class ValueRepository:
         if tickersource == TickerSource.MDS:
             return MetadataColumns.MDS_FIELD
         if tickersource == TickerSource.INTERNAL:
-            return MetadataColumns.BBG_FIELD
+            return MetadataColumns.CALC_TYPE
         raise ValueError(f"No vendor field column for ticker source {tickersource!r}")
 
-    def get_vendor_field_map(
-        self, series_codes: List[str], tickersource: TickerSource
-    ) -> Dict[str, str]:
-        """series_code → vendor field partition key (bbg_field / mds_field / DERIVED)."""
-        return self._resolve_vendor_field_map(series_codes, tickersource)
+    @staticmethod
+    def _wide_partition_key_from_derived_metadata(row: pd.Series) -> Optional[str]:
+        """Map a metadata row to wide ``field_type`` from ``MetadataColumns.CALC_TYPE``."""
+        calc_type = row.get(MetadataColumns.CALC_TYPE)
+        if calc_type is None or pd.isna(calc_type):
+            return None
+        ck = str(calc_type).strip().upper()
+        return ck if ck else None
+
+    def _merge_wide_partition_keys_from_derived(
+        self, out: Dict[str, str], codes: List[str]
+    ) -> None:
+        """Fill partition keys for series that exist only on ``metadata_derived``."""
+        if self._metadata_repository is None:
+            return
+        missing = [c for c in codes if c not in out]
+        if not missing:
+            return
+        derived_df = self._metadata_repository.filter(
+            filters={MetadataColumns.SERIES_CODE: missing},
+            control_type=TableNames.METADATA_DERIVED,
+            exclude=False,
+            allow_empty=True,
+        )
+        if derived_df.empty:
+            return
+        for _, row in derived_df.iterrows():
+            sc = row.get(MetadataColumns.SERIES_CODE)
+            if sc is None or pd.isna(sc):
+                continue
+            sc_str = str(sc).strip()
+            pk = self._wide_partition_key_from_derived_metadata(row)
+            if pk:
+                out[sc_str] = pk
 
     def _resolve_vendor_field_map(
         self, series_codes: List[str], tickersource: TickerSource
     ) -> Dict[str, str]:
+        """Map each series_code to wide storage ``field_type`` (vendor field or ``calc_type``)."""
         out: Dict[str, str] = {}
-        if (
-            not series_codes
-            or self._validation_repository is None
-            or not self._uses_wide_storage(tickersource)
-        ):
+        if not series_codes or not self._uses_wide_storage(tickersource):
             return out
+        codes = list(dict.fromkeys(series_codes))
         col = self._vendor_field_column(tickersource)
-        df = self._validation_repository.filter_with_validation(
-            filters={MetadataColumns.SERIES_CODE: list(dict.fromkeys(series_codes))}
-        )
-        if df.empty or col not in df.columns:
-            return out
-        for _, row in df.iterrows():
-            sc = row.get(MetadataColumns.SERIES_CODE)
-            v = row.get(col)
-            if sc is None or pd.isna(sc):
-                continue
-            sc_str = str(sc).strip()
-            if pd.isna(v) or not str(v).strip():
-                if tickersource == TickerSource.INTERNAL:
-                    out[sc_str] = INTERNAL_WIDE_PARTITION_FIELD
-                continue
-            out[sc_str] = str(v).strip()
+
+        if self._validation_repository is not None:
+            df = self._validation_repository.filter_with_validation(
+                filters={MetadataColumns.SERIES_CODE: codes}
+            )
+            if not df.empty and col in df.columns:
+                for _, row in df.iterrows():
+                    sc = row.get(MetadataColumns.SERIES_CODE)
+                    v = row.get(col)
+                    if sc is None or pd.isna(sc):
+                        continue
+                    sc_str = str(sc).strip()
+                    if pd.isna(v) or not str(v).strip():
+                        pk = self._wide_partition_key_from_derived_metadata(row)
+                        if pk:
+                            out[sc_str] = pk
+                        continue
+                    out[sc_str] = str(v).strip()
+
+        self._merge_wide_partition_keys_from_derived(out, codes)
         return out
 
     def _read_wide_parquet_parts_to_df(self, uris: List[str]) -> pd.DataFrame:
@@ -301,7 +336,6 @@ class ValueRepository:
             )
         except Exception as exc:
             raise MetadataResolutionError(f"Failed to load last values: {exc}") from exc
-
     def get_all_values(
         self, series_codes: List[str], tickersource: TickerSource = TickerSource.BLOOMBERG
     ) -> pd.DataFrame:
@@ -314,3 +348,4 @@ class ValueRepository:
             order_by=None,
             limit=None,
         )
+

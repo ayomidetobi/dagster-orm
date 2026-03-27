@@ -19,5 +19,5 @@ ops:
   load_series_dependencies_to_s3:
     config:
       csv_path: "dagster_quickstart/data/series_dependencies.csv"
-      temp_table_name: "series_dependencies_temp"
-      control_table_type: "series_dependencies"
+      temp_table_name: "metadata_derived_temp"
+      control_table_type: "metadata_derived"

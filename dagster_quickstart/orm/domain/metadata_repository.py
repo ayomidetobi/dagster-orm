@@ -48,26 +48,39 @@ class MetadataRepository:
         filters: Optional[Dict[str, List[str]]] = None,
         control_type: str = TableNames.METADATA,
         exclude: bool = False,
+        allow_empty: Optional[bool] = None,
     ) -> pd.DataFrame:
         """Load metadata with optional filters applied at SQL level.
 
+        Resolves the Parquet URI (including globs) from ``control_type`` via
+        :meth:`S3Adapter.get_metadata_uri`.
+
         Args:
             filters: Optional dictionary mapping column names to filter values
-            control_type: Type of control table (default: 'metadata')
+            control_type: Control table name (e.g. ``TableNames.METADATA``) or
+                ``TableNames.METADATA_WILDCARD`` for ``metadata*`` union.
             exclude: If True, invert filter logic (exclude matching values)
+            allow_empty: If set, overrides default: for ``METADATA_WILDCARD`` and
+                ``METADATA_DERIVED`` the default is True; otherwise False.
 
         Returns:
             DataFrame with filtered metadata
 
         Raises:
-            MetadataResolutionError: If loading fails or result is empty
+            MetadataResolutionError: If loading fails or result is empty (unless allow_empty)
         """
+        if allow_empty is None:
+            allow_empty = control_type in (
+                TableNames.METADATA_WILDCARD,
+                TableNames.METADATA_DERIVED,
+            )
         try:
             uri = self._s3_adapter.get_metadata_uri(control_type)
             query_builder, param_values = self._build_filtered_query(filters, exclude)
 
+            union_by_name = control_type == TableNames.METADATA_WILDCARD
             adapted_sql, builder_params = self._parquet_adapter.adapt_query_builder_for_parquet(
-                query_builder, uri
+                query_builder, uri, union_by_name=union_by_name
             )
 
             all_params = builder_params + param_values
@@ -78,6 +91,8 @@ class MetadataRepository:
                 result = self._repository.execute_raw_sql(adapted_sql)
 
             if result.empty:
+                if allow_empty:
+                    return result
                 raise MetadataResolutionError(
                     f"Metadata table '{control_type}' is empty or does not exist"
                 )

@@ -19,8 +19,8 @@ ops:
   load_series_dependencies_to_s3:
     config:
       csv_path: "dagster_quickstart/data/series_dependencies.csv"
-      temp_table_name: "series_dependencies_temp"
-      control_table_type: "series_dependencies"
+      temp_table_name: "metadata_derived_temp"
+      control_table_type: "metadata_derived"
   
   ingest_bloomberg_data_daily:
     config:
@@ -38,9 +38,4 @@ ops:
       series_codes: []
       start_date: "2025-12-01"
       end_date: null
-  
-  calculate_derived_series:
-    config:
-      start_date: "2025-12-01"
-      # end_date defaults to current date if not provided
-      control_table_type: "series_dependencies"
+

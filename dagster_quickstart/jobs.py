@@ -16,7 +16,7 @@ from dagster_quickstart.assets import (
     load_series_dependencies_to_s3,
 )
 
-# Job for loading control tables (lookup, meta_series, series_dependencies)
+# Job for loading control tables (lookup, meta_series, metadata_derived)
 load_control_tables_job = define_asset_job(
     name="load_control_tables_job",
     selection=[
@@ -76,13 +76,12 @@ calculate_derived_series_job = define_asset_job(
     ),
 )
 
-# Job for populating value data - runs ingestion then calculates derived series
+# Bloomberg field partitions (PX_LAST, …) differ from derived calc partitions (SPREAD, …);
+# they cannot share one partitioned job. Run ``calculate_derived_series_job`` per derived partition
+# after ingestion (e.g. backfill all keys in ``DERIVED_CALC_PARTITIONS``).
 populate_value_data_job = define_asset_job(
     name="populate_value_data_job",
-    selection=[
-        ingest_bloomberg_data_daily,  # Must run first
-        calculate_derived_series,  # Runs after ingestion completes
-    ],
+    selection=[ingest_bloomberg_data_daily],
     config=config_from_files(
         [
             file_relative_path(
@@ -93,7 +92,9 @@ populate_value_data_job = define_asset_job(
     ),
 )
 
-# Job for all assets - automatically follows dependency graph
+# Job for all assets - automatically follows dependency graph.
+# Note: ``ingest_bloomberg_data_daily`` and ``calculate_derived_series`` use different
+# ``partitions_def``; materializing this job may require partition-specific runs in the UI.
 all_assets_job = define_asset_job(
     name="all_assets_job",
     # No selection specified - includes all assets and respects dependency graph
