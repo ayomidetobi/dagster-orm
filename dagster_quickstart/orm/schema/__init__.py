@@ -12,6 +12,7 @@ from dagster_quickstart.orm.schema.constants import (
     S3_BASE_PATH_VALUE_DATA,
     S3_PARQUET_FILE_NAME,
     VALID_METADATA_FILTER_COLUMNS,
+    COLUMN_GROUPS,
 )
 from dagster_quickstart.orm.schema.schemas import (
     ControlTableType,
@@ -35,6 +36,7 @@ __all__ = [
     "PreviewColumns",
     "DataPoint",
     "VALID_METADATA_FILTER_COLUMNS",
+    "COLUMN_GROUPS",
     "LOOKUP_TABLE_PROCESSING_ORDER",
     "S3_BASE_PATH_VALUE_DATA",
     "S3_BASE_PATH_CONTROL",

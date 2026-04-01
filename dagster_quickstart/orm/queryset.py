@@ -1,6 +1,6 @@
 """QuerySet class for building and executing metadata and value queries."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Iterable, Tuple
 
 import pandas as pd
 
@@ -20,6 +20,7 @@ from dagster_quickstart.orm.schema import (
     TableNames,
     TickerSource,
     ValueColumns,
+    COLUMN_GROUPS,
 )
 
 
@@ -79,6 +80,16 @@ class QuerySet:
         self._resolved_series_codes: Optional[List[str]] = None
         self._validation_repository = validation_repository
         self._exclude = exclude
+
+    def __repr__(self) -> str:
+        segments = [
+            f"filters={self._metadata_filters!r}",
+            f"exclude={self._exclude!r}",
+            f"control_table={self._control_table!r}",
+        ]
+        if self._series_codes is not None:
+            segments.append(f"series_codes={self._series_codes!r}")
+        return f"QuerySet({', '.join(segments)})"
 
     def _normalize_filters(self, filters: Dict[str, List[str]]) -> Dict[str, List[str]]:
         """Normalize filter dictionary to ensure consistent format.
@@ -157,6 +168,37 @@ class QuerySet:
             filters = self._metadata_filters
 
         return self._load_metadata_rows(filters, exclude=self._exclude)
+    def _get_name_map(self, field: str) -> Dict[str, str]:
+        metadata_df = self.info(allow_empty=True)
+
+        if metadata_df.empty or field not in metadata_df.columns:
+            return {}
+
+        return dict (
+            metadata_df[
+                [MetadataColumns.SERIES_CODE, field]
+            ].dropna().values
+        )
+    def _apply_column_groups(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply column groups to a DataFrame.
+
+        Args:
+            df: DataFrame to apply column groups to
+
+        Returns:
+            DataFrame with column groups applied
+        """
+        column_to_group: Dict[str, str] = {}
+        for group_name, columns_in_group in COLUMN_GROUPS.items():
+            for column_name in columns_in_group:
+                column_to_group.setdefault(column_name, group_name)
+        tuples = [
+            (column_to_group.get(column_name, "UNGROUPED"), column_name)
+            for column_name in df.columns
+        ]
+        df = df.copy()
+        df.columns = pd.MultiIndex.from_tuples(tuples)
+        return df
 
     def resolve_series_codes(self) -> List[str]:
         """Resolve series codes for this QuerySet.
@@ -226,12 +268,12 @@ class QuerySet:
                     f"Start timestamp '{params.start}' must be <= end timestamp '{params.end}'"
                 )
 
-    def info(self, *, allow_empty: bool = False) -> pd.DataFrame:
+    def info(self, *, allow_empty: bool = False ,detailed: bool = False) -> pd.DataFrame:
         """Get metadata information for matching series.
 
         Args:
             allow_empty: If True, return an empty DataFrame when no rows match instead of raising
-
+            detailed: If True, apply column groups to the DataFrame
         Returns:
             DataFrame with metadata columns for all series matching the filters (validated)
 
@@ -252,6 +294,9 @@ class QuerySet:
                         f"No series found matching filters: {self._metadata_filters}"
                     )
 
+            if detailed:
+                metadata_df = self._apply_column_groups(metadata_df)
+
             return metadata_df
 
         except SeriesNotFoundError:
@@ -263,13 +308,14 @@ class QuerySet:
         self,
         params: Optional[ValueQueryParams] = None,
         tickersource: TickerSource = TickerSource.BLOOMBERG,
+        humanize: bool = False,
     ) -> pd.DataFrame:
         """Get value data for matching series.
 
         Args:
             params: Optional ValueQueryParams for time filtering and pagination
             tickersource: Ticker source (default: TickerSource.BLOOMBERG)
-
+            humanize: If True, rename series_code to editorial_short_default
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -304,9 +350,9 @@ class QuerySet:
             columns=ValueColumns.SERIES_CODE,
             values=ValueColumns.VALUE,
         )
-        # Ensure timestamps remain timezone-aware UTC and sort ascending
-        # if not pivoted_df.empty:
-        #     pivoted_df = pivoted_df.sort_index(ascending=True)
+        if humanize:
+            name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
+            pivoted_df = pivoted_df.rename(columns=name_map)
 
         return pivoted_df
 
@@ -520,12 +566,13 @@ class QuerySet:
     def get_last_values(
         self,
         ticker_source: TickerSource = TickerSource.BLOOMBERG,
+        humanize: bool = False,
     ) -> pd.DataFrame:
         """Get latest (max timestamp) value for each series_code in this QuerySet.
 
         Args:
             ticker_source: Ticker source (default: TickerSource.BLOOMBERG)
-
+            humanize: If True, rename series_code to series_name
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -550,22 +597,25 @@ class QuerySet:
             columns=ValueColumns.SERIES_CODE,
             values=ValueColumns.VALUE,
         )
-
+        if humanize:
+            name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
+            pivoted_df = pivoted_df.rename(columns=name_map)
         # Ensure timestamps remain timezone-aware UTC and sort ascending
-        if not pivoted_df.empty:
-            pivoted_df = pivoted_df.sort_index(ascending=True)
+        # if not pivoted_df.empty:
+        #     pivoted_df = pivoted_df.sort_index(ascending=True)
 
         return pivoted_df
 
     def get_values(
         self,
         ticker_source: Optional[TickerSource] = None,
+        humanize: bool = False,
     ) -> pd.DataFrame:
         """Get all values for all series in this QuerySet (optionally filtered by ticker_source).
 
         Args:
             ticker_source: Optional ticker source filter (default: None, uses BLOOMBERG)
-
+            humanize: If True, rename series_code to series_name
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -600,8 +650,58 @@ class QuerySet:
             values=ValueColumns.VALUE,
         )
 
-        # Ensure timestamps remain timezone-aware UTC and sort ascending
-        if not pivoted_df.empty:
-            pivoted_df = pivoted_df.sort_index(ascending=True)
+        if humanize:
+            name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
+            pivoted_df = pivoted_df.rename(columns=name_map)
 
         return pivoted_df
+
+    def groupby(self, by: List[str]) -> Iterable[Tuple[tuple, "QuerySet"]]:
+        """Group QuerySet by metadata columns.
+
+        Args:
+            by: List of metadata columns to group by
+
+        Yields:
+            Tuple of (group_key, QuerySet)
+            where group_key is a tuple of values
+        """
+        if not by:
+            raise ValueError("groupby 'by' cannot be empty")
+
+        # Validate columns
+        for col in by:
+            if col not in VALID_METADATA_FILTER_COLUMNS:
+                raise InvalidFilterFieldError(
+                    f"'{col}' is not a valid metadata column for grouping"
+                )
+
+        metadata_df = self.info(allow_empty=True)
+
+        if metadata_df.empty:
+            return
+
+        grouped = metadata_df.groupby(by, dropna=False)
+
+        for group_values, group_df in grouped:
+            # Normalize single key → tuple
+            if not isinstance(group_values, tuple):
+                group_values = (group_values,)
+
+            series_codes = (
+                group_df[MetadataColumns.SERIES_CODE]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            yield group_values, QuerySet(
+                metadata_repository=self._metadata_repository,
+                value_repository=self._value_repository,
+                metadata_filters=None,
+                validation_repository=self._validation_repository,
+                exclude=False,
+                series_codes=series_codes,
+                control_table=self._control_table,
+            )

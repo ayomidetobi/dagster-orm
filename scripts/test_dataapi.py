@@ -54,12 +54,13 @@ data_api = DataAPI()
 # Example 1: Query metadata with filters
 print_separator("Example 1: Query metadata")
 dataset = data_api.get(
-    field_type="SPREAD",
+    asset_class=["Equity"],
 )
 
-metadata_df = dataset.info()
+metadata_df = dataset.info(detailed=True)
+print(dataset)
 print(f"Found {len(metadata_df)} metadata rows")
-print(f"Columns: {', '.join(metadata_df.columns)}")
+# print(f"Columns: {', '.join(metadata_df.columns)}")
 if not metadata_df.empty:
     print(f"\nFirst row:\n{metadata_df}")
 
@@ -69,12 +70,17 @@ values_df = dataset.value(
     ValueQueryParams(
         start="2025-02-01",
         end="2026-02-16",
-    )
+    ),
+    humanize=True,
 )
 print(values_df.head(10))
-if not values_df.empty:
-    print(f"Columns: {', '.join(values_df.columns)}")
-#     # print(f"Date range: {values_df['timestamp'].min()} to {values_df['timestamp'].max()}")
+# if not values_df.empty:
+#     print(f"Columns: {', '.join(values_df.columns)}")
+# for group, qs in dataset.groupby(["sub_asset_class", "region"]):
+#     print( f"Group: {group}")
+#     print( f"QuerySet: {qs}")
+#     data = qs.get_values()
+#     print(data.head(10))
 
 # # Example 3: Test get_excluding - exclude certain regions
 # print_separator("Example 3: Test get_excluding (exclude region='North America')")

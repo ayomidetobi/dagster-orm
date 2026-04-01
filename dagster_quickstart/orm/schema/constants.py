@@ -34,6 +34,17 @@ VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.CALC_TYPE,
 }
 
+COLUMN_GROUPS = {
+        "IDENTIFIERS": [MetadataColumns.SERIES_NAME, MetadataColumns.SERIES_CODE],
+        "CLASSIFICATION": [MetadataColumns.ASSET_CLASS, MetadataColumns.SUB_ASSET_CLASS, MetadataColumns.PRODUCT_TYPE, MetadataColumns.STRUCTURE_TYPE],
+        "MARKET": [MetadataColumns.MARKET_SEGMENT, MetadataColumns.REGION, MetadataColumns.CURRENCY],
+        "TERM": [MetadataColumns.TERM, MetadataColumns.TENOR],
+        "BLOOMBERG": [MetadataColumns.BBG_FIELD, MetadataColumns.BBG_DATA_TYPE, MetadataColumns.BBG_TICKER],
+        "MDS": [MetadataColumns.MDS_FIELD, MetadataColumns.MDS_DATA_TYPE, MetadataColumns.MDS_TICKER],
+        "VALIDITY": [MetadataColumns.VALID_FROM, MetadataColumns.VALID_TO],
+        "OTHER": [MetadataColumns.CALCULATION_FORMULA, MetadataColumns.DES_NOTES],
+    }
+
 LOOKUP_TABLE_PROCESSING_ORDER = [
     "asset_class",
     "product_type",
