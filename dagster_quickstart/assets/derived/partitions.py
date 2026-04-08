@@ -11,6 +11,7 @@ DERIVED_CALC_PARTITIONS = StaticPartitionsDefinition(
         "RATIO",
         "SPREAD_INV",
         "RATIO_INV",
+        "LOG",
     ]
 )
 

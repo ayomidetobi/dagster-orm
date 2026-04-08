@@ -103,6 +103,7 @@ def validate_parent_series_count(
     - FLY: 3 parent series
     - BOX: 4 parent series
     - RATIO: 2 parent series
+    - LOG: 1 parent series
     """
     duckdb_resource = context.resources.duckdb
     duckdb_repo = DuckDbRepository(duckdb_resource._con)

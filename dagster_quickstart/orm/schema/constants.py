@@ -78,4 +78,5 @@ CALCULATION_FORMULA_TYPES: Dict[str, int] = {
     "RATIO": 2,  # parent[0] / parent[1]
     "SPREAD_INV": 2,  # parent[1] - parent[0]
     "RATIO_INV": 2,  # parent[1] / parent[0]
+    "LOG": 1,  # log-return vol: log, diff, 21d rolling std, annualized * 100
 }

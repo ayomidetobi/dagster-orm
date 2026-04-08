@@ -7,6 +7,7 @@ calculates derived values based on calc_type, and saves to S3.
 
 from typing import Any, Callable, Dict, List
 
+import numpy as np
 import pandas as pd
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
 
@@ -14,7 +15,7 @@ from dagster_quickstart.assets.derived.config import DerivedConfig
 from dagster_quickstart.assets.derived.partitions import DERIVED_CALC_PARTITIONS
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
+from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
 from dagster_quickstart.orm.schema.constants import CALCULATION_FORMULA_TYPES
 
 # (sub, cols) -> series aligned to sub.index; ``sub`` is parent columns with all-null rows dropped.
@@ -51,6 +52,25 @@ def _calc_ratio_inv_partition(sub: pd.DataFrame, cols: List[str]) -> pd.Series:
     return out.mask(denom == 0)
 
 
+def _calc_log_partition(sub: pd.DataFrame, cols: List[str]) -> pd.Series:
+    """Log level → log diff → 21-period rolling stdev, annualized and scaled by 100.
+
+    Drops non-finite values and non-positive levels before ``log``; drops NaNs from
+    the final series so only fully valid windows are emitted.
+    """
+    x = sub[cols[0]].astype("float64")
+    x = x.loc[np.isfinite(x) & (x > 0)]
+    if x.empty:
+        return pd.Series(dtype="float64")
+    log_x = np.log(x)
+    d1 = log_x.diff(1)
+    out = (
+        d1.rolling(window=21, min_periods=21).std(ddof=1) * np.sqrt(252.0) * 100.0
+    )
+    out = out.replace([np.inf, -np.inf], np.nan).dropna()
+    return out
+
+
 _PARTITION_CALCULATORS: Dict[str, PartitionCalculator] = {
     "SPREAD": _calc_spread_partition,
     "FLY": _calc_fly_partition,
@@ -58,6 +78,7 @@ _PARTITION_CALCULATORS: Dict[str, PartitionCalculator] = {
     "RATIO": _calc_ratio_partition,
     "SPREAD_INV": _calc_spread_inv_partition,
     "RATIO_INV": _calc_ratio_inv_partition,
+    "LOG": _calc_log_partition,
 }
 
 if set(_PARTITION_CALCULATORS) != set(CALCULATION_FORMULA_TYPES):

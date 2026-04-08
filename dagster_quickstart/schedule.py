@@ -8,7 +8,7 @@ from dagster import ScheduleDefinition
 from dagster_quickstart.jobs import populate_value_data_job
 
 # Schedule: Bloomberg daily ingestion only. Derived series use ``calculate_derived_series_job``
-# (partitioned by SPREAD, FLY, BOX, RATIO, SPREAD_INV, RATIO_INV); run separately or via backfill.
+# (partitioned by SPREAD, FLY, BOX, RATIO, SPREAD_INV, RATIO_INV, LOG); run separately or via backfill.
 #
 # Cron: every weekday at 9 AM Lisbon time
 # Cron expression: "0 9 * * 1-5" means:
