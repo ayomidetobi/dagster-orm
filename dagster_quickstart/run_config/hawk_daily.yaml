@@ -1,0 +1,7 @@
+ops:
+  ingest_hawk_data_daily:
+    config:
+      mode: "daily"
+      force_refresh: false
+      start_date: "2025-12-01"
+      end_date: null

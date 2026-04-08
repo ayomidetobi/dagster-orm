@@ -11,6 +11,8 @@ from dagster_quickstart.assets import (
     calculate_derived_series,
     ingest_bloomberg_data_backfill,
     ingest_bloomberg_data_daily,
+    ingest_hawk_data_backfill,
+    ingest_hawk_data_daily,
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
     load_series_dependencies_to_s3,
@@ -57,6 +59,32 @@ bloomberg_backfill_ingestion_job = define_asset_job(
             file_relative_path(
                 __file__,
                 os.path.join("run_config", "bloomberg_backfill.yaml"),
+            )
+        ]
+    ),
+)
+
+hawk_daily_ingestion_job = define_asset_job(
+    name="hawk_daily_ingestion_job",
+    selection=[ingest_hawk_data_daily],
+    config=config_from_files(
+        [
+            file_relative_path(
+                __file__,
+                os.path.join("run_config", "hawk_daily.yaml"),
+            )
+        ]
+    ),
+)
+
+hawk_backfill_ingestion_job = define_asset_job(
+    name="hawk_backfill_ingestion_job",
+    selection=[ingest_hawk_data_backfill],
+    config=config_from_files(
+        [
+            file_relative_path(
+                __file__,
+                os.path.join("run_config", "hawk_backfill.yaml"),
             )
         ]
     ),

@@ -54,10 +54,9 @@ data_api = DataAPI()
 # Example 1: Query metadata with filters
 print_separator("Example 1: Query metadata")
 dataset = data_api.get(
-    asset_class=["Equity"],
 )
 
-metadata_df = dataset.info(detailed=True)
+metadata_df = dataset.info(a)
 print(dataset)
 print(f"Found {len(metadata_df)} metadata rows")
 # print(f"Columns: {', '.join(metadata_df.columns)}")

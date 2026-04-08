@@ -6,7 +6,7 @@ All table names and column names must be defined here to avoid magic strings.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, TypedDict
+from typing import List, TypedDict, Union
 
 
 class TableNames:
@@ -45,6 +45,8 @@ class MetadataColumns:
     BBG_DATA_TYPE = "bbg_data_type"
     MDS_FIELD = "mds_field"
     MDS_DATA_TYPE = "mds_data_type"
+    HAWK_TICKER = "hawk_ticker"
+    HAWK_FIELD = "hawk_field"
     DATA_SOURCE = "data_source"
     SERIES_NAME = "series_name"
     VALID_FROM = "valid_from"
@@ -53,6 +55,46 @@ class MetadataColumns:
     DES_NOTES = "des_notes"
     CALC_TYPE = "calc_type"
     DESCRIPTION = "description"
+
+FilterValue = Union[str, List[str]]
+
+
+
+class FilterParams(TypedDict, total=False):
+    series_code: FilterValue
+    asset_class: FilterValue
+    sub_asset_class: FilterValue
+    product_type: FilterValue
+    data_type: FilterValue
+    market_segment: FilterValue
+    country: FilterValue
+    currency: FilterValue
+    ticker: FilterValue
+    field_type: FilterValue
+    region: FilterValue
+    term: FilterValue
+    tenor: FilterValue
+    structure_type: FilterValue
+    ticker_source: FilterValue
+    bbg_ticker: FilterValue
+    mds_ticker: FilterValue
+    bbg_field: FilterValue
+    bbg_data_type: FilterValue
+    mds_field: FilterValue
+    mds_data_type: FilterValue
+    hawk_ticker: FilterValue
+    hawk_field: FilterValue
+    data_source: FilterValue
+    series_name: FilterValue
+    valid_from: FilterValue
+    valid_to: FilterValue
+    calculation_formula: FilterValue
+    des_notes: FilterValue
+    calc_type: FilterValue
+    description: FilterValue
+
+    # extra (not strictly metadata column but used in logic)
+    control_table: str
 
 
 class ValueColumns:

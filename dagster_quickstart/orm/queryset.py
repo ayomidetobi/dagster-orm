@@ -87,8 +87,13 @@ class QuerySet:
             f"exclude={self._exclude!r}",
             f"control_table={self._control_table!r}",
         ]
-        if self._series_codes is not None:
-            segments.append(f"series_codes={self._series_codes!r}")
+        if (sc := self._series_codes) is not None:
+            n = len(sc)
+            segments.append(
+                f"series_codes={sc!r}"
+                if n <= 5
+                else f"series_codes={repr(sc[:5])[:-1]}, ...] (n={n})"
+            )
         return f"QuerySet({', '.join(segments)})"
 
     def _normalize_filters(self, filters: Dict[str, List[str]]) -> Dict[str, List[str]]:

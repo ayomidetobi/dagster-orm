@@ -1,7 +1,7 @@
 """DataAPI class for semantic ORM layer."""
 
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple,Unpack
 
 import pandas as pd
 from decouple import config
@@ -17,7 +17,7 @@ from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_wide_value_partition_path
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns, FilterParams
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
     slice_wide_for_calendar_month,
@@ -35,6 +35,7 @@ from dagster_quickstart.utils.datetime_utils import (
 _FIELD_COLUMN_BY_TICKER_SOURCE = {
     TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
     TickerSource.MDS: MetadataColumns.MDS_FIELD,
+    TickerSource.HAWKEYE: MetadataColumns.HAWK_FIELD,
 }
 
 
@@ -128,7 +129,7 @@ class DataAPI:
             metadata_repository=self._metadata_repository,
         )
 
-    def get(self, **filters: Any) -> QuerySet:
+    def get(self, **filters: Unpack[FilterParams]) -> QuerySet:
         """Create QuerySet with metadata filters.
 
         Args:
@@ -321,7 +322,7 @@ class DataAPI:
         self,
         field_type: Optional[str] = None,
         ticker_source: Optional[TickerSource] = None,
-        **filters: Any,
+        **filters: Unpack[FilterParams],
     ) -> List[str]:
         """Get list of series codes from metadata.
 
@@ -391,6 +392,7 @@ class DataAPI:
         ticker_column_map = {
             TickerSource.BLOOMBERG: MetadataColumns.BBG_TICKER,
             TickerSource.MDS: MetadataColumns.MDS_TICKER,
+            TickerSource.HAWKEYE: MetadataColumns.HAWK_TICKER,
         }
 
         if ticker_source not in ticker_column_map:
@@ -430,7 +432,7 @@ class DataAPI:
 
         return ticker_map
 
-    def get_excluding(self, **filters: Any) -> QuerySet:
+    def get_excluding(self, **filters: Unpack[FilterParams]) -> QuerySet:
         """Create QuerySet with inverted metadata filters (exclude matching values).
 
         Args:
@@ -490,6 +492,7 @@ class DataAPI:
         if ticker_source not in (
             TickerSource.BLOOMBERG,
             TickerSource.MDS,
+            TickerSource.HAWKEYE,
             TickerSource.INTERNAL,
         ):
             return {sc: False for sc in series_codes}

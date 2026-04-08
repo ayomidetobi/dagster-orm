@@ -15,4 +15,6 @@ FIELD_TYPE_PARTITIONS = StaticPartitionsDefinition(
     ]
 )
 
-__all__ = ["FIELD_TYPE_PARTITIONS"]
+HAWK_FIELD_TYPE_PARTITIONS = StaticPartitionsDefinition(["vol"])
+
+__all__ = ["FIELD_TYPE_PARTITIONS", "HAWK_FIELD_TYPE_PARTITIONS"]

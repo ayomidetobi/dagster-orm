@@ -5,6 +5,8 @@ from dagster_quickstart.assets import (
     calculate_derived_series,
     ingest_bloomberg_data_backfill,
     ingest_bloomberg_data_daily,
+    ingest_hawk_data_backfill,
+    ingest_hawk_data_daily,
     load_lookup_tables_to_s3,
     load_meta_series_to_s3,
     load_series_dependencies_to_s3,
@@ -16,12 +18,14 @@ from dagster_quickstart.jobs import (
     bloomberg_backfill_ingestion_job,
     bloomberg_daily_ingestion_job,
     calculate_derived_series_job,
+    hawk_backfill_ingestion_job,
+    hawk_daily_ingestion_job,
     load_control_tables_job,
     populate_value_data_job,
 )
 from dagster_quickstart.orm.io_manager import duckdb_io_manager
 from dagster_quickstart.schedule import populate_value_data_schedule
-from dagster_quickstart.resources import DuckDBResource, PyPDLResource
+from dagster_quickstart.resources import DuckDBResource, HawkResource, PyPDLResource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 
 all_assets = [
@@ -30,6 +34,8 @@ all_assets = [
     load_series_dependencies_to_s3,
     ingest_bloomberg_data_daily,
     ingest_bloomberg_data_backfill,
+    ingest_hawk_data_daily,
+    ingest_hawk_data_backfill,
     calculate_derived_series,
 ]
 
@@ -57,9 +63,15 @@ pypdl_resource = PyPDLResource(
     username=config("PYPDL_USERNAME", default=""),
 )
 
+# Demo Hawk (MQL) resource — optional env override for broker URL
+hawk_resource = HawkResource(
+    celery_connection=config("HAWK_CELERY_CONNECTION", default="demo://localhost"),
+)
+
 # Define resources
 resources = {
     "duckdb": duckdb_resource,
+    "hawk": hawk_resource,
     "pypdl": pypdl_resource,
     "io_manager": duckdb_io_manager,
     "duckdb_io_manager": duckdb_io_manager,
@@ -69,6 +81,8 @@ all_jobs = [
     load_control_tables_job,
     bloomberg_daily_ingestion_job,
     bloomberg_backfill_ingestion_job,
+    hawk_daily_ingestion_job,
+    hawk_backfill_ingestion_job,
     calculate_derived_series_job,
     populate_value_data_job,
     # all_assets_job,

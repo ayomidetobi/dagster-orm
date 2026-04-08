@@ -23,6 +23,7 @@ from dagster_quickstart.orm.schema.schemas import (
     TempTableName,
     TickerSource,
     ValueColumns,
+    FilterParams,
 )
 from dagster_quickstart.orm.schema.sql_scripts import VALIDATE_PARENT_SERIES_COUNT_QUERY
 
@@ -45,4 +46,5 @@ __all__ = [
     "MAX_INVALID_METADATA_ROWS",
     "MAX_INVALID_VALUE_CHARS",
     "VALIDATE_PARENT_SERIES_COUNT_QUERY",
+    "FilterParams",
 ]

@@ -1,11 +1,15 @@
 """PyPDL helper functions for Bloomberg data ingestion."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from dagster import AssetExecutionContext
 
 from dagster_quickstart.orm.schema import DataPoint
+from dagster_quickstart.utils.demo_random_timeseries import (
+    demo_random_wide_frame,
+    demo_wide_frame_to_pypdl_by_code,
+)
 from dagster_quickstart.utils.exceptions import PyPDLError
 
 if TYPE_CHECKING:
@@ -65,11 +69,9 @@ def fetch_bloomberg_data(
         If error_reason is not None, data_points will be None
     """
     if use_dummy_data:
-        import random
-
         if context:
             context.log.info(
-                "Fetching data from Bloomberg via PyPDL (DUMMY MODE - returning random data)",
+                "Fetching data from Bloomberg via PyPDL (DUMMY MODE - shared demo_random_wide_frame)",
                 extra={
                     "series_codes": series_codes,
                     "data_codes": data_codes,
@@ -79,15 +81,8 @@ def fetch_bloomberg_data(
                 },
             )
 
-        data_by_code: Dict[str, List[DataPoint]] = {}
-        for code in data_codes:
-            data_points: List[DataPoint] = []
-            current_date = start_date
-            while current_date <= end_date:
-                value = round(random.uniform(100.0, 200.0), 6)
-                data_points.append({"timestamp": current_date, "value": value})
-                current_date += timedelta(days=1)
-            data_by_code[code] = data_points
+        wide = demo_random_wide_frame(start_date, end_date, data_codes)
+        data_by_code = demo_wide_frame_to_pypdl_by_code(wide)
 
         if context:
             context.log.info(

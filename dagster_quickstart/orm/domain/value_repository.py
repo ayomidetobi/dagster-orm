@@ -22,7 +22,7 @@ from dagster_quickstart.utils.datetime_utils import (
 from dagster_quickstart.utils.pandas_wide import select_series_columns_as_long_df
 
 _WIDE_TICKER_SOURCES = frozenset(
-    {TickerSource.BLOOMBERG, TickerSource.MDS, TickerSource.INTERNAL}
+    {TickerSource.BLOOMBERG, TickerSource.MDS, TickerSource.HAWKEYE, TickerSource.INTERNAL}
 )
 
 
@@ -69,6 +69,8 @@ class ValueRepository:
             return MetadataColumns.BBG_FIELD
         if tickersource == TickerSource.MDS:
             return MetadataColumns.MDS_FIELD
+        if tickersource == TickerSource.HAWKEYE:
+            return MetadataColumns.HAWK_FIELD
         if tickersource == TickerSource.INTERNAL:
             return MetadataColumns.CALC_TYPE
         raise ValueError(f"No vendor field column for ticker source {tickersource!r}")

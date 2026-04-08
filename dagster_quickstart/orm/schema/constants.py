@@ -30,6 +30,8 @@ VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.MDS_FIELD,
     MetadataColumns.BBG_DATA_TYPE,
     MetadataColumns.MDS_DATA_TYPE,
+    MetadataColumns.HAWK_TICKER,
+    MetadataColumns.HAWK_FIELD,
     # Dependency rows (``metadata_derived``) and ``field_type`` → ``calc_type`` filters.
     MetadataColumns.CALC_TYPE,
 }
@@ -41,6 +43,7 @@ COLUMN_GROUPS = {
         "TERM": [MetadataColumns.TERM, MetadataColumns.TENOR],
         "BLOOMBERG": [MetadataColumns.BBG_FIELD, MetadataColumns.BBG_DATA_TYPE, MetadataColumns.BBG_TICKER],
         "MDS": [MetadataColumns.MDS_FIELD, MetadataColumns.MDS_DATA_TYPE, MetadataColumns.MDS_TICKER],
+        "HAWK": [MetadataColumns.HAWK_FIELD, MetadataColumns.HAWK_TICKER],
         "VALIDITY": [MetadataColumns.VALID_FROM, MetadataColumns.VALID_TO],
         "OTHER": [MetadataColumns.CALCULATION_FORMULA, MetadataColumns.DES_NOTES],
     }
