@@ -6,7 +6,7 @@ All table names and column names must be defined here to avoid magic strings.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, TypedDict, Union
+from typing import Dict, List, Tuple, TypedDict, Union
 
 
 class TableNames:
@@ -116,6 +116,44 @@ class TickerSource(str, Enum):
     MANUAL_ENTRY = "Manual Entry"
     INTERNAL = "Internal"
     MDS = "MDS"
+
+
+VENDOR_TICKER_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
+    TickerSource.BLOOMBERG: MetadataColumns.BBG_TICKER,
+    TickerSource.MDS: MetadataColumns.MDS_TICKER,
+    TickerSource.HAWKEYE: MetadataColumns.HAWK_TICKER,
+}
+
+VENDOR_FIELD_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
+    TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
+    TickerSource.MDS: MetadataColumns.MDS_FIELD,
+    TickerSource.HAWKEYE: MetadataColumns.HAWK_FIELD,
+}
+
+
+def get_vendor_ticker_column(ticker_source: TickerSource) -> str:
+    """Return metadata ticker column for a vendor ticker source."""
+    if ticker_source not in VENDOR_TICKER_COLUMN_BY_SOURCE:
+        raise ValueError(
+            f"No ticker column for ticker_source={ticker_source!r}; "
+            f"supported: {list(VENDOR_TICKER_COLUMN_BY_SOURCE.keys())}"
+        )
+    return VENDOR_TICKER_COLUMN_BY_SOURCE[ticker_source]
+
+
+def get_vendor_field_column(ticker_source: TickerSource) -> str:
+    """Return metadata field column for a vendor ticker source."""
+    if ticker_source not in VENDOR_FIELD_COLUMN_BY_SOURCE:
+        raise ValueError(
+            f"No field column for ticker_source={ticker_source!r}; "
+            f"supported: {list(VENDOR_FIELD_COLUMN_BY_SOURCE.keys())}"
+        )
+    return VENDOR_FIELD_COLUMN_BY_SOURCE[ticker_source]
+
+
+def get_vendor_ticker_and_field_columns(ticker_source: TickerSource) -> Tuple[str, str]:
+    """Return (ticker_column, field_column) metadata columns for ticker source."""
+    return get_vendor_ticker_column(ticker_source), get_vendor_field_column(ticker_source)
 
 
 class ControlTableType(str, Enum):

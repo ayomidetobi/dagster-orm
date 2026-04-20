@@ -1,9 +1,10 @@
 """QuerySet class for building and executing metadata and value queries."""
 
-from typing import Any, Dict, List, Optional, Iterable, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
+from dagster_quickstart.orm.direct_source_fetch import get_direct_source_values
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
@@ -15,12 +16,12 @@ from dagster_quickstart.orm.exceptions import (
 )
 from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.orm.schema import (
-    VALID_METADATA_FILTER_COLUMNS,
+    COLUMN_GROUPS,
     MetadataColumns,
     TableNames,
     TickerSource,
+    VALID_METADATA_FILTER_COLUMNS,
     ValueColumns,
-    COLUMN_GROUPS,
 )
 
 
@@ -314,6 +315,7 @@ class QuerySet:
         params: Optional[ValueQueryParams] = None,
         tickersource: TickerSource = TickerSource.BLOOMBERG,
         humanize: bool = False,
+        out_of_cache: bool = False,
     ) -> pd.DataFrame:
         """Get value data for matching series.
 
@@ -321,6 +323,9 @@ class QuerySet:
             params: Optional ValueQueryParams for time filtering and pagination
             tickersource: Ticker source (default: TickerSource.BLOOMBERG)
             humanize: If True, rename series_code to editorial_short_default
+            out_of_cache: If True, bypass cached parquet values and fetch directly
+                from the vendor source.
+
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -336,14 +341,22 @@ class QuerySet:
 
         self._validate_time_params(params)
 
-        value_df = self._value_repository.get_batch_series_data(
-            series_codes=resolved_series_codes,
-            tickersource=tickersource,
-            start=params.start if params else None,
-            end=params.end if params else None,
-            order_by=params.order_by if params else None,
-            limit=params.limit if params else None,
-        )
+        if out_of_cache:
+            value_df = get_direct_source_values(
+                load_metadata_rows=lambda filters: self._load_metadata_rows(filters, exclude=False),
+                series_codes=resolved_series_codes,
+                tickersource=tickersource,
+                params=params,
+            )
+        else:
+            value_df = self._value_repository.get_batch_series_data(
+                series_codes=resolved_series_codes,
+                tickersource=tickersource,
+                start=params.start if params else None,
+                end=params.end if params else None,
+                order_by=params.order_by if params else None,
+                limit=params.limit if params else None,
+            )
 
         # Return empty DataFrame unchanged
         if value_df.empty:

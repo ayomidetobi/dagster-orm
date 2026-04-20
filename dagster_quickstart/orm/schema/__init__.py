@@ -24,6 +24,11 @@ from dagster_quickstart.orm.schema.schemas import (
     TickerSource,
     ValueColumns,
     FilterParams,
+    VENDOR_FIELD_COLUMN_BY_SOURCE,
+    VENDOR_TICKER_COLUMN_BY_SOURCE,
+    get_vendor_field_column,
+    get_vendor_ticker_and_field_columns,
+    get_vendor_ticker_column,
 )
 from dagster_quickstart.orm.schema.sql_scripts import VALIDATE_PARENT_SERIES_COUNT_QUERY
 
@@ -47,4 +52,9 @@ __all__ = [
     "MAX_INVALID_VALUE_CHARS",
     "VALIDATE_PARENT_SERIES_COUNT_QUERY",
     "FilterParams",
+    "VENDOR_TICKER_COLUMN_BY_SOURCE",
+    "VENDOR_FIELD_COLUMN_BY_SOURCE",
+    "get_vendor_ticker_column",
+    "get_vendor_field_column",
+    "get_vendor_ticker_and_field_columns",
 ]

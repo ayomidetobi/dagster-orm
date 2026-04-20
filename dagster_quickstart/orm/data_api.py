@@ -17,7 +17,15 @@ from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_wide_value_partition_path
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns, FilterParams
+from dagster_quickstart.orm.schema import (
+    FilterParams,
+    MetadataColumns,
+    TableNames,
+    TickerSource,
+    ValueColumns,
+    get_vendor_field_column,
+    get_vendor_ticker_column,
+)
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
     slice_wide_for_calendar_month,
@@ -32,21 +40,9 @@ from dagster_quickstart.utils.datetime_utils import (
     normalize_pandas_timestamp_to_utc,
 )
 
-_FIELD_COLUMN_BY_TICKER_SOURCE = {
-    TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
-    TickerSource.MDS: MetadataColumns.MDS_FIELD,
-    TickerSource.HAWKEYE: MetadataColumns.HAWK_FIELD,
-}
-
-
 def _metadata_vendor_field_column(ticker_source: TickerSource) -> str:
     """Metadata Parquet column for vendor field code (e.g. PX_LAST, YIELD)."""
-    if ticker_source not in _FIELD_COLUMN_BY_TICKER_SOURCE:
-        raise ValueError(
-            f"No field column for ticker_source={ticker_source!r}; "
-            f"supported: {list(_FIELD_COLUMN_BY_TICKER_SOURCE.keys())}"
-        )
-    return _FIELD_COLUMN_BY_TICKER_SOURCE[ticker_source]
+    return get_vendor_field_column(ticker_source)
 
 
 class DataAPI:
@@ -388,20 +384,7 @@ class DataAPI:
         if ticker_source is None:
             ticker_source = TickerSource.BLOOMBERG
 
-        # Map ticker_source to the corresponding ticker and field column names
-        ticker_column_map = {
-            TickerSource.BLOOMBERG: MetadataColumns.BBG_TICKER,
-            TickerSource.MDS: MetadataColumns.MDS_TICKER,
-            TickerSource.HAWKEYE: MetadataColumns.HAWK_TICKER,
-        }
-
-        if ticker_source not in ticker_column_map:
-            raise ValueError(
-                f"Ticker source '{ticker_source.value}' is not supported. "
-                f"Supported sources: {[ts.value for ts in ticker_column_map.keys()]}"
-            )
-
-        ticker_column = ticker_column_map[ticker_source]
+        ticker_column = get_vendor_ticker_column(ticker_source)
 
         query_filters: Dict[str, List[str]] = {
             MetadataColumns.SERIES_CODE: series_codes,
