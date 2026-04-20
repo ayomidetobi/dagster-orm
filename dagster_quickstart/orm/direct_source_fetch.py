@@ -13,6 +13,7 @@ from dagster_quickstart.orm.schema import (
     ValueColumns,
     get_vendor_ticker_and_field_columns,
 )
+from dagster_quickstart.orm.ticker_mapping import build_ticker_to_series_map
 from dagster_quickstart.utils.datetime_utils import parse_timestamp
 
 LoadMetadataRowsFn = Callable[[Dict[str, List[str]]], pd.DataFrame]
@@ -82,10 +83,9 @@ def fetch_direct_bloomberg_tss(
         )
 
     frames: List[pd.DataFrame] = []
-    for field_name, group in mapping_df.groupby(MetadataColumns.BBG_FIELD):
-        ticker_to_series = dict(
-            zip(group[MetadataColumns.BBG_TICKER].astype(str), group[MetadataColumns.SERIES_CODE])
-        )
+    _, field_col = ticker_and_field_columns(TickerSource.BLOOMBERG)
+    for field_name, group in mapping_df.groupby(field_col):
+        ticker_to_series = build_ticker_to_series_map(group, TickerSource.BLOOMBERG)
         symbols = list(ticker_to_series.keys())
         if not symbols:
             continue
@@ -145,9 +145,7 @@ def fetch_direct_hawk(
     except Exception as exc:
         raise ValueQueryParameterError("Direct Hawk fetch dependencies are unavailable") from exc
 
-    ticker_to_series = dict(
-        zip(mapping_df[MetadataColumns.HAWK_TICKER].astype(str), mapping_df[MetadataColumns.SERIES_CODE])
-    )
+    ticker_to_series = build_ticker_to_series_map(mapping_df, TickerSource.HAWKEYE)
     symbols = list(ticker_to_series.keys())
     if not symbols:
         return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
@@ -191,9 +189,7 @@ def fetch_direct_onetick(
                 "Direct OneTick fetch requires a OneTick client library"
             ) from exc
 
-    ticker_to_series = dict(
-        zip(mapping_df[MetadataColumns.MDS_TICKER].astype(str), mapping_df[MetadataColumns.SERIES_CODE])
-    )
+    ticker_to_series = build_ticker_to_series_map(mapping_df, TickerSource.MDS)
     symbols = list(ticker_to_series.keys())
     if not symbols:
         return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])

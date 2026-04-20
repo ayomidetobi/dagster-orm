@@ -24,13 +24,13 @@ from dagster_quickstart.orm.schema import (
     TickerSource,
     ValueColumns,
     get_vendor_field_column,
-    get_vendor_ticker_column,
 )
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
     slice_wide_for_calendar_month,
     wide_frame_covers_utc_dates,
 )
+from dagster_quickstart.orm.ticker_mapping import build_series_to_ticker_map
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 from dagster_quickstart.utils.datetime_utils import (
@@ -384,8 +384,6 @@ class DataAPI:
         if ticker_source is None:
             ticker_source = TickerSource.BLOOMBERG
 
-        ticker_column = get_vendor_ticker_column(ticker_source)
-
         query_filters: Dict[str, List[str]] = {
             MetadataColumns.SERIES_CODE: series_codes,
         }
@@ -399,21 +397,7 @@ class DataAPI:
         if metadata_df.empty:
             return {}
 
-        # Check if the ticker column exists in the dataframe
-        if ticker_column not in metadata_df.columns:
-            raise ValueError(
-                f"Ticker column '{ticker_column}' not found in metadata. "
-                f"Available columns: {list(metadata_df.columns)}"
-            )
-
-        ticker_map = {}
-        for _, row in metadata_df.iterrows():
-            series_code = row[MetadataColumns.SERIES_CODE]
-            ticker = row.get(ticker_column)
-            if pd.notna(ticker) and ticker:
-                ticker_map[series_code] = str(ticker)
-
-        return ticker_map
+        return build_series_to_ticker_map(metadata_df, ticker_source)
 
     def get_excluding(self, **filters: Unpack[FilterParams]) -> QuerySet:
         """Create QuerySet with inverted metadata filters (exclude matching values).
