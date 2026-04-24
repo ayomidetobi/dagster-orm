@@ -1,7 +1,7 @@
 """DataAPI class for semantic ORM layer."""
 
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple,Unpack
+from typing import Any, Dict, List, Optional, Tuple, Unpack, Union
 
 import pandas as pd
 from decouple import config
@@ -10,7 +10,7 @@ from duckdb_tinyorm_py import QueryBuilder
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
-from dagster_quickstart.orm.exceptions import ConnectionBindingError
+from dagster_quickstart.orm.exceptions import ConnectionBindingError, InvalidFilterFieldError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
@@ -190,6 +190,64 @@ class DataAPI:
         if all_params:
             return self._metadata_repository._repository.execute_raw_sql(adapted_sql, all_params)
         return self._metadata_repository._repository.execute_raw_sql(adapted_sql)
+
+    def filter_options(
+    self,
+    fields: Optional[Union[str, List[str]]] = None,
+    ) -> Union[List[str], Dict[str, List[str]]]:
+        """Return distinct lookup options for one, many, or all lookup columns.
+
+        If `fields` is None, options for all lookup columns are returned.
+        """
+
+        lookup_df = self.load_lookup_table_from_s3()
+        available_fields = set(lookup_df.columns)
+
+        if fields is None:
+            requested_fields = list(lookup_df.columns)
+        else:
+            requested_fields = [fields] if isinstance(fields, str) else list(fields)
+
+        if not requested_fields:
+            raise ValueError("filter_options() requires at least one lookup field")
+
+        invalid_fields = [
+            field for field in requested_fields
+            if field not in available_fields
+        ]
+
+        if invalid_fields:
+            raise InvalidFilterFieldError(
+                f"Invalid lookup field(s): {invalid_fields}. "
+                f"Available lookup fields: {sorted(available_fields)}"
+            )
+
+        options_by_field: Dict[str, List[str]] = {}
+
+        for field in requested_fields:
+            values = (
+                lookup_df[field]
+                .dropna()
+                .astype(str)
+                .map(str.strip)
+            )
+
+            options_by_field[field] = [
+                value for value in pd.unique(values)
+                if value
+            ]
+
+        if fields is not None and len(requested_fields) == 1:
+            return options_by_field[requested_fields[0]]
+
+        return options_by_field
+    def query_options(
+        self,
+        for_: Optional[Union[str, List[str]]] = None,
+        **kwargs: Any,
+    ) -> Union[List[str], Dict[str, List[str]]]:
+        """Alias for :meth:`filter_options`."""
+        return self.filter_options(for_=for_, **kwargs)
 
     def load_value_data_from_s3(
         self,

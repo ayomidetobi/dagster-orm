@@ -13,10 +13,24 @@ from dagster_quickstart.orm.schema import (
     ValueColumns,
     get_vendor_ticker_and_field_columns,
 )
-from dagster_quickstart.orm.ticker_mapping import build_ticker_to_series_map
+from dagster_quickstart.orm.ticker_mapping import build_series_to_ticker_map
 from dagster_quickstart.utils.datetime_utils import parse_timestamp
 
 LoadMetadataRowsFn = Callable[[Dict[str, List[str]]], pd.DataFrame]
+
+
+def empty_direct_value_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            ValueColumns.SERIES_CODE,
+            ValueColumns.TIMESTAMP,
+            ValueColumns.VALUE,
+        ]
+    )
+
+
+def empty_direct_source_raw_df() -> pd.DataFrame:
+    return pd.DataFrame()
 
 
 def ticker_and_field_columns(tickersource: TickerSource) -> Tuple[str, str]:
@@ -65,11 +79,32 @@ def resolve_series_ticker_field_rows(
     return metadata_df[required_cols].dropna(subset=[ticker_col, field_col]).copy()
 
 
+def reshape_direct_source_df(raw_df: pd.DataFrame) -> pd.DataFrame:
+    if raw_df.empty or not isinstance(raw_df.index, pd.DatetimeIndex):
+        return empty_direct_value_df()
+
+    normalized = raw_df.copy()
+    normalized.index.names = [ValueColumns.TIMESTAMP]
+    out = (
+        normalized.reset_index()
+        .melt(
+            id_vars=[ValueColumns.TIMESTAMP],
+            var_name=ValueColumns.SERIES_CODE,
+            value_name=ValueColumns.VALUE,
+        )
+        .dropna(subset=[ValueColumns.VALUE])
+    )
+    return out[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]]
+
+
 def fetch_direct_bloomberg_tss(
-    mapping_df: pd.DataFrame,
+    ticker_fields: Dict[str, Dict[str, str]],
     start_dt: Optional[datetime],
     end_dt: Optional[datetime],
 ) -> pd.DataFrame:
+    """
+    Fetch raw business-day data from Bloomberg TSS.
+    """
     try:
         from pyeqdr.services import tss  # type: ignore
     except Exception as exc:
@@ -77,16 +112,12 @@ def fetch_direct_bloomberg_tss(
             "Direct Bloomberg fetch requires pyeqdr services TSS client"
         ) from exc
 
-    if mapping_df.empty:
-        return pd.DataFrame(
-            columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-        )
+    if not ticker_fields:
+        return empty_direct_source_raw_df()
 
     frames: List[pd.DataFrame] = []
-    _, field_col = ticker_and_field_columns(TickerSource.BLOOMBERG)
-    for field_name, group in mapping_df.groupby(field_col):
-        ticker_to_series = build_ticker_to_series_map(group, TickerSource.BLOOMBERG)
-        symbols = list(ticker_to_series.keys())
+    for field_name, tickers in ticker_fields.items():
+        symbols = list(tickers.values())
         if not symbols:
             continue
         kwargs = {
@@ -102,53 +133,53 @@ def fetch_direct_bloomberg_tss(
         raw_df = tss.get_history(**kwargs)
         if raw_df is None or raw_df.empty:
             continue
-        normalized = raw_df.copy()
-        if ValueColumns.TIMESTAMP in normalized.columns:
-            normalized[ValueColumns.TIMESTAMP] = pd.to_datetime(
-                normalized[ValueColumns.TIMESTAMP],
+
+        field_df = raw_df.copy()
+        if ValueColumns.TIMESTAMP in field_df.columns:
+            field_df[ValueColumns.TIMESTAMP] = pd.to_datetime(
+                field_df[ValueColumns.TIMESTAMP],
                 utc=True,
             )
-            normalized = normalized.set_index(ValueColumns.TIMESTAMP)
-        elif isinstance(normalized.index, pd.DatetimeIndex):
-            normalized.index = pd.to_datetime(normalized.index, utc=True)
+            field_df = field_df.set_index(ValueColumns.TIMESTAMP)
+        elif isinstance(field_df.index, pd.DatetimeIndex):
+            field_df.index = pd.to_datetime(field_df.index, utc=True)
         else:
             continue
 
-        for ticker in symbols:
-            if ticker not in normalized.columns:
-                continue
-            series_code = ticker_to_series.get(ticker)
-            if not series_code:
-                continue
-            series_df = normalized[[ticker]].reset_index()
-            series_df.columns = [ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-            series_df[ValueColumns.SERIES_CODE] = series_code
-            frames.append(
-                series_df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]]
-            )
+        rename_map = {
+            ticker: series_code
+            for series_code, ticker in tickers.items()
+            if ticker in field_df.columns
+        }
+        if not rename_map:
+            continue
+
+        field_df = field_df.rename(columns=rename_map)
+        frames.append(field_df[list(rename_map.values())])
 
     if not frames:
-        return pd.DataFrame(
-            columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-        )
-    return pd.concat(frames, ignore_index=True)
+        return empty_direct_source_raw_df()
+    return pd.concat(frames, axis=1)
 
 
 def fetch_direct_hawk(
-    mapping_df: pd.DataFrame,
+    tickers: Dict[str, str],
     start_dt: Optional[datetime],
     end_dt: Optional[datetime],
 ) -> pd.DataFrame:
+    """
+    Fetch raw daily data from Hawk.
+    """
     try:
         from dagster_quickstart.MQL.base_demo import build_celery_config
         from dagster_quickstart.MQL.hawk import HawkStrategy
     except Exception as exc:
         raise ValueQueryParameterError("Direct Hawk fetch dependencies are unavailable") from exc
 
-    ticker_to_series = build_ticker_to_series_map(mapping_df, TickerSource.HAWKEYE)
-    symbols = list(ticker_to_series.keys())
+    symbols = list(tickers.values())
     if not symbols:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
+        return empty_direct_source_raw_df()
+
     strategy = HawkStrategy(config=build_celery_config())
     result = strategy.get_history(
         symbols=symbols,
@@ -156,29 +187,37 @@ def fetch_direct_hawk(
         toDate=end_dt or datetime.utcnow(),
         frequency="D",
     )
-    payload = getattr(result, "payload", None)
-    if payload is None or payload.empty:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
-    payload.index = pd.to_datetime(payload.index, utc=True)
-    frames: List[pd.DataFrame] = []
-    for ticker in symbols:
-        if ticker not in payload.columns:
-            continue
-        sc = ticker_to_series[ticker]
-        series_df = payload[[ticker]].reset_index()
-        series_df.columns = [ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-        series_df[ValueColumns.SERIES_CODE] = sc
-        frames.append(series_df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]])
-    if not frames:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
-    return pd.concat(frames, ignore_index=True)
+    raw_df = getattr(result, "payload", None)
+    if raw_df is None or raw_df.empty:
+        return empty_direct_source_raw_df()
+
+    raw_df = raw_df.copy()
+    if isinstance(raw_df.index, pd.DatetimeIndex):
+        raw_df.index.names = [ValueColumns.TIMESTAMP]
+        raw_df.index = pd.to_datetime(raw_df.index, utc=True)
+    else:
+        return empty_direct_source_raw_df()
+
+    rename_map = {
+        ticker: series_code
+        for series_code, ticker in tickers.items()
+        if ticker in raw_df.columns
+    }
+    if not rename_map:
+        return empty_direct_source_raw_df()
+
+    raw_df.rename(columns=rename_map, inplace=True)
+    return raw_df[list(rename_map.values())]
 
 
 def fetch_direct_onetick(
-    mapping_df: pd.DataFrame,
+    tickers: Dict[str, str],
     start_dt: Optional[datetime],
     end_dt: Optional[datetime],
 ) -> pd.DataFrame:
+    """
+    Fetch raw history data from OneTick.
+    """
     try:
         from onetick import OneTick  # type: ignore
     except Exception:
@@ -189,10 +228,10 @@ def fetch_direct_onetick(
                 "Direct OneTick fetch requires a OneTick client library"
             ) from exc
 
-    ticker_to_series = build_ticker_to_series_map(mapping_df, TickerSource.MDS)
-    symbols = list(ticker_to_series.keys())
+    symbols = list(tickers.values())
     if not symbols:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
+        return empty_direct_source_raw_df()
+
     client = OneTick()
     raw_df = client.get_history(
         symbols=symbols,
@@ -200,27 +239,31 @@ def fetch_direct_onetick(
         to_date=end_dt,
     )
     if raw_df is None or raw_df.empty:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
-    normalized = raw_df.copy()
-    if ValueColumns.TIMESTAMP in normalized.columns:
-        normalized[ValueColumns.TIMESTAMP] = pd.to_datetime(normalized[ValueColumns.TIMESTAMP], utc=True)
-        normalized = normalized.set_index(ValueColumns.TIMESTAMP)
-    elif isinstance(normalized.index, pd.DatetimeIndex):
-        normalized.index = pd.to_datetime(normalized.index, utc=True)
+        return empty_direct_source_raw_df()
+
+    raw_df = raw_df.copy()
+    if ValueColumns.TIMESTAMP in raw_df.columns:
+        raw_df[ValueColumns.TIMESTAMP] = pd.to_datetime(
+            raw_df[ValueColumns.TIMESTAMP],
+            utc=True,
+        )
+        raw_df = raw_df.set_index(ValueColumns.TIMESTAMP)
+    elif isinstance(raw_df.index, pd.DatetimeIndex):
+        raw_df.index = pd.to_datetime(raw_df.index, utc=True)
     else:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
-    frames: List[pd.DataFrame] = []
-    for ticker in symbols:
-        if ticker not in normalized.columns:
-            continue
-        sc = ticker_to_series[ticker]
-        series_df = normalized[[ticker]].reset_index()
-        series_df.columns = [ValueColumns.TIMESTAMP, ValueColumns.VALUE]
-        series_df[ValueColumns.SERIES_CODE] = sc
-        frames.append(series_df[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]])
-    if not frames:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
-    return pd.concat(frames, ignore_index=True)
+        return empty_direct_source_raw_df()
+
+    raw_df.index.names = [ValueColumns.TIMESTAMP]
+    rename_map = {
+        ticker: series_code
+        for series_code, ticker in tickers.items()
+        if ticker in raw_df.columns
+    }
+    if not rename_map:
+        return empty_direct_source_raw_df()
+
+    raw_df.rename(columns=rename_map, inplace=True)
+    return raw_df[list(rename_map.values())]
 
 
 def get_direct_source_values(
@@ -233,15 +276,29 @@ def get_direct_source_values(
     end_dt = parse_timestamp(params.end) if params and params.end else None
     mapping_df = resolve_series_ticker_field_rows(load_metadata_rows, series_codes, tickersource)
     if mapping_df.empty:
-        return pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
+        return empty_direct_value_df()
     if tickersource == TickerSource.BLOOMBERG:
-        out = fetch_direct_bloomberg_tss(mapping_df, start_dt, end_dt)
+        _, field_col = ticker_and_field_columns(TickerSource.BLOOMBERG)
+        ticker_fields = {
+            str(field_name): build_series_to_ticker_map(group, TickerSource.BLOOMBERG)
+            for field_name, group in mapping_df.groupby(field_col)
+        }
+        raw_out = fetch_direct_bloomberg_tss(ticker_fields, start_dt, end_dt)
     elif tickersource == TickerSource.HAWKEYE:
-        out = fetch_direct_hawk(mapping_df, start_dt, end_dt)
+        raw_out = fetch_direct_hawk(
+            build_series_to_ticker_map(mapping_df, TickerSource.HAWKEYE),
+            start_dt,
+            end_dt,
+        )
     elif tickersource in (TickerSource.MDS, TickerSource.ONETICK):
-        out = fetch_direct_onetick(mapping_df, start_dt, end_dt)
+        raw_out = fetch_direct_onetick(
+            build_series_to_ticker_map(mapping_df, TickerSource.MDS),
+            start_dt,
+            end_dt,
+        )
     else:
         raise ValueQueryParameterError(
             f"Direct source fetch is not implemented for '{tickersource.value}'"
         )
+    out = reshape_direct_source_df(raw_out)
     return filter_and_sort_direct_value_df(out, params)
