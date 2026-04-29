@@ -10,11 +10,12 @@ from duckdb_tinyorm_py import QueryBuilder
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
 from dagster_quickstart.orm.domain.value_repository import ValueRepository
-from dagster_quickstart.orm.exceptions import ConnectionBindingError, InvalidFilterFieldError
+from dagster_quickstart.orm.exceptions import ConnectionBindingError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
 from dagster_quickstart.orm.infrastructure.temp_table_manager import TempTableManager
+from dagster_quickstart.orm.option_utils import dataframe_filter_options
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.s3_paths import build_s3_wide_value_partition_path
 from dagster_quickstart.orm.schema import (
@@ -192,62 +193,35 @@ class DataAPI:
         return self._metadata_repository._repository.execute_raw_sql(adapted_sql)
 
     def filter_options(
-    self,
-    fields: Optional[Union[str, List[str]]] = None,
-    ) -> Union[List[str], Dict[str, List[str]]]:
-        """Return distinct lookup options for one, many, or all lookup columns.
+        self,
+        fields: Optional[Union[str, List[str]]] = None,
+        *,
+        as_dataframe: bool = False,
+    ) -> Union[List[str], Dict[str, List[str]], pd.DataFrame]:
+        """Return global lookup-based filter options.
 
-        If `fields` is None, options for all lookup columns are returned.
+        Unlike :meth:`QuerySet.filter_options`, this method is not contextual to a
+        current query. It reads the lookup table and returns options available
+        globally across the catalog.
+
+        Args:
+            fields: Lookup field name, list of field names, or ``None`` for all fields.
+            as_dataframe: When ``True``, return a normalized ``field`` / ``value`` DataFrame.
+
+        Returns:
+            Lookup-derived filter options for the requested fields.
         """
-
         lookup_df = self.load_lookup_table_from_s3()
-        available_fields = set(lookup_df.columns)
+        return dataframe_filter_options(lookup_df, fields=fields, as_dataframe=as_dataframe)
 
-        if fields is None:
-            requested_fields = list(lookup_df.columns)
-        else:
-            requested_fields = [fields] if isinstance(fields, str) else list(fields)
-
-        if not requested_fields:
-            raise ValueError("filter_options() requires at least one lookup field")
-
-        invalid_fields = [
-            field for field in requested_fields
-            if field not in available_fields
-        ]
-
-        if invalid_fields:
-            raise InvalidFilterFieldError(
-                f"Invalid lookup field(s): {invalid_fields}. "
-                f"Available lookup fields: {sorted(available_fields)}"
-            )
-
-        options_by_field: Dict[str, List[str]] = {}
-
-        for field in requested_fields:
-            values = (
-                lookup_df[field]
-                .dropna()
-                .astype(str)
-                .map(str.strip)
-            )
-
-            options_by_field[field] = [
-                value for value in pd.unique(values)
-                if value
-            ]
-
-        if fields is not None and len(requested_fields) == 1:
-            return options_by_field[requested_fields[0]]
-
-        return options_by_field
     def query_options(
         self,
         for_: Optional[Union[str, List[str]]] = None,
         **kwargs: Any,
-    ) -> Union[List[str], Dict[str, List[str]]]:
-        """Alias for :meth:`filter_options`."""
-        return self.filter_options(for_=for_, **kwargs)
+    ) -> Union[List[str], Dict[str, List[str]], pd.DataFrame]:
+        """Backward-compatible alias for :meth:`filter_options`."""
+        fields = kwargs.pop("fields", for_)
+        return self.filter_options(fields=fields, **kwargs)
 
     def load_value_data_from_s3(
         self,

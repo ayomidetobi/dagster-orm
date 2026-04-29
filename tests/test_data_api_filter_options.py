@@ -18,11 +18,11 @@ def api() -> DataAPI:
 
 
 def test_filter_options_single_field_returns_list(api: DataAPI) -> None:
-    assert api.filter_options(for_="asset_class") == ["Equity", "Commodity"]
+    assert api.filter_options(fields="asset_class") == ["Equity", "Commodity"]
 
 
 def test_filter_options_multiple_fields_returns_mapping(api: DataAPI) -> None:
-    assert api.filter_options(for_=["asset_class", "country"]) == {
+    assert api.filter_options(fields=["asset_class", "country"]) == {
         "asset_class": ["Equity", "Commodity"],
         "country": ["United States", "Germany", "Japan"],
     }
@@ -32,6 +32,17 @@ def test_query_options_alias_uses_same_behavior(api: DataAPI) -> None:
     assert api.query_options(for_="asset_class") == ["Equity", "Commodity"]
 
 
+def test_query_options_alias_supports_as_dataframe(api: DataAPI) -> None:
+    result = api.query_options(for_="country", as_dataframe=True)
+
+    assert list(result.columns) == ["field", "value"]
+    assert result.to_dict("records") == [
+        {"field": "country", "value": "United States"},
+        {"field": "country", "value": "Germany"},
+        {"field": "country", "value": "Japan"},
+    ]
+
+
 def test_filter_options_rejects_unknown_field(api: DataAPI) -> None:
     with pytest.raises(InvalidFilterFieldError):
-        api.filter_options(for_="missing_field")
+        api.filter_options(fields="missing_field")

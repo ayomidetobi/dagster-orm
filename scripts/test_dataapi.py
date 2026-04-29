@@ -53,26 +53,54 @@ data_api = DataAPI()
 
 # Example 1: Query metadata with filters
 print_separator("Example 1: Query metadata")
-dataset = data_api.get(
-)
+dataset = data_api.get()
 
-metadata_df = dataset.info(a)
+metadata_df = dataset.info()
 print(dataset)
 print(f"Found {len(metadata_df)} metadata rows")
 # print(f"Columns: {', '.join(metadata_df.columns)}")
 if not metadata_df.empty:
     print(f"\nFirst row:\n{metadata_df}")
 
-# Example 2: Get value data for the filtered series
-print_separator("Example 2: Get value data")
-values_df = dataset.value(
-    ValueQueryParams(
-        start="2025-02-01",
-        end="2026-02-16",
-    ),
-    humanize=True,
+# Example 2: Test global and contextual filter options
+print_separator("Example 2: Test filter options")
+
+global_asset_class_options = data_api.filter_options(fields="asset_class")
+print(f"Global asset_class options: {global_asset_class_options}")
+
+context_dataset = data_api.get(asset_class=["Equity", "Commodity", "Fixed Income"])
+print(context_dataset)
+
+context_currency_options = context_dataset.filter_options()
+print(f"Context currency options: {context_currency_options}")
+
+context_option_table = context_dataset.filter_options(
+    ["region", "currency"],
+    as_dataframe=True,
 )
-print(values_df.head(10))
+print("\nContext options as DataFrame:")
+print(context_option_table)
+
+# Example 3: Test repr() for chained include/exclude filters
+print_separator("Example 3: Test QuerySet repr")
+
+repr_dataset = (
+    data_api.get(asset_class="Equity")
+    .filter(region="North America")
+    .filter_exclude(currency="USD")
+)
+print(repr_dataset)
+
+# Example 4: Get value data for the filtered series
+# print_separator("Example 2: Get value data")
+# values_df = dataset.value(
+#     ValueQueryParams(
+#         start="2025-02-01",
+#         end="2026-02-16",
+#     ),
+#     humanize=True,
+# )
+# print(values_df.head(10))
 # if not values_df.empty:
 #     print(f"Columns: {', '.join(values_df.columns)}")
 # for group, qs in dataset.groupby(["sub_asset_class", "region"]):
