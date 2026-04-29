@@ -2,7 +2,7 @@ import pandas as pd
 
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.queryset import QuerySet
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 
 
 class FakeMetadataRepository:
@@ -28,7 +28,39 @@ class FakeMetadataRepository:
 
 
 class FakeValueRepository:
-    pass
+    def __init__(self):
+        self.batch_df = pd.DataFrame()
+        self.last_df = pd.DataFrame()
+        self.last_calls = []
+
+    def get_batch_series_data(
+        self,
+        series_codes,
+        tickersource=TickerSource.BLOOMBERG,
+        start=None,
+        end=None,
+        order_by=None,
+        limit=None,
+    ):
+        return self.batch_df.copy()
+
+    def get_last_values(
+        self,
+        series_codes,
+        tickersource=TickerSource.BLOOMBERG,
+        latest_non_null=True,
+    ):
+        self.last_calls.append(
+            {
+                "series_codes": series_codes,
+                "tickersource": tickersource,
+                "latest_non_null": latest_non_null,
+            }
+        )
+        result = self.last_df.copy()
+        if latest_non_null:
+            result = result.dropna(subset=[ValueColumns.VALUE]).reset_index(drop=True)
+        return result
 
 
 def make_queryset() -> QuerySet:
@@ -46,6 +78,32 @@ def make_queryset() -> QuerySet:
         metadata_filters={MetadataColumns.ASSET_CLASS: ["FX"]},
         control_table=TableNames.METADATA_WILDCARD,
     )
+
+
+def make_value_queryset() -> QuerySet:
+    queryset = make_queryset()
+    queryset._resolved_series_codes = ["S1", "S2"]
+    queryset._value_repository.batch_df = pd.DataFrame(
+        {
+            ValueColumns.TIMESTAMP: pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02", "2024-01-03", "2024-01-03"],
+                utc=True,
+            ),
+            ValueColumns.SERIES_CODE: ["S1", "S2", "S1", "S2", "S1", "S2"],
+            ValueColumns.VALUE: [1.0, 2.0, None, None, None, 3.0],
+        }
+    )
+    queryset._value_repository.last_df = pd.DataFrame(
+        {
+            ValueColumns.TIMESTAMP: pd.to_datetime(
+                ["2024-01-02", "2024-01-03"],
+                utc=True,
+            ),
+            ValueColumns.SERIES_CODE: ["S1", "S2"],
+            ValueColumns.VALUE: [5.0, None],
+        }
+    )
+    return queryset
 
 
 def test_repr_preserves_chained_include_filters() -> None:
@@ -113,3 +171,48 @@ def test_queryset_filter_options_as_dataframe_returns_field_value_rows() -> None
         {"field": "currency", "value": "USD"},
         {"field": "currency", "value": "GBP"},
     ]
+
+
+def test_value_business_days_true_drops_all_nan_rows() -> None:
+    values = make_value_queryset().value(business_days=True)
+
+    assert list(values.index.strftime("%Y-%m-%d")) == ["2024-01-01", "2024-01-03"]
+
+
+def test_value_business_days_true_keeps_partial_nan_rows() -> None:
+    values = make_value_queryset().value(business_days=True)
+
+    assert pd.Timestamp("2024-01-03", tz="UTC") in values.index
+    assert pd.isna(values.loc[pd.Timestamp("2024-01-03", tz="UTC"), "S1"])
+    assert values.loc[pd.Timestamp("2024-01-03", tz="UTC"), "S2"] == 3.0
+
+
+def test_value_business_days_false_keeps_all_rows() -> None:
+    values = make_value_queryset().value(business_days=False)
+
+    assert list(values.index.strftime("%Y-%m-%d")) == ["2024-01-01", "2024-01-02", "2024-01-03"]
+
+
+def test_get_values_business_days_true_behaves_the_same() -> None:
+    values = make_value_queryset().get_values(business_days=True)
+
+    assert list(values.index.strftime("%Y-%m-%d")) == ["2024-01-01", "2024-01-03"]
+
+
+def test_get_last_values_business_days_true_ignores_nan_latest_values() -> None:
+    queryset = make_value_queryset()
+    values = queryset.get_last_values(business_days=True)
+
+    assert queryset._value_repository.last_calls[-1]["latest_non_null"] is True
+    assert list(values.columns) == ["S1"]
+    assert list(values.index.strftime("%Y-%m-%d")) == ["2024-01-02"]
+    assert values.loc[pd.Timestamp("2024-01-02", tz="UTC"), "S1"] == 5.0
+
+
+def test_get_last_values_business_days_false_keeps_old_behavior() -> None:
+    queryset = make_value_queryset()
+    values = queryset.get_last_values(business_days=False)
+
+    assert queryset._value_repository.last_calls[-1]["latest_non_null"] is False
+    assert pd.Timestamp("2024-01-03", tz="UTC") in values.index
+    assert pd.isna(values.loc[pd.Timestamp("2024-01-03", tz="UTC"), "S2"])

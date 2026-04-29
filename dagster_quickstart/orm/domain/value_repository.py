@@ -306,8 +306,16 @@ class ValueRepository:
         self,
         series_codes: List[str],
         tickersource: TickerSource = TickerSource.BLOOMBERG,
+        latest_non_null: bool = True,
     ) -> pd.DataFrame:
-        """Latest (max timestamp) row per series_code."""
+        """Latest row per series_code.
+
+        Args:
+            series_codes: Series identifiers to load.
+            tickersource: Value source to read from.
+            latest_non_null: If True, ignore NaN values when selecting the latest
+                value per series.
+        """
         if not series_codes:
             return pd.DataFrame(
                 columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
@@ -329,6 +337,10 @@ class ValueRepository:
             )
             if all_long.empty:
                 return all_long
+            if latest_non_null:
+                all_long = all_long.dropna(subset=[ValueColumns.VALUE])
+                if all_long.empty:
+                    return all_long
             all_long = all_long.sort_values(ValueColumns.TIMESTAMP, ascending=False)
             return (
                 all_long.groupby(ValueColumns.SERIES_CODE, as_index=False)
@@ -338,6 +350,7 @@ class ValueRepository:
             )
         except Exception as exc:
             raise MetadataResolutionError(f"Failed to load last values: {exc}") from exc
+
     def get_all_values(
         self, series_codes: List[str], tickersource: TickerSource = TickerSource.BLOOMBERG
     ) -> pd.DataFrame:
@@ -350,4 +363,3 @@ class ValueRepository:
             order_by=None,
             limit=None,
         )
-
