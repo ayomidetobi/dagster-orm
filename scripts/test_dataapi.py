@@ -92,15 +92,15 @@ repr_dataset = (
 print(repr_dataset)
 
 # Example 4: Get value data for the filtered series
-# print_separator("Example 2: Get value data")
-# values_df = dataset.value(
-#     ValueQueryParams(
-#         start="2025-02-01",
-#         end="2026-02-16",
-#     ),
-#     humanize=True,
-# )
-# print(values_df.head(10))
+print_separator("Example 2: Get value data")
+values_df = dataset.value(
+    ValueQueryParams(
+        start="2025-02-01",
+        end="2026-02-16",
+    ),
+    humanize=True,
+)
+print(values_df.head(10))
 # if not values_df.empty:
 #     print(f"Columns: {', '.join(values_df.columns)}")
 # for group, qs in dataset.groupby(["sub_asset_class", "region"]):

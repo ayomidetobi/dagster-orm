@@ -359,6 +359,7 @@ class QuerySet:
         tickersource: TickerSource = TickerSource.BLOOMBERG,
         humanize: bool = False,
         out_of_cache: bool = False,
+        business_days: bool = False,
     ) -> pd.DataFrame:
         """Get value data for matching series.
 
@@ -368,6 +369,9 @@ class QuerySet:
             humanize: If True, rename series_code to editorial_short_default
             out_of_cache: If True, bypass cached parquet values and fetch directly
                 from the vendor source.
+            business_days: If True, drop rows where all selected series values are NaN
+                after pivoting to wide format. This does not use a holiday calendar
+                and does not remove rows where only some series are NaN.
 
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
@@ -413,6 +417,8 @@ class QuerySet:
             columns=ValueColumns.SERIES_CODE,
             values=ValueColumns.VALUE,
         )
+        if business_days:
+            pivoted_df = pivoted_df.dropna(how="all")
         if humanize:
             name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
             pivoted_df = pivoted_df.rename(columns=name_map)
@@ -565,12 +571,16 @@ class QuerySet:
         self,
         ticker_source: TickerSource = TickerSource.BLOOMBERG,
         humanize: bool = False,
+        business_days: bool = True,
     ) -> pd.DataFrame:
         """Get latest (max timestamp) value for each series_code in this QuerySet.
 
         Args:
             ticker_source: Ticker source (default: TickerSource.BLOOMBERG)
             humanize: If True, rename series_code to series_name
+            business_days: If True, drop rows where all selected series values are NaN
+                after pivoting to wide format. This does not use a holiday calendar
+                and does not remove rows where only some series are NaN.
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -585,7 +595,11 @@ class QuerySet:
                 f"No series found matching filters: {self._filter_state_for_error()}"
             )
 
-        result_df = self._value_repository.get_last_values(resolved_series_codes, ticker_source)
+        result_df = self._value_repository.get_last_values(
+            resolved_series_codes,
+            ticker_source,
+            latest_non_null=business_days,
+        )
 
         # Return empty DataFrame unchanged
         if result_df.empty:
@@ -597,6 +611,8 @@ class QuerySet:
             columns=ValueColumns.SERIES_CODE,
             values=ValueColumns.VALUE,
         )
+        if business_days:
+            pivoted_df = pivoted_df.dropna(how="all")
         if humanize:
             name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
             pivoted_df = pivoted_df.rename(columns=name_map)
@@ -610,12 +626,16 @@ class QuerySet:
         self,
         ticker_source: Optional[TickerSource] = None,
         humanize: bool = False,
+        business_days: bool = True,
     ) -> pd.DataFrame:
         """Get all values for all series in this QuerySet (optionally filtered by ticker_source).
 
         Args:
             ticker_source: Optional ticker source filter (default: None, uses BLOOMBERG)
             humanize: If True, rename series_code to series_name
+            business_days: If True, drop rows where all selected series values are NaN
+                after pivoting to wide format. This does not use a holiday calendar
+                and does not remove rows where only some series are NaN.
         Returns:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
@@ -649,6 +669,8 @@ class QuerySet:
             columns=ValueColumns.SERIES_CODE,
             values=ValueColumns.VALUE,
         )
+        if business_days:
+            pivoted_df = pivoted_df.dropna(how="all")
 
         if humanize:
             name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
