@@ -52,6 +52,7 @@ class QuerySet:
         validation_repository: Optional[ValidationRepository] = None,
         exclude: bool = False,
         series_codes: Optional[List[str]] = None,
+        out_of_cache: bool = False,
         control_table: Optional[str] = None,
     ):
         """Initialize QuerySet with repositories and filters.
@@ -65,6 +66,7 @@ class QuerySet:
             exclude: If True, invert filter logic (exclude matching values)
             series_codes: Optional list of series codes to override filter-based resolution.
                 If set, metadata filtering is bypassed and these codes are used directly.
+            out_of_cache: Default ``out_of_cache`` behavior for value retrieval methods.
             control_table: ``None`` uses ``TableNames.METADATA_WILDCARD`` (``control/metadata*/``).
                 Otherwise ``TableNames.METADATA`` for validated primary catalog only, or
                 ``TableNames.METADATA_DERIVED`` for dependency definitions only.
@@ -83,12 +85,14 @@ class QuerySet:
         self._exclude_filters = normalized_filters if exclude else {}
         self._resolved_series_codes: Optional[List[str]] = None
         self._validation_repository = validation_repository
+        self._out_of_cache = out_of_cache
 
     def __repr__(self) -> str:
         segments = [
             f"include_filters={self._include_filters!r}",
             f"exclude_filters={self._exclude_filters!r}",
             f"control_table={self._control_table!r}",
+            f"out_of_cache={self._out_of_cache!r}",
         ]
         if (sc := self._series_codes) is not None:
             n = len(sc)
@@ -358,7 +362,7 @@ class QuerySet:
         params: Optional[ValueQueryParams] = None,
         tickersource: TickerSource = TickerSource.BLOOMBERG,
         humanize: bool = False,
-        out_of_cache: bool = False,
+        out_of_cache: Optional[bool] = None,
         business_days: bool = False,
     ) -> pd.DataFrame:
         """Get value data for matching series.
@@ -367,8 +371,8 @@ class QuerySet:
             params: Optional ValueQueryParams for time filtering and pagination
             tickersource: Ticker source (default: TickerSource.BLOOMBERG)
             humanize: If True, rename series_code to editorial_short_default
-            out_of_cache: If True, bypass cached parquet values and fetch directly
-                from the vendor source.
+            out_of_cache: If provided, overrides this QuerySet's default and controls
+                whether cached parquet values are bypassed in favor of direct source fetches.
             business_days: If True, drop rows where all selected series values are NaN
                 after pivoting to wide format. This does not use a holiday calendar
                 and does not remove rows where only some series are NaN.
@@ -390,7 +394,9 @@ class QuerySet:
 
         self._validate_time_params(params)
 
-        if out_of_cache:
+        effective_out_of_cache = self._out_of_cache if out_of_cache is None else out_of_cache
+
+        if effective_out_of_cache:
             value_df = get_direct_source_values(
                 load_metadata_rows=lambda filters: self._load_metadata_rows(filters, exclude=False),
                 series_codes=resolved_series_codes,
@@ -446,6 +452,7 @@ class QuerySet:
             metadata_filters=self._merge_filters(self._effective_include_filters(), new_filters),
             validation_repository=self._validation_repository,
             exclude=False,
+            out_of_cache=self._out_of_cache,
             control_table=self._control_table,
         ).filter_exclude(**self._exclude_filters)
 
@@ -465,6 +472,7 @@ class QuerySet:
             metadata_filters=self._effective_include_filters(),
             validation_repository=self._validation_repository,
             exclude=False,
+            out_of_cache=self._out_of_cache,
             control_table=self._control_table,
         )
         base_queryset._exclude_filters = self._merge_filters(self._exclude_filters, new_filters)
@@ -564,6 +572,7 @@ class QuerySet:
             validation_repository=self._validation_repository,
             exclude=False,
             series_codes=unioned_codes,
+            out_of_cache=self._out_of_cache,
             control_table=self._control_table,
         )
 
@@ -725,5 +734,6 @@ class QuerySet:
                 validation_repository=self._validation_repository,
                 exclude=False,
                 series_codes=series_codes,
+                out_of_cache=self._out_of_cache,
                 control_table=self._control_table,
             )

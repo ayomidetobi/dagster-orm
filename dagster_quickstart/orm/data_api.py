@@ -61,13 +61,20 @@ class DataAPI:
         values_df = dataset.value(ValueQueryParams(start="2024-01-01", end="2024-12-31"))
     """
 
-    def __init__(self, duckdb_resource: Optional[DuckDBResource] = None):
+    def __init__(
+        self,
+        duckdb_resource: Optional[DuckDBResource] = None,
+        out_of_cache: bool = False,
+    ):
         """Initialize DataAPI with DuckDB resource.
 
         Sets up dependency injection: connection -> DuckDbRepository -> repositories -> QuerySet
 
         Args:
             duckdb_resource: DuckDBResource instance with connection and S3 access configured
+            out_of_cache: Default ``out_of_cache`` behavior for QuerySets created from
+                this DataAPI instance. QuerySet value methods may still override it
+                explicitly per call.
 
         Raises:
             ConnectionBindingError: If duckdb_resource is invalid or cannot be created
@@ -102,6 +109,7 @@ class DataAPI:
             )
 
         self._duckdb_resource = duckdb_resource
+        self._out_of_cache = out_of_cache
         connection = duckdb_resource._con
         bucket = duckdb_resource.get_bucket()
 
@@ -163,6 +171,7 @@ class DataAPI:
             metadata_filters=normalized_filters,
             validation_repository=self._validation_repository,
             exclude=False,
+            out_of_cache=self._out_of_cache,
             control_table=control_table,
         )
 
@@ -467,6 +476,7 @@ class DataAPI:
             metadata_filters=normalized_filters,
             validation_repository=self._validation_repository,
             exclude=True,
+            out_of_cache=self._out_of_cache,
             control_table=control_table,
         )
 

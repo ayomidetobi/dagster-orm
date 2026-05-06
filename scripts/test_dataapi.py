@@ -77,7 +77,7 @@ print(context_dataset)
 context_option_table = context_dataset.filter_options(
     ["region", "currency"],
     as_dataframe=True,
-)
+).T
 print("\nContext options as DataFrame:")
 print(context_option_table)
 
@@ -92,9 +92,9 @@ repr_dataset = (
 print(repr_dataset)
 
 # Example 4: Get value data for the filtered series
-print_separator("Example 2: Get value data")
-values_df = dataset.get_last_values().T
-print(values_df.head(10))
+# print_separator("Example 2: Get value data")
+# values_df = dataset.get_last_values().T
+# print(values_df.head(10))
 # if not values_df.empty:
 #     print(f"Columns: {', '.join(values_df.columns)}")
 # for group, qs in dataset.groupby(["sub_asset_class", "region"]):

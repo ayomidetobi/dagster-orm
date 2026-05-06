@@ -32,6 +32,7 @@ class FakeValueRepository:
         self.batch_df = pd.DataFrame()
         self.last_df = pd.DataFrame()
         self.last_calls = []
+        self.batch_calls = []
 
     def get_batch_series_data(
         self,
@@ -42,6 +43,16 @@ class FakeValueRepository:
         order_by=None,
         limit=None,
     ):
+        self.batch_calls.append(
+            {
+                "series_codes": series_codes,
+                "tickersource": tickersource,
+                "start": start,
+                "end": end,
+                "order_by": order_by,
+                "limit": limit,
+            }
+        )
         return self.batch_df.copy()
 
     def get_last_values(
@@ -129,6 +140,7 @@ def test_get_excluding_creates_exclude_filters() -> None:
     api._metadata_repository = FakeMetadataRepository(pd.DataFrame())
     api._value_repository = FakeValueRepository()
     api._validation_repository = None
+    api._out_of_cache = False
 
     qs = api.get_excluding(country="USA")
 
@@ -144,6 +156,27 @@ def test_filter_exclude_chains_with_include_filters() -> None:
         MetadataColumns.CURRENCY: ["GBP"],
     }
     assert qs._exclude_filters == {MetadataColumns.COUNTRY: ["USA"]}
+
+
+def test_data_api_default_out_of_cache_flows_to_queryset() -> None:
+    api = object.__new__(DataAPI)
+    api._metadata_repository = FakeMetadataRepository(pd.DataFrame())
+    api._value_repository = FakeValueRepository()
+    api._validation_repository = None
+    api._out_of_cache = True
+
+    qs = api.get(asset_class="FX")
+
+    assert qs._out_of_cache is True
+
+
+def test_queryset_value_explicit_override_wins_over_default() -> None:
+    queryset = make_value_queryset()
+    queryset._out_of_cache = False
+
+    queryset.value(out_of_cache=False)
+
+    assert len(queryset._value_repository.batch_calls) == 1
 
 
 def test_queryset_filter_options_returns_context_specific_values() -> None:
