@@ -18,6 +18,7 @@ Main entry point:
 """
 
 from dagster_quickstart.orm.data_api import DataAPI
+from dagster_quickstart.orm.fx import FX
 from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.orm.s3_paths import (
     build_s3_control_table_path,
@@ -27,6 +28,7 @@ from dagster_quickstart.orm.validation import MetadataValidator
 
 __all__ = [
     "DataAPI",
+    "FX",
     "ValueQueryParams",
     "MetadataValidator",
     "build_s3_control_table_path",

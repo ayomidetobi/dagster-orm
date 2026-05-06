@@ -666,3 +666,4 @@ class DataAPI:
             "column_count": int(wide.shape[1]),
             "written_relative_paths": written_paths,
         }
+from dagster_quickstart.orm.fx import FX

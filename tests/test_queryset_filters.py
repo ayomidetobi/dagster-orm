@@ -1,6 +1,7 @@
 import pandas as pd
 
-from dagster_quickstart.orm.data_api import DataAPI
+import dagster_quickstart.orm.queryset as queryset_module
+from dagster_quickstart.orm.data_api import DataAPI, FX
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 
@@ -177,6 +178,92 @@ def test_queryset_value_explicit_override_wins_over_default() -> None:
     queryset.value(out_of_cache=False)
 
     assert len(queryset._value_repository.batch_calls) == 1
+
+
+def test_fx_get_includes_asset_class_fx() -> None:
+    fx = object.__new__(FX)
+    fx._metadata_repository = FakeMetadataRepository(pd.DataFrame())
+    fx._value_repository = FakeValueRepository()
+    fx._validation_repository = None
+    fx._out_of_cache = False
+
+    qs = fx.get()
+
+    assert qs._include_filters == {MetadataColumns.ASSET_CLASS: ["FX"]}
+
+
+def test_fx_get_combines_asset_class_and_country() -> None:
+    fx = object.__new__(FX)
+    fx._metadata_repository = FakeMetadataRepository(pd.DataFrame())
+    fx._value_repository = FakeValueRepository()
+    fx._validation_repository = None
+    fx._out_of_cache = False
+
+    qs = fx.get(country="USA")
+
+    assert qs._include_filters == {
+        MetadataColumns.ASSET_CLASS: ["FX"],
+        MetadataColumns.COUNTRY: ["USA"],
+    }
+
+
+def test_fx_get_rejects_asset_class_override() -> None:
+    fx = object.__new__(FX)
+
+    try:
+        fx.get(asset_class="Equity")
+        assert False, "Expected ValueError"
+    except ValueError as exc:
+        assert str(exc) == "`asset_class` is predefined by FX and cannot be overridden."
+
+
+def test_fx_default_out_of_cache_is_used_by_queryset_value() -> None:
+    queryset = make_value_queryset()
+    queryset._out_of_cache = True
+
+    original_direct_fetch = queryset_module.get_direct_source_values
+
+    def fake_direct_fetch(*args, **kwargs):
+        return queryset._value_repository.batch_df.copy()
+
+    queryset_module.get_direct_source_values = fake_direct_fetch
+    try:
+        queryset.value()
+    finally:
+        queryset_module.get_direct_source_values = original_direct_fetch
+
+    assert len(queryset._value_repository.batch_calls) == 0
+
+
+def test_fx_value_override_disables_default_out_of_cache() -> None:
+    queryset = make_value_queryset()
+    queryset._out_of_cache = True
+
+    queryset.value(out_of_cache=False)
+
+    assert len(queryset._value_repository.batch_calls) == 1
+
+
+def test_chained_filters_preserve_out_of_cache_default() -> None:
+    queryset = make_queryset()
+    queryset._out_of_cache = True
+
+    chained = queryset.filter(country="USA").filter_exclude(currency="USD")
+
+    assert chained._out_of_cache is True
+
+
+def test_fx_get_excluding_means_fx_universe_excluding_usa() -> None:
+    fx = object.__new__(FX)
+    fx._metadata_repository = FakeMetadataRepository(pd.DataFrame())
+    fx._value_repository = FakeValueRepository()
+    fx._validation_repository = None
+    fx._out_of_cache = False
+
+    qs = fx.get_excluding(country="USA")
+
+    assert qs._include_filters == {MetadataColumns.ASSET_CLASS: ["FX"]}
+    assert qs._exclude_filters == {MetadataColumns.COUNTRY: ["USA"]}
 
 
 def test_queryset_filter_options_returns_context_specific_values() -> None:
