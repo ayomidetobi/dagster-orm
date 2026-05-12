@@ -25,6 +25,7 @@ from dagster_quickstart.orm.schema import (
     TickerSource,
     ValueColumns,
     get_vendor_field_column,
+    ticker_source_uses_wide_storage,
 )
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
@@ -498,12 +499,7 @@ class DataAPI:
         Returns:
             Dict mapping series_code to bool indicating if data exists
         """
-        if ticker_source not in (
-            TickerSource.BLOOMBERG,
-            TickerSource.MDS,
-            TickerSource.HAWKEYE,
-            TickerSource.INTERNAL,
-        ):
+        if not ticker_source_uses_wide_storage(ticker_source):
             return {sc: False for sc in series_codes}
 
         field_map = self._value_repository._resolve_vendor_field_map(

@@ -4,9 +4,10 @@ Contains table names, column names, enumerations, and data structures.
 All table names and column names must be defined here to avoid magic strings.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Tuple, TypedDict, Union
+from typing import Dict, List, Optional, Tuple, TypedDict, Union
 
 
 class TableNames:
@@ -118,37 +119,103 @@ class TickerSource(str, Enum):
     MDS = "MDS"
 
 
+@dataclass(frozen=True)
+class TickerSourceConfig:
+    """Centralized configuration for one ticker source."""
+
+    ticker_column: Optional[str] = None
+    field_column: Optional[str] = None
+    wide_storage: bool = False
+
+
+TICKER_SOURCE_REGISTRY: Dict[TickerSource, TickerSourceConfig] = {
+    TickerSource.BLOOMBERG: TickerSourceConfig(
+        ticker_column=MetadataColumns.BBG_TICKER,
+        field_column=MetadataColumns.BBG_FIELD,
+        wide_storage=True,
+    ),
+    TickerSource.HAWKEYE: TickerSourceConfig(
+        ticker_column=MetadataColumns.HAWK_TICKER,
+        field_column=MetadataColumns.HAWK_FIELD,
+        wide_storage=True,
+    ),
+    TickerSource.LSEG: TickerSourceConfig(),
+    TickerSource.RAMP: TickerSourceConfig(),
+    TickerSource.ONETICK: TickerSourceConfig(
+        ticker_column=MetadataColumns.MDS_TICKER,
+        field_column=MetadataColumns.MDS_FIELD,
+        wide_storage=False,
+    ),
+    TickerSource.MANUAL_ENTRY: TickerSourceConfig(),
+    TickerSource.INTERNAL: TickerSourceConfig(
+        field_column=MetadataColumns.CALC_TYPE,
+        wide_storage=True,
+    ),
+    TickerSource.MDS: TickerSourceConfig(
+        ticker_column=MetadataColumns.MDS_TICKER,
+        field_column=MetadataColumns.MDS_FIELD,
+        wide_storage=True,
+    ),
+}
+
 VENDOR_TICKER_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
-    TickerSource.BLOOMBERG: MetadataColumns.BBG_TICKER,
-    TickerSource.MDS: MetadataColumns.MDS_TICKER,
-    TickerSource.HAWKEYE: MetadataColumns.HAWK_TICKER,
+    source: config.ticker_column
+    for source, config in TICKER_SOURCE_REGISTRY.items()
+    if config.ticker_column is not None
 }
 
 VENDOR_FIELD_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
-    TickerSource.BLOOMBERG: MetadataColumns.BBG_FIELD,
-    TickerSource.MDS: MetadataColumns.MDS_FIELD,
-    TickerSource.HAWKEYE: MetadataColumns.HAWK_FIELD,
+    source: config.field_column
+    for source, config in TICKER_SOURCE_REGISTRY.items()
+    if config.field_column is not None
+    and source != TickerSource.INTERNAL
 }
+
+
+def get_ticker_source_config(ticker_source: TickerSource) -> TickerSourceConfig:
+    """Return centralized config for a ticker source."""
+    try:
+        return TICKER_SOURCE_REGISTRY[ticker_source]
+    except KeyError as exc:
+        raise ValueError(f"Ticker source {ticker_source!r} is not registered") from exc
+
+
+def ticker_source_uses_wide_storage(ticker_source: TickerSource) -> bool:
+    """Return whether the ticker source reads from wide parquet storage."""
+    return get_ticker_source_config(ticker_source).wide_storage
+
+
+def get_storage_field_column(ticker_source: TickerSource) -> str:
+    """Return metadata column used to resolve wide-storage field partitions."""
+    field_column = get_ticker_source_config(ticker_source).field_column
+    if field_column is None:
+        raise ValueError(
+            f"No storage field column for ticker_source={ticker_source!r}; "
+            f"supported: {[source for source, cfg in TICKER_SOURCE_REGISTRY.items() if cfg.field_column]}"
+        )
+    return field_column
 
 
 def get_vendor_ticker_column(ticker_source: TickerSource) -> str:
     """Return metadata ticker column for a vendor ticker source."""
-    if ticker_source not in VENDOR_TICKER_COLUMN_BY_SOURCE:
+    config = get_ticker_source_config(ticker_source)
+    if config.ticker_column is None:
         raise ValueError(
             f"No ticker column for ticker_source={ticker_source!r}; "
             f"supported: {list(VENDOR_TICKER_COLUMN_BY_SOURCE.keys())}"
         )
-    return VENDOR_TICKER_COLUMN_BY_SOURCE[ticker_source]
+    return config.ticker_column
 
 
 def get_vendor_field_column(ticker_source: TickerSource) -> str:
     """Return metadata field column for a vendor ticker source."""
-    if ticker_source not in VENDOR_FIELD_COLUMN_BY_SOURCE:
+    config = get_ticker_source_config(ticker_source)
+    if config.field_column is None or ticker_source == TickerSource.INTERNAL:
         raise ValueError(
             f"No field column for ticker_source={ticker_source!r}; "
             f"supported: {list(VENDOR_FIELD_COLUMN_BY_SOURCE.keys())}"
         )
-    return VENDOR_FIELD_COLUMN_BY_SOURCE[ticker_source]
+    return config.field_column
 
 
 def get_vendor_ticker_and_field_columns(ticker_source: TickerSource) -> Tuple[str, str]:

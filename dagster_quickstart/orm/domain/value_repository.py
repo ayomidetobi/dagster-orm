@@ -12,7 +12,14 @@ from dagster_quickstart.orm.exceptions import MetadataResolutionError
 from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
 from dagster_quickstart.orm.infrastructure.parquet_adapter import ParquetAdapter
 from dagster_quickstart.orm.infrastructure.s3_adapter import S3Adapter
-from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
+from dagster_quickstart.orm.schema import (
+    MetadataColumns,
+    TableNames,
+    TickerSource,
+    ValueColumns,
+    get_storage_field_column,
+    ticker_source_uses_wide_storage,
+)
 from dagster_quickstart.utils.datetime_utils import (
     ensure_utc,
     iter_year_months,
@@ -20,11 +27,6 @@ from dagster_quickstart.utils.datetime_utils import (
     utc_now,
 )
 from dagster_quickstart.utils.pandas_wide import select_series_columns_as_long_df
-
-_WIDE_TICKER_SOURCES = frozenset(
-    {TickerSource.BLOOMBERG, TickerSource.MDS, TickerSource.HAWKEYE, TickerSource.INTERNAL}
-)
-
 
 class ValueRepository:
     """Repository for loading value data from parquet files.
@@ -61,19 +63,11 @@ class ValueRepository:
 
     @staticmethod
     def _uses_wide_storage(tickersource: TickerSource) -> bool:
-        return tickersource in _WIDE_TICKER_SOURCES
+        return ticker_source_uses_wide_storage(tickersource)
 
     @staticmethod
     def _vendor_field_column(tickersource: TickerSource) -> str:
-        if tickersource == TickerSource.BLOOMBERG:
-            return MetadataColumns.BBG_FIELD
-        if tickersource == TickerSource.MDS:
-            return MetadataColumns.MDS_FIELD
-        if tickersource == TickerSource.HAWKEYE:
-            return MetadataColumns.HAWK_FIELD
-        if tickersource == TickerSource.INTERNAL:
-            return MetadataColumns.CALC_TYPE
-        raise ValueError(f"No vendor field column for ticker source {tickersource!r}")
+        return get_storage_field_column(tickersource)
 
     @staticmethod
     def _wide_partition_key_from_derived_metadata(row: pd.Series) -> Optional[str]:
