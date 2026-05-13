@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -24,9 +24,28 @@ from dagster_quickstart.utils.datetime_utils import (
     ensure_utc,
     iter_year_months,
     normalize_date_to_utc,
+    normalize_pandas_timestamp_to_utc,
     utc_now,
 )
 from dagster_quickstart.utils.pandas_wide import select_series_columns_as_long_df
+
+
+def _is_missing_parquet_partition_error(exc: Exception) -> bool:
+    """Return True when DuckDB could not find a parquet partition."""
+    message = str(exc).lower()
+    return any(
+        needle in message
+        for needle in (
+            "no files found that match the pattern",
+            "could not open file",
+            "no such file",
+            "not found",
+            "cannot open file",
+            "failed to open",
+        )
+    )
+
+
 
 class ValueRepository:
     """Repository for loading value data from parquet files.
@@ -149,6 +168,174 @@ class ValueRepository:
         if not parts:
             return pd.DataFrame()
         return pd.concat(parts, ignore_index=True)
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a DuckDB identifier."""
+        return '"' + identifier.replace('"', '""') + '"'
+
+    def _month_iter_desc(
+        self,
+        start_year_month: Optional[Tuple[int, int]] = None,
+        max_lookback_months: int = 2400,
+    ) -> Iterable[Tuple[int, int]]:
+        """Yield year/month pairs from newest to oldest.
+
+        Args:
+            start_year_month: Optional starting (year, month). Defaults to current UTC month.
+            max_lookback_months: Maximum number of months to yield.
+        """
+        if max_lookback_months <= 0:
+            return
+
+        if start_year_month is None:
+            now = ensure_utc(utc_now())
+            year, month = now.year, now.month
+        else:
+            year, month = start_year_month
+
+        for _ in range(max_lookback_months):
+            yield year, month
+            month -= 1
+            if month < 1:
+                month = 12
+                year -= 1
+
+    def _read_wide_month_selected_columns(
+        self,
+        vendor_field: str,
+        year: int,
+        month: int,
+        tickersource: TickerSource,
+        series_codes: List[str],
+    ) -> pd.DataFrame:
+        """Read one monthly wide parquet partition with only the requested series columns."""
+        empty = pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
+        if not series_codes:
+            return empty
+
+        uri = self._s3_adapter.get_wide_value_partition_uri(vendor_field, year, month, tickersource)
+        esc_uri = uri.replace("'", "''")
+
+        try:
+            schema_df = self._repository.execute_raw_sql(
+                f"SELECT * FROM read_parquet('{esc_uri}') LIMIT 0"
+            )
+        except Exception as exc:
+            if _is_missing_parquet_partition_error(exc):
+                return empty
+            raise
+
+        if ValueColumns.TIMESTAMP not in schema_df.columns:
+            raise MetadataResolutionError(
+                f"Wide parquet partition is missing required column '{ValueColumns.TIMESTAMP}'"
+            )
+
+        available_columns = set(schema_df.columns)
+        selected_series = [sc for sc in series_codes if sc in available_columns]
+        if not selected_series:
+            return empty
+
+        selected_columns = [ValueColumns.TIMESTAMP] + selected_series
+        select_sql = ", ".join(self._quote_identifier(col) for col in selected_columns)
+
+        try:
+            wide_df = self._repository.execute_raw_sql(
+                f"SELECT {select_sql} FROM read_parquet('{esc_uri}')"
+            )
+        except Exception as exc:
+            if _is_missing_parquet_partition_error(exc):
+                return empty
+            raise
+
+        if wide_df.empty:
+            return empty
+
+        wide_df = normalize_pandas_timestamp_to_utc(wide_df, ValueColumns.TIMESTAMP)
+        return wide_df
+
+    @staticmethod
+    def _latest_values_from_wide_df(
+        wide_df: pd.DataFrame,
+        series_codes: List[str],
+        latest_non_null: bool,
+    ) -> Dict[str, Tuple[pd.Timestamp, object]]:
+        """Extract latest values for the requested series from one wide month frame."""
+        results: Dict[str, Tuple[pd.Timestamp, object]] = {}
+        if wide_df.empty or not series_codes:
+            return results
+
+        timestamp_col = ValueColumns.TIMESTAMP
+        last_row = wide_df.iloc[-1]
+        last_timestamp = last_row[timestamp_col]
+
+        for series_code in series_codes:
+            if series_code not in wide_df.columns:
+                continue
+
+            if latest_non_null:
+                last_valid_index = wide_df[series_code].last_valid_index()
+                if last_valid_index is None:
+                    continue
+                results[series_code] = (
+                    wide_df.loc[last_valid_index, timestamp_col],
+                    wide_df.loc[last_valid_index, series_code],
+                )
+            else:
+                results[series_code] = (last_timestamp, last_row[series_code])
+
+        return results
+
+    def _get_last_values_for_vendor_field(
+        self,
+        series_codes: List[str],
+        vendor_field: str,
+        tickersource: TickerSource,
+        latest_non_null: bool,
+    ) -> pd.DataFrame:
+        """Fast path for one vendor field using month-by-month reverse scanning."""
+        remaining = list(dict.fromkeys(series_codes))
+        found_rows: List[Dict[str, object]] = []
+
+        for year, month in self._month_iter_desc():
+            if not remaining:
+                break
+
+            month_df = self._read_wide_month_selected_columns(
+                vendor_field=vendor_field,
+                year=year,
+                month=month,
+                tickersource=tickersource,
+                series_codes=remaining,
+            )
+            if month_df.empty:
+                continue
+
+            latest_rows = self._latest_values_from_wide_df(
+                month_df,
+                remaining,
+                latest_non_null=latest_non_null,
+            )
+            if not latest_rows:
+                continue
+
+            for series_code, (timestamp, value) in latest_rows.items():
+                found_rows.append(
+                    {
+                        ValueColumns.SERIES_CODE: series_code,
+                        ValueColumns.TIMESTAMP: timestamp,
+                        ValueColumns.VALUE: value,
+                    }
+                )
+            found_series = set(latest_rows.keys())
+            remaining = [series_code for series_code in remaining if series_code not in found_series]
+
+        if not found_rows:
+            return pd.DataFrame(
+                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+            )
+
+        return pd.DataFrame(found_rows)
 
     def _read_wide_as_long(
         self,
@@ -321,25 +508,37 @@ class ValueRepository:
             )
 
         try:
-            all_long = self.get_batch_series_data(
-                series_codes=series_codes,
-                tickersource=tickersource,
-                start=None,
-                end=None,
-                order_by=None,
-                limit=None,
-            )
-            if all_long.empty:
-                return all_long
-            if latest_non_null:
-                all_long = all_long.dropna(subset=[ValueColumns.VALUE])
-                if all_long.empty:
-                    return all_long
-            all_long = all_long.sort_values(ValueColumns.TIMESTAMP, ascending=False)
+            fmap = self._resolve_vendor_field_map(series_codes, tickersource)
+            if not fmap:
+                return pd.DataFrame(
+                    columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+                )
+
+            by_field: Dict[str, List[str]] = defaultdict(list)
+            for series_code in series_codes:
+                vendor_field = fmap.get(series_code)
+                if vendor_field:
+                    by_field[vendor_field].append(series_code)
+
+            parts: List[pd.DataFrame] = []
+            for vendor_field, field_series_codes in by_field.items():
+                part_df = self._get_last_values_for_vendor_field(
+                    series_codes=field_series_codes,
+                    vendor_field=vendor_field,
+                    tickersource=tickersource,
+                    latest_non_null=latest_non_null,
+                )
+                if not part_df.empty:
+                    parts.append(part_df)
+
+            if not parts:
+                return pd.DataFrame(
+                    columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+                )
+
             return (
-                all_long.groupby(ValueColumns.SERIES_CODE, as_index=False)
-                .head(1)
-                .sort_values(ValueColumns.SERIES_CODE)
+                pd.concat(parts, ignore_index=True)
+                .sort_values(ValueColumns.SERIES_CODE, ascending=True)
                 .reset_index(drop=True)
             )
         except Exception as exc:

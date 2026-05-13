@@ -23,6 +23,7 @@ VALID_METADATA_FILTER_COLUMNS = {
     MetadataColumns.TENOR,
     MetadataColumns.STRUCTURE_TYPE,
     MetadataColumns.DATA_SOURCE,
+    MetadataColumns.DEFAULT_SOURCE,
     MetadataColumns.SERIES_NAME,
     MetadataColumns.BBG_TICKER,
     MetadataColumns.MDS_TICKER,

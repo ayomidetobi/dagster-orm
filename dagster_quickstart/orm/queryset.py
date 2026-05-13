@@ -1,5 +1,6 @@
 """QuerySet class for building and executing metadata and value queries."""
 
+from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pandas as pd
@@ -360,7 +361,7 @@ class QuerySet:
     def value(
         self,
         params: Optional[ValueQueryParams] = None,
-        tickersource: TickerSource = TickerSource.BLOOMBERG,
+        tickersource: Optional[TickerSource] = None,
         humanize: bool = False,
         out_of_cache: Optional[bool] = None,
         business_days: bool = False,
@@ -369,7 +370,9 @@ class QuerySet:
 
         Args:
             params: Optional ValueQueryParams for time filtering and pagination
-            tickersource: Ticker source (default: TickerSource.BLOOMBERG)
+            tickersource: Optional ticker source override. When provided, all resolved
+                series are loaded from that source. When ``None``, values are loaded
+                from each series' metadata ``default_source``.
             humanize: If True, rename series_code to editorial_short_default
             out_of_cache: If provided, overrides this QuerySet's default and controls
                 whether cached parquet values are bypassed in favor of direct source fetches.
@@ -396,7 +399,9 @@ class QuerySet:
 
         effective_out_of_cache = self._out_of_cache if out_of_cache is None else out_of_cache
 
-        if effective_out_of_cache:
+        if tickersource is None:
+            value_df = self._get_values_by_default_source(resolved_series_codes, params=params)
+        elif effective_out_of_cache:
             value_df = get_direct_source_values(
                 load_metadata_rows=lambda filters: self._load_metadata_rows(filters, exclude=False),
                 series_codes=resolved_series_codes,
@@ -430,6 +435,85 @@ class QuerySet:
             pivoted_df = pivoted_df.rename(columns=name_map)
 
         return pivoted_df
+
+    def _get_values_by_default_source(
+        self,
+        resolved_series_codes: List[str],
+        params: Optional[ValueQueryParams] = None,
+    ) -> pd.DataFrame:
+        """Load values by each series' metadata ``default_source``.
+
+        Args:
+            resolved_series_codes: Already-resolved series codes to fetch.
+            params: Optional value-query params forwarded to the repository.
+
+        Returns:
+            Long-form DataFrame with ``series_code``, ``timestamp``, and ``value`` columns.
+
+        Raises:
+            ValueQueryParameterError: If metadata lacks ``default_source`` or contains
+                missing / invalid ticker source values for any selected series.
+        """
+        metadata_df = self._load_metadata_rows(
+            {MetadataColumns.SERIES_CODE: resolved_series_codes},
+            exclude=False,
+        )
+
+        if MetadataColumns.DEFAULT_SOURCE not in metadata_df.columns:
+            raise ValueQueryParameterError(
+                "Metadata is missing required 'default_source' column for per-series value loading."
+            )
+
+        grouped_series_codes: Dict[TickerSource, List[str]] = defaultdict(list)
+
+        for series_code in resolved_series_codes:
+            matching_rows = metadata_df[
+                metadata_df[MetadataColumns.SERIES_CODE].astype(str) == str(series_code)
+            ]
+            if matching_rows.empty:
+                raise ValueQueryParameterError(
+                    f"Missing metadata row for series '{series_code}' while resolving default_source."
+                )
+
+            source_value = matching_rows.iloc[0].get(MetadataColumns.DEFAULT_SOURCE)
+            if pd.isna(source_value) or not str(source_value).strip():
+                raise ValueQueryParameterError(
+                    f"Series '{series_code}' is missing metadata default_source."
+                )
+
+            try:
+                ticker_source = TickerSource(str(source_value).strip())
+            except ValueError as exc:
+                raise ValueQueryParameterError(
+                    f"Series '{series_code}' has invalid metadata default_source "
+                    f"value {source_value!r}."
+                ) from exc
+
+            grouped_series_codes[ticker_source].append(str(series_code))
+
+        result_frames: List[pd.DataFrame] = []
+        for ticker_source, series_codes in grouped_series_codes.items():
+            group_df = self._value_repository.get_batch_series_data(
+                series_codes=series_codes,
+                tickersource=ticker_source,
+                start=params.start if params else None,
+                end=params.end if params else None,
+                order_by=params.order_by if params else None,
+                limit=params.limit if params else None,
+            )
+            if not group_df.empty:
+                result_frames.append(group_df)
+
+        if not result_frames:
+            return pd.DataFrame(
+                columns=[
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.VALUE,
+                ]
+            )
+
+        return pd.concat(result_frames, ignore_index=True)
 
     def filter(self, **filters: Any) -> "QuerySet":
         """Lazily add include filters while preserving the existing filter chain.
@@ -640,7 +724,9 @@ class QuerySet:
         """Get all values for all series in this QuerySet (optionally filtered by ticker_source).
 
         Args:
-            ticker_source: Optional ticker source filter (default: None, uses BLOOMBERG)
+            ticker_source: Optional ticker source override. When provided, all resolved
+                series are loaded from that source. When ``None``, values are loaded
+                from each series' metadata ``default_source``.
             humanize: If True, rename series_code to series_name
             business_days: If True, drop rows where all selected series values are NaN
                 after pivoting to wide format. This does not use a holiday calendar
@@ -649,24 +735,22 @@ class QuerySet:
             DataFrame with timestamp as index, series_code as columns, and values as cell values.
             Timestamps are timezone-aware UTC and sorted ascending.
         """
-        # Default to BLOOMBERG if not specified
-        if ticker_source is None:
-            ticker_source = TickerSource.BLOOMBERG
-
         resolved_series_codes = self.resolve_series_codes()
 
         if not resolved_series_codes:
             return pd.DataFrame()
 
-        # Get all values for these series
-        result_df = self._value_repository.get_batch_series_data(
-            resolved_series_codes,
-            ticker_source,
-            start=None,
-            end=None,
-            order_by=None,
-            limit=None,
-        )
+        if ticker_source is None:
+            result_df = self._get_values_by_default_source(resolved_series_codes)
+        else:
+            result_df = self._value_repository.get_batch_series_data(
+                resolved_series_codes,
+                ticker_source,
+                start=None,
+                end=None,
+                order_by=None,
+                limit=None,
+            )
 
         # Return empty DataFrame unchanged
         if result_df.empty:

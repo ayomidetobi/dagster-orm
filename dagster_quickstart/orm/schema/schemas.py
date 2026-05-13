@@ -40,6 +40,7 @@ class MetadataColumns:
     STRUCTURE_TYPE = "structure_type"
     # Not on metadata Parquet; vendor is implied by bbg_* vs mds_* columns.
     TICKER_SOURCE = "ticker_source"
+    DEFAULT_SOURCE = "default_source"
     BBG_TICKER = "bbg_ticker"
     MDS_TICKER = "mds_ticker"
     BBG_FIELD = "bbg_field"
@@ -77,6 +78,7 @@ class FilterParams(TypedDict, total=False):
     tenor: FilterValue
     structure_type: FilterValue
     ticker_source: FilterValue
+    default_source: FilterValue
     bbg_ticker: FilterValue
     mds_ticker: FilterValue
     bbg_field: FilterValue

@@ -2,6 +2,8 @@ import pandas as pd
 
 import dagster_quickstart.orm.queryset as queryset_module
 from dagster_quickstart.orm.data_api import DataAPI, FX
+from dagster_quickstart.orm.exceptions import ValueQueryParameterError
+from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.orm.queryset import QuerySet
 from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 
@@ -82,6 +84,11 @@ def make_queryset() -> QuerySet:
             MetadataColumns.ASSET_CLASS: ["FX", "FX", "Equity"],
             MetadataColumns.COUNTRY: ["USA", "UK", "USA"],
             MetadataColumns.CURRENCY: ["USD", "GBP", "USD"],
+            MetadataColumns.DEFAULT_SOURCE: [
+                TickerSource.BLOOMBERG.value,
+                TickerSource.BLOOMBERG.value,
+                TickerSource.HAWKEYE.value,
+            ],
         }
     )
     return QuerySet(
@@ -317,6 +324,101 @@ def test_get_values_business_days_true_behaves_the_same() -> None:
     values = make_value_queryset().get_values(business_days=True)
 
     assert list(values.index.strftime("%Y-%m-%d")) == ["2024-01-01", "2024-01-03"]
+
+
+def test_value_without_ticker_source_groups_by_metadata_default_source() -> None:
+    metadata_df = pd.DataFrame(
+        {
+            MetadataColumns.SERIES_CODE: ["S1", "S2"],
+            MetadataColumns.DEFAULT_SOURCE: [
+                TickerSource.BLOOMBERG.value,
+                TickerSource.HAWKEYE.value,
+            ],
+        }
+    )
+    value_repository = FakeValueRepository()
+
+    def get_batch_series_data(series_codes, tickersource=TickerSource.BLOOMBERG, **kwargs):
+        value_repository.batch_calls.append(
+            {
+                "series_codes": series_codes,
+                "tickersource": tickersource,
+                **kwargs,
+            }
+        )
+        value_by_source = {
+            TickerSource.BLOOMBERG: 1.0,
+            TickerSource.HAWKEYE: 2.0,
+        }
+        return pd.DataFrame(
+            {
+                ValueColumns.TIMESTAMP: pd.to_datetime(["2024-01-01"], utc=True),
+                ValueColumns.SERIES_CODE: [series_codes[0]],
+                ValueColumns.VALUE: [value_by_source[tickersource]],
+            }
+        )
+
+    value_repository.get_batch_series_data = get_batch_series_data
+    queryset = QuerySet(
+        metadata_repository=FakeMetadataRepository(metadata_df),
+        value_repository=value_repository,
+        metadata_filters=None,
+        series_codes=["S1", "S2"],
+        control_table=TableNames.METADATA_WILDCARD,
+    )
+
+    values = queryset.value(params=ValueQueryParams(start="2024-01-01", limit=5))
+
+    assert value_repository.batch_calls == [
+        {
+            "series_codes": ["S1"],
+            "tickersource": TickerSource.BLOOMBERG,
+            "start": "2024-01-01",
+            "end": None,
+            "order_by": None,
+            "limit": 5,
+        },
+        {
+            "series_codes": ["S2"],
+            "tickersource": TickerSource.HAWKEYE,
+            "start": "2024-01-01",
+            "end": None,
+            "order_by": None,
+            "limit": 5,
+        },
+    ]
+    assert values.loc[pd.Timestamp("2024-01-01", tz="UTC"), "S1"] == 1.0
+    assert values.loc[pd.Timestamp("2024-01-01", tz="UTC"), "S2"] == 2.0
+
+
+def test_get_values_explicit_ticker_source_overrides_metadata_default_source() -> None:
+    queryset = make_value_queryset()
+
+    queryset.get_values(ticker_source=TickerSource.HAWKEYE)
+
+    assert queryset._value_repository.batch_calls[-1]["tickersource"] == TickerSource.HAWKEYE
+
+
+def test_get_values_without_ticker_source_raises_for_missing_default_source() -> None:
+    metadata_df = pd.DataFrame(
+        {
+            MetadataColumns.SERIES_CODE: ["S1"],
+            MetadataColumns.DEFAULT_SOURCE: [""],
+        }
+    )
+    queryset = QuerySet(
+        metadata_repository=FakeMetadataRepository(metadata_df),
+        value_repository=FakeValueRepository(),
+        metadata_filters=None,
+        series_codes=["S1"],
+        control_table=TableNames.METADATA_WILDCARD,
+    )
+
+    try:
+        queryset.get_values()
+        assert False, "Expected ValueQueryParameterError"
+    except ValueQueryParameterError as exc:
+        assert "missing metadata default_source" in str(exc)
 
 
 def test_get_last_values_business_days_true_ignores_nan_latest_values() -> None:
