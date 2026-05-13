@@ -19,7 +19,7 @@ from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
-
+from dagster_quickstart.orm.schema import TickerSource
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
     """Print a separator line with optional text.
@@ -82,19 +82,19 @@ print("\nContext options as DataFrame:")
 print(context_option_table)
 
 # Example 3: Test repr() for chained include/exclude filters
-print_separator("Example 3: Test QuerySet repr")
+# print_separator("Example 3: Test QuerySet repr")
 
-repr_dataset = (
-    data_api.get(asset_class="Equity")
-    .filter(region="North America")
-    .filter_exclude(currency="USD")
-)
-print(repr_dataset)
+# repr_dataset = (
+#     data_api.get(asset_class="Equity")
+#     .filter(region="North America")
+#     .filter_exclude(currency="USD")
+# )
+# print(repr_dataset)
 
 # Example 4: Get value data for the filtered series
-# print_separator("Example 2: Get value data")
-# values_df = dataset.get_last_values().T
-# print(values_df.head(10))
+print_separator("Example 2: Get value data")
+values_df = dataset.get_last_values(ticker_source=TickerSource.BLOOMBERG).T
+print(values_df.head(10))
 # if not values_df.empty:
 #     print(f"Columns: {', '.join(values_df.columns)}")
 # for group, qs in dataset.groupby(["sub_asset_class", "region"]):

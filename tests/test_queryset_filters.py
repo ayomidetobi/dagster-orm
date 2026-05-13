@@ -143,6 +143,34 @@ def test_filter_does_not_resolve_series_codes_eagerly() -> None:
     assert chained._series_codes is None
 
 
+def test_filter_chaining_intersects_same_field_values() -> None:
+    qs = QuerySet(
+        metadata_repository=FakeMetadataRepository(
+            pd.DataFrame(
+                {
+                    MetadataColumns.SERIES_CODE: ["S1", "S2", "S3"],
+                    MetadataColumns.ASSET_CLASS: ["FX", "Rates", "Equity"],
+                    MetadataColumns.COUNTRY: ["USA", "UK", "USA"],
+                    MetadataColumns.CURRENCY: ["USD", "GBP", "USD"],
+                    MetadataColumns.DEFAULT_SOURCE: [
+                        TickerSource.BLOOMBERG.value,
+                        TickerSource.BLOOMBERG.value,
+                        TickerSource.HAWKEYE.value,
+                    ],
+                }
+            )
+        ),
+        value_repository=FakeValueRepository(),
+        metadata_filters={MetadataColumns.ASSET_CLASS: ["FX", "Rates"]},
+        control_table=TableNames.METADATA_WILDCARD,
+    )
+
+    chained = qs.filter(asset_class="FX")
+
+    assert chained._include_filters == {MetadataColumns.ASSET_CLASS: ["FX"]}
+    assert list(chained.info()[MetadataColumns.ASSET_CLASS].unique()) == ["FX"]
+
+
 def test_get_excluding_creates_exclude_filters() -> None:
     api = object.__new__(DataAPI)
     api._metadata_repository = FakeMetadataRepository(pd.DataFrame())

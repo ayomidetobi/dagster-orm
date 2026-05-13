@@ -150,11 +150,18 @@ class QuerySet:
         current_filters: Dict[str, List[str]],
         new_filters: Dict[str, List[str]],
     ) -> Dict[str, List[str]]:
-        """Merge filter dictionaries while preserving order and de-duplicating values."""
+        """Merge filter dictionaries.
+
+        Repeated fields are intersected so chained filters narrow the result set.
+        New fields are added normally.
+        """
         merged = {field: values[:] for field, values in current_filters.items()}
         for field, values in new_filters.items():
-            existing = merged.get(field, [])
-            merged[field] = list(pd.unique(existing + values))
+            if field in merged:
+                allowed = set(values)
+                merged[field] = [value for value in merged[field] if value in allowed]
+            else:
+                merged[field] = list(pd.unique(values))
         return merged
 
     def _effective_include_filters(self) -> Dict[str, List[str]]:
