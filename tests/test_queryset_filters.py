@@ -33,9 +33,11 @@ class FakeMetadataRepository:
 class FakeValueRepository:
     def __init__(self):
         self.batch_df = pd.DataFrame()
+        self.wide_df = pd.DataFrame()
         self.last_df = pd.DataFrame()
         self.last_calls = []
         self.batch_calls = []
+        self.wide_calls = []
 
     def get_batch_series_data(
         self,
@@ -57,6 +59,27 @@ class FakeValueRepository:
             }
         )
         return self.batch_df.copy()
+
+    def get_batch_series_data_wide(
+        self,
+        series_codes,
+        tickersource=TickerSource.BLOOMBERG,
+        start=None,
+        end=None,
+        order_by=None,
+        limit=None,
+    ):
+        self.wide_calls.append(
+            {
+                "series_codes": series_codes,
+                "tickersource": tickersource,
+                "start": start,
+                "end": end,
+                "order_by": order_by,
+                "limit": limit,
+            }
+        )
+        return self.wide_df.copy()
 
     def get_last_values(
         self,
@@ -111,6 +134,16 @@ def make_value_queryset() -> QuerySet:
             ValueColumns.SERIES_CODE: ["S1", "S2", "S1", "S2", "S1", "S2"],
             ValueColumns.VALUE: [1.0, 2.0, None, None, None, 3.0],
         }
+    )
+    queryset._value_repository.wide_df = pd.DataFrame(
+        {
+            "S1": [1.0, None, None],
+            "S2": [2.0, None, 3.0],
+        },
+        index=pd.DatetimeIndex(
+            pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"], utc=True),
+            name=ValueColumns.TIMESTAMP,
+        ),
     )
     queryset._value_repository.last_df = pd.DataFrame(
         {
@@ -215,6 +248,28 @@ def test_queryset_value_explicit_override_wins_over_default() -> None:
     assert len(queryset._value_repository.batch_calls) == 1
 
 
+def test_queryset_value_uses_wide_repository_path_and_preserves_wide_shape() -> None:
+    queryset = make_value_queryset()
+
+    values = queryset.value(tickersource=TickerSource.BLOOMBERG)
+
+    assert len(queryset._value_repository.wide_calls) == 1
+    assert list(values.columns) == ["S1", "S2"]
+    assert values.index.name == ValueColumns.TIMESTAMP
+    assert pd.Timestamp("2024-01-03", tz="UTC") in values.index
+
+
+def test_queryset_value_returns_clean_empty_dataframe_when_wide_source_has_no_rows() -> None:
+    queryset = make_value_queryset()
+    queryset._value_repository.wide_df = pd.DataFrame()
+
+    values = queryset.value(tickersource=TickerSource.BLOOMBERG)
+
+    assert values.empty
+    assert list(values.columns) == []
+    assert values.index.name is None
+
+
 def test_fx_get_includes_asset_class_fx() -> None:
     fx = object.__new__(FX)
     fx._metadata_repository = FakeMetadataRepository(pd.DataFrame())
@@ -263,7 +318,7 @@ def test_fx_default_out_of_cache_is_used_by_queryset_value() -> None:
 
     queryset_module.get_direct_source_values = fake_direct_fetch
     try:
-        queryset.value()
+        queryset.value(tickersource=TickerSource.BLOOMBERG)
     finally:
         queryset_module.get_direct_source_values = original_direct_fetch
 

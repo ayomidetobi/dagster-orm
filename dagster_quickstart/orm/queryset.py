@@ -416,7 +416,7 @@ class QuerySet:
                 params=params,
             )
         else:
-            value_df = self._value_repository.get_batch_series_data(
+            value_df = self._value_repository.get_batch_series_data_wide(
                 series_codes=resolved_series_codes,
                 tickersource=tickersource,
                 start=params.start if params else None,
@@ -427,6 +427,16 @@ class QuerySet:
 
         # Return empty DataFrame unchanged
         if value_df.empty:
+            return value_df
+
+        if tickersource is not None and not effective_out_of_cache:
+            if params and params.limit is not None:
+                value_df = value_df.head(int(params.limit))
+            if business_days:
+                value_df = value_df.dropna(how="all")
+            if humanize:
+                name_map = self._get_name_map(MetadataColumns.SERIES_NAME)
+                value_df = value_df.rename(columns=name_map)
             return value_df
 
         # Pivot to wide format: timestamp as index, series_code as columns
