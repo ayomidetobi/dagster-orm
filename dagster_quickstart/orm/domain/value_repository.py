@@ -260,29 +260,20 @@ class ValueRepository:
         series_codes: List[str],
         latest_non_null: bool,
     ) -> Dict[str, Tuple[pd.Timestamp, object]]:
-        """Extract latest values for the requested series from one wide month frame."""
+        """Extract values from the last available timestamp in one wide month frame."""
         results: Dict[str, Tuple[pd.Timestamp, object]] = {}
         if wide_df.empty or not series_codes:
             return results
 
         timestamp_col = ValueColumns.TIMESTAMP
-        last_row = wide_df.iloc[-1]
+        work_df = wide_df.sort_values(timestamp_col, ascending=True).reset_index(drop=True)
+        last_row = work_df.iloc[-1]
         last_timestamp = last_row[timestamp_col]
 
         for series_code in series_codes:
-            if series_code not in wide_df.columns:
+            if series_code not in work_df.columns:
                 continue
-
-            if latest_non_null:
-                last_valid_index = wide_df[series_code].last_valid_index()
-                if last_valid_index is None:
-                    continue
-                results[series_code] = (
-                    wide_df.loc[last_valid_index, timestamp_col],
-                    wide_df.loc[last_valid_index, series_code],
-                )
-            else:
-                results[series_code] = (last_timestamp, last_row[series_code])
+            results[series_code] = (last_timestamp, last_row[series_code])
 
         return results
 
@@ -293,11 +284,11 @@ class ValueRepository:
         tickersource: TickerSource,
         latest_non_null: bool,
     ) -> pd.DataFrame:
-        """Fast path for one vendor field using month-by-month reverse scanning."""
+        """Return the last timestamp from the newest non-empty month partition."""
         remaining = list(dict.fromkeys(series_codes))
-        found_rows: List[Dict[str, object]] = []
 
-        for year, month in self._month_iter_desc():
+        # Only check the latest month and the immediately previous month.
+        for year, month in self._month_iter_desc(max_lookback_months=2):
             if not remaining:
                 break
 
@@ -319,23 +310,20 @@ class ValueRepository:
             if not latest_rows:
                 continue
 
-            for series_code, (timestamp, value) in latest_rows.items():
-                found_rows.append(
+            return pd.DataFrame(
+                [
                     {
                         ValueColumns.SERIES_CODE: series_code,
                         ValueColumns.TIMESTAMP: timestamp,
                         ValueColumns.VALUE: value,
                     }
-                )
-            found_series = set(latest_rows.keys())
-            remaining = [series_code for series_code in remaining if series_code not in found_series]
-
-        if not found_rows:
-            return pd.DataFrame(
-                columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+                    for series_code, (timestamp, value) in latest_rows.items()
+                ]
             )
 
-        return pd.DataFrame(found_rows)
+        return pd.DataFrame(
+            columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+        )
 
     def _read_wide_as_long(
         self,

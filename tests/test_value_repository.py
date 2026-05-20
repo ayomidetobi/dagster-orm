@@ -67,7 +67,7 @@ def _fail_if_batch_is_used(*args, **kwargs):
     raise AssertionError("get_last_values should not call get_batch_series_data")
 
 
-def test_get_last_values_scans_months_backwards_and_stops_when_all_found() -> None:
+def test_get_last_values_stops_at_first_non_empty_month() -> None:
     mapping_df = pd.DataFrame(
         {
             MetadataColumns.SERIES_CODE: ["S1", "S2"],
@@ -76,24 +76,16 @@ def test_get_last_values_scans_months_backwards_and_stops_when_all_found() -> No
     )
     may_uri = "s3://bucket/Bloomberg/PX_LAST/2024-05.parquet"
     april_uri = "s3://bucket/Bloomberg/PX_LAST/2024-04.parquet"
+    march_uri = "s3://bucket/Bloomberg/PX_LAST/2024-03.parquet"
     schema_frames = {
-        may_uri: pd.DataFrame(
-            columns=[ValueColumns.TIMESTAMP, "S2"],
-        ),
+        may_uri: pd.DataFrame(columns=[ValueColumns.TIMESTAMP, "S1", "S2"]),
         april_uri: pd.DataFrame(
             columns=[ValueColumns.TIMESTAMP, "S1", "S2"],
         ),
+        march_uri: pd.DataFrame(columns=[ValueColumns.TIMESTAMP, "S1", "S2"]),
     }
     data_frames = {
-        may_uri: pd.DataFrame(
-            {
-                ValueColumns.TIMESTAMP: pd.to_datetime(
-                    ["2024-05-29", "2024-05-31"],
-                    utc=True,
-                ),
-                "S2": [1.0, 2.0],
-            }
-        ),
+        may_uri: pd.DataFrame(columns=[ValueColumns.TIMESTAMP, "S1", "S2"]),
         april_uri: pd.DataFrame(
             {
                 ValueColumns.TIMESTAMP: pd.to_datetime(
@@ -102,6 +94,16 @@ def test_get_last_values_scans_months_backwards_and_stops_when_all_found() -> No
                 ),
                 "S1": [10.0, 11.0],
                 "S2": [20.0, 21.0],
+            }
+        ),
+        march_uri: pd.DataFrame(
+            {
+                ValueColumns.TIMESTAMP: pd.to_datetime(
+                    ["2024-03-29", "2024-03-31"],
+                    utc=True,
+                ),
+                "S1": [30.0, 31.0],
+                "S2": [40.0, 41.0],
             }
         ),
     }
@@ -124,9 +126,9 @@ def test_get_last_values_scans_months_backwards_and_stops_when_all_found() -> No
     )
     assert result.loc[result[ValueColumns.SERIES_CODE] == "S1", ValueColumns.VALUE].iloc[0] == 11.0
     assert result.loc[result[ValueColumns.SERIES_CODE] == "S2", ValueColumns.TIMESTAMP].iloc[0] == pd.Timestamp(
-        "2024-05-31", tz="UTC"
+        "2024-04-30", tz="UTC"
     )
-    assert result.loc[result[ValueColumns.SERIES_CODE] == "S2", ValueColumns.VALUE].iloc[0] == 2.0
+    assert result.loc[result[ValueColumns.SERIES_CODE] == "S2", ValueColumns.VALUE].iloc[0] == 21.0
     assert len([call for call in repository._repository.calls if "2024-03" in call]) == 0
 
 

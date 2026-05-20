@@ -20,6 +20,12 @@ from dagster_quickstart.orm.query_params import ValueQueryParams
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
 from dagster_quickstart.orm.schema import TickerSource
+from pyinstrument import Profiler
+
+profiler = Profiler()
+
+
+
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
     """Print a separator line with optional text.
@@ -90,11 +96,13 @@ print(context_option_table)
 #     .filter_exclude(currency="USD")
 # )
 # print(repr_dataset)
-
+profiler.start()
 # Example 4: Get value data for the filtered series
 print_separator("Example 2: Get value data")
 values_df = dataset.get_last_values(ticker_source=TickerSource.BLOOMBERG).T
-print(values_df.head(10))
+print(values_df.tail(10))
+profiler.stop()
+profiler.print(color=True)
 # if not values_df.empty:
 #     print(f"Columns: {', '.join(values_df.columns)}")
 # for group, qs in dataset.groupby(["sub_asset_class", "region"]):

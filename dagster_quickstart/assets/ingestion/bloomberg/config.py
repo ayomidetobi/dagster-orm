@@ -28,7 +28,7 @@ class BloombergIngestionConfig(Config):
     series_codes: List[
         str
     ] = []  # List of series codes for backfill ingestion (required when mode=IngestionMode.BACKFILL)
-    start_date: Optional[str] = "2025-12-01"
+    start_date: Optional[str] = "2026-03-27"
 
     end_date: Optional[str] = field(
         default_factory=lambda: utc_now().strftime("%Y-%m-%d"),
