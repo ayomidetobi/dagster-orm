@@ -273,7 +273,16 @@ class ValueRepository:
         for series_code in series_codes:
             if series_code not in work_df.columns:
                 continue
-            results[series_code] = (last_timestamp, last_row[series_code])
+            if latest_non_null:
+                last_valid_index = work_df[series_code].last_valid_index()
+                if last_valid_index is None:
+                    continue
+                results[series_code] = (
+                    work_df.loc[last_valid_index, timestamp_col],
+                    work_df.loc[last_valid_index, series_code],
+                )
+            else:
+                results[series_code] = (last_timestamp, last_row[series_code])
 
         return results
 

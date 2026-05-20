@@ -92,7 +92,7 @@ def test_get_last_values_stops_at_first_non_empty_month() -> None:
                     ["2024-04-29", "2024-04-30"],
                     utc=True,
                 ),
-                "S1": [10.0, 11.0],
+                "S1": [10.0, None],
                 "S2": [20.0, 21.0],
             }
         ),
@@ -122,9 +122,9 @@ def test_get_last_values_stops_at_first_non_empty_month() -> None:
 
     assert list(result[ValueColumns.SERIES_CODE]) == ["S1", "S2"]
     assert result.loc[result[ValueColumns.SERIES_CODE] == "S1", ValueColumns.TIMESTAMP].iloc[0] == pd.Timestamp(
-        "2024-04-30", tz="UTC"
+        "2024-04-29", tz="UTC"
     )
-    assert result.loc[result[ValueColumns.SERIES_CODE] == "S1", ValueColumns.VALUE].iloc[0] == 11.0
+    assert result.loc[result[ValueColumns.SERIES_CODE] == "S1", ValueColumns.VALUE].iloc[0] == 10.0
     assert result.loc[result[ValueColumns.SERIES_CODE] == "S2", ValueColumns.TIMESTAMP].iloc[0] == pd.Timestamp(
         "2024-04-30", tz="UTC"
     )
