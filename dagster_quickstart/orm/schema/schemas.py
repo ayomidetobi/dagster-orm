@@ -56,6 +56,7 @@ class MetadataColumns:
     CALCULATION_FORMULA = "calculation_formula"
     DES_NOTES = "des_notes"
     CALC_TYPE = "calc_type"
+    PARENT_SERIES_CODE = "parent_series_code"
     DESCRIPTION = "description"
 
 FilterValue = Union[str, List[str]]
