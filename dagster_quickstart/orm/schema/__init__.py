@@ -16,7 +16,6 @@ from dagster_quickstart.orm.schema.constants import (
 )
 from dagster_quickstart.orm.schema.schemas import (
     ControlTableType,
-    DataPoint,
     MetadataColumns,
     PreviewColumns,
     TableNames,
@@ -47,7 +46,6 @@ __all__ = [
     "ControlTableType",
     "TempTableName",
     "PreviewColumns",
-    "DataPoint",
     "VALID_METADATA_FILTER_COLUMNS",
     "COLUMN_GROUPS",
     "LOOKUP_TABLE_PROCESSING_ORDER",

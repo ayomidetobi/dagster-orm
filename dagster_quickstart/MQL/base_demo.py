@@ -23,7 +23,7 @@ def getHawkTimeseriesToDf(
     fromDate: dt.datetime,
     toDate: dt.datetime,
 ) -> pd.DataFrame:
-    """Demo: random wide frame (same generator as PyPDL dummy mode); swap for real Hawk client."""
+    """Demo: random wide frame; swap for real Hawk client."""
     return demo_random_wide_frame(fromDate, toDate, fameCodes)
 
 

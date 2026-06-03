@@ -1,79 +1,26 @@
-"""Bloomberg wide ingestion: PyPDL fetch, merge to wide frame, write monthly partitions."""
+"""Bloomberg wide ingestion: DataAPI value fetch, merge to wide frame, write monthly partitions."""
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue
 
 from dagster_quickstart.assets.ingestion.bloomberg.config import BloombergIngestionConfig
+from dagster_quickstart.orm.data_api import DataAPI
+from dagster_quickstart.orm.exceptions import ValueQueryParameterError
+from dagster_quickstart.orm.query_params import ValueQueryParams
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames, TickerSource, ValueColumns
 from dagster_quickstart.orm.schema.constants import (
     MAX_INVALID_METADATA_ROWS,
     MAX_INVALID_VALUE_CHARS,
 )
-from dagster_quickstart.orm.data_api import DataAPI
-from dagster_quickstart.orm.schema import TickerSource, ValueColumns
-from dagster_quickstart.utils.datetime_utils import utc_calendar_days_inclusive, utc_midnight
-from dagster_quickstart.utils.pypdl_helpers import (
-    build_pypdl_request_params,
-    fetch_bloomberg_data,
-)
+from dagster_quickstart.orm.ticker_mapping import build_series_to_ticker_map
+from dagster_quickstart.utils.datetime_utils import utc_calendar_days_inclusive
 
 
-@dataclass(frozen=True)
-class TickerMergeStats:
-    """Per-ticker merge outcome for building invalid_details metadata."""
-
-    raw_api_point_count: int
-    null_filled_day_count: int
-    total_days: int
-
-
-def merge_ticker_points_with_null_fill(
-    raw_points: Optional[List[Dict[str, Any]]],
-    dates: List[datetime],
-) -> Tuple[List[Dict[str, Any]], TickerMergeStats]:
-    """One row per day in ``dates``; use API value when present, else None.
-
-    Missing days, None values, and invalid/non-finite numbers use Python ``None``;
-    Parquet float columns persist those as null (typically read back as NaN).
-    If the same day appears more than once, the last wins.
-
-    Returns:
-        Merged points and stats for Dagster metadata (invalid_details).
-    """
-    raw_list = raw_points or []
-    raw_api_point_count = len(raw_list)
-
-    value_by_day: Dict[datetime, Optional[float]] = {}
-    for point in raw_list:
-        day = utc_midnight(point["timestamp"])
-        val = point.get("value")
-        if val is None:
-            value_by_day[day] = None
-        else:
-            try:
-                fv = float(val)
-                value_by_day[day] = fv if fv == fv else None
-            except (TypeError, ValueError):
-                value_by_day[day] = None
-
-    merged: List[Dict[str, Any]] = []
-    null_filled_day_count = 0
-    for d in dates:
-        d0 = utc_midnight(d)
-        v = value_by_day.get(d0)
-        if v is None:
-            null_filled_day_count += 1
-        merged.append({"timestamp": d0, "value": v})
-
-    stats = TickerMergeStats(
-        raw_api_point_count=raw_api_point_count,
-        null_filled_day_count=null_filled_day_count,
-        total_days=len(dates),
-    )
-    return merged, stats
+def _date_param(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d")
 
 
 def truncate_invalid_value(text: str, max_chars: int = MAX_INVALID_VALUE_CHARS) -> str:
@@ -94,87 +41,82 @@ def invalid_detail_row(
     }
 
 
-def build_ingestion_invalid_details(
-    tickers: List[str],
-    ticker_to_series_code: Dict[str, str],
-    error_reason: Optional[str],
-    merge_stats_by_ticker: Dict[str, TickerMergeStats],
+def build_ingestion_invalid_details_from_wide(
+    wide_df: pd.DataFrame,
+    series_code_to_ticker: Dict[str, str],
+    request_dates: List[datetime],
+    error_reason: Optional[str] = None,
 ) -> List[Dict[str, str]]:
+    """Build invalid_details rows from a wide value frame and the requested calendar days."""
     rows: List[Dict[str, str]] = []
     ev = truncate_invalid_value(error_reason) if error_reason else ""
 
     if error_reason:
-        for ticker in tickers:
-            sc = ticker_to_series_code.get(ticker)
-            if sc:
-                rows.append(invalid_detail_row(sc, ticker, "pypdl_fetch", ev))
+        for series_code, ticker in series_code_to_ticker.items():
+            rows.append(invalid_detail_row(series_code, ticker, "value_fetch", ev))
         return rows
 
-    for ticker in tickers:
-        sc = ticker_to_series_code.get(ticker)
-        stats = merge_stats_by_ticker.get(ticker) if sc else None
-        if not sc or stats is None:
+    total_days = len(request_dates)
+    for series_code, ticker in series_code_to_ticker.items():
+        if series_code not in wide_df.columns:
+            rows.append(invalid_detail_row(series_code, ticker, "value_series", "no_data_returned"))
             continue
-        if stats.raw_api_point_count == 0:
-            rows.append(invalid_detail_row(sc, ticker, "pypdl_series", "no_data_returned"))
-        elif stats.null_filled_day_count > 0:
-            msg = f"{stats.null_filled_day_count}/{stats.total_days} days null or invalid"
-            rows.append(invalid_detail_row(sc, ticker, "value", msg))
+        col = wide_df[series_code]
+        raw_count = int(col.notna().sum())
+        if raw_count == 0:
+            rows.append(invalid_detail_row(series_code, ticker, "value_series", "no_data_returned"))
+            continue
+        null_filled = total_days - raw_count
+        if null_filled > 0:
+            msg = f"{null_filled}/{total_days} days null or missing in range"
+            rows.append(invalid_detail_row(series_code, ticker, "value", msg))
 
     return rows
 
 
-def build_wide_dataframe_from_fetch(
-    tickers: List[str],
-    ticker_to_series_code: Dict[str, str],
-    data_points: Dict[str, Any],
-    request_dates: List[datetime],
-) -> Tuple[pd.DataFrame, Dict[str, TickerMergeStats]]:
-    """Merge per-ticker API payloads into one wide frame (UTC date index x series_code columns)."""
-    merge_stats_by_ticker: Dict[str, TickerMergeStats] = {}
-    columns: Dict[str, List[Any]] = {}
-    idx = pd.DatetimeIndex(
-        [pd.Timestamp(utc_midnight(d)) for d in request_dates],
-        name=ValueColumns.TIMESTAMP,
+def fetch_bloomberg_values_wide(
+    data_api: DataAPI,
+    series_codes: List[str],
+    start_date: datetime,
+    end_date: datetime,
+    *,
+    ticker_source: TickerSource,
+    out_of_cache: bool,
+) -> pd.DataFrame:
+    """Load values for ``series_codes`` via :meth:`QuerySet.value` for the given vendor."""
+    queryset = data_api.get(
+        control_table=TableNames.METADATA,
+        series_code=series_codes,
     )
-    for ticker in tickers:
-        series_code = ticker_to_series_code.get(ticker)
-        if not series_code:
-            continue
-        raw = data_points.get(ticker)
-        merged, stats = merge_ticker_points_with_null_fill(
-            raw if isinstance(raw, list) else None,
-            request_dates,
-        )
-        merge_stats_by_ticker[ticker] = stats
-        columns[series_code] = [p.get("value") for p in merged]
-    if not columns:
-        return pd.DataFrame(index=idx), merge_stats_by_ticker
-    wide = pd.DataFrame(columns, index=idx)
-    wide.index.name = ValueColumns.TIMESTAMP
-    return wide.sort_index(), merge_stats_by_ticker
+    return queryset.value(
+        params=ValueQueryParams(
+            start=_date_param(start_date),
+            end=_date_param(end_date),
+        ),
+        tickersource=ticker_source,
+        out_of_cache=out_of_cache,
+    )
 
 
 def materialize_bloomberg_wide_partition(
     context: AssetExecutionContext,
     config: BloombergIngestionConfig,
     field_type: str,
-    series_codes: List[str],
-    metadata_series_count: int,
+    metadata_df: pd.DataFrame,
 ) -> MaterializeResult:
-    """Fetch → wide matrix → monthly wide Parquet partitions (shared daily/backfill path)."""
-    duckdb_resource = context.resources.duckdb
-    pypdl_resource = context.resources.pypdl
-    data_api = DataAPI(duckdb_resource)
+    """Fetch via DataAPI → wide matrix → monthly wide Parquet partitions (daily/backfill)."""
+    data_api = context.resources.data_api.get_api()
+    ticker_source = TickerSource.BLOOMBERG
 
     start_date = config.get_start_date()
     end_date = config.get_end_date()
 
-    series_code_to_ticker = data_api.get_tickers(
-        series_codes=series_codes,
-        field_type=field_type,
-        ticker_source=TickerSource.BLOOMBERG,
+    metadata_series_count = len(metadata_df)
+    series_codes = (
+        metadata_df[MetadataColumns.SERIES_CODE].dropna().astype(str).unique().tolist()
     )
+
+    series_code_to_ticker = build_series_to_ticker_map(metadata_df, ticker_source)
 
     if not series_code_to_ticker:
         context.log.warning(
@@ -198,13 +140,13 @@ def materialize_bloomberg_wide_partition(
             start_date=start_date,
             end_date=end_date,
             field_type=field_type,
-            ticker_source=TickerSource.BLOOMBERG,
+            ticker_source=ticker_source,
         )
         series_codes_to_fetch = [sc for sc in series_codes if not data_exists_map.get(sc, False)]
 
         if not series_codes_to_fetch:
             context.log.info(
-                "All series have wide-partition coverage for date range; skipping PyPDL",
+                "All series have wide-partition coverage for date range; skipping value fetch",
                 extra={
                     "field_type": field_type,
                     "series_count": len(series_codes),
@@ -216,7 +158,7 @@ def materialize_bloomberg_wide_partition(
                 metadata={
                     "field_type": field_type,
                     "series_count": metadata_series_count,
-                    "tickers_fetched": 0,
+                    "series_fetched": 0,
                     "partitions_written": 0,
                     "wide_row_count_max": 0,
                     "wide_column_count": 0,
@@ -237,58 +179,55 @@ def materialize_bloomberg_wide_partition(
             extra={"field_type": field_type},
         )
 
-    ticker_to_series_code = {v: k for k, v in series_code_to_ticker.items()}
-    tickers = list(ticker_to_series_code.keys())
-
     context.log.info(
-        f"Fetching data for {len(tickers)} tickers",
-        extra={"field_type": field_type, "ticker_count": len(tickers)},
+        f"Fetching values for {len(series_codes)} series via DataAPI",
+        extra={
+            "field_type": field_type,
+            "series_count": len(series_codes),
+            "ticker_source": ticker_source.value,
+        },
     )
 
-    data_source, _, _, _ = build_pypdl_request_params(
-        field_name=field_type,
-        tickers=tickers,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-    data_points, error_reason = fetch_bloomberg_data(
-        pypdl_resource=pypdl_resource,
-        data_source=data_source,
-        start_date=start_date,
-        end_date=end_date,
-        series_codes=series_codes,
-        context=context,
-        data_codes=tickers,
-        use_dummy_data=config.use_dummy_data,
-    )
-
-    if error_reason:
+    error_reason: Optional[str] = None
+    wide_df = pd.DataFrame()
+    try:
+        wide_df = fetch_bloomberg_values_wide(
+            data_api,
+            series_codes,
+            start_date,
+            end_date,
+            ticker_source=ticker_source,
+            out_of_cache=True,
+        )
+    except ValueQueryParameterError as exc:
+        error_reason = str(exc)
         context.log.warning(
-            "PyPDL fetch failed; persisting null-filled rows for requested range",
-            extra={
-                "field_type": field_type,
-                "error_reason": error_reason,
-                "ticker_count": len(tickers),
-            },
+            "DataAPI value fetch failed",
+            extra={"field_type": field_type, "error_reason": error_reason},
+        )
+    except Exception as exc:
+        error_reason = str(exc)
+        context.log.warning(
+            "DataAPI value fetch failed",
+            extra={"field_type": field_type, "error_reason": error_reason},
+            exc_info=True,
         )
 
-    if data_points is None:
-        data_points = {}
+    if wide_df.empty and not error_reason:
+        context.log.warning(
+            "No value rows returned from DataAPI for requested series and date range",
+            extra={"field_type": field_type, "series_count": len(series_codes)},
+        )
+
+    if wide_df.index.name != ValueColumns.TIMESTAMP:
+        wide_df.index.name = ValueColumns.TIMESTAMP
 
     request_dates = utc_calendar_days_inclusive(start_date, end_date)
-    wide_df, merge_stats_by_ticker = build_wide_dataframe_from_fetch(
-        tickers=tickers,
-        ticker_to_series_code=ticker_to_series_code,
-        data_points=data_points,
+    invalid_details_full = build_ingestion_invalid_details_from_wide(
+        wide_df=wide_df,
+        series_code_to_ticker=series_code_to_ticker,
         request_dates=request_dates,
-    )
-
-    invalid_details_full = build_ingestion_invalid_details(
-        tickers=tickers,
-        ticker_to_series_code=ticker_to_series_code,
         error_reason=error_reason,
-        merge_stats_by_ticker=merge_stats_by_ticker,
     )
     invalid_count = len(invalid_details_full)
     invalid_series_codes_sorted = sorted({r["series_code"] for r in invalid_details_full})
@@ -296,7 +235,7 @@ def materialize_bloomberg_wide_partition(
     write_stats = data_api.write_wide_value_partitions(
         wide_df=wide_df,
         field_type=field_type,
-        ticker_source=TickerSource.BLOOMBERG,
+        ticker_source=ticker_source,
         start_date=start_date,
         end_date=end_date,
         force_refresh=config.force_refresh,
@@ -318,11 +257,13 @@ def materialize_bloomberg_wide_partition(
     result_metadata: Dict[str, Any] = {
         "field_type": field_type,
         "series_count": metadata_series_count,
-        "tickers_fetched": len(tickers),
+        "series_fetched": len(series_codes),
+        "ticker_source": ticker_source.value,
+        "out_of_cache": True,
         "partitions_written": write_stats["partitions_written"],
         "wide_row_count_max": write_stats["row_count_max"],
         "wide_column_count": write_stats["column_count"],
-        "data_points_saved": int(wide_df.shape[0] * wide_df.shape[1]),
+        "data_points_saved": int(wide_df.shape[0] * wide_df.shape[1]) if not wide_df.empty else 0,
         "partition_paths_sample": MetadataValue.json(paths),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -334,6 +275,6 @@ def materialize_bloomberg_wide_partition(
         )
         result_metadata["invalid_series_codes"] = MetadataValue.json(invalid_series_codes_sorted)
     if error_reason:
-        result_metadata["pypdl_error_reason"] = truncate_invalid_value(error_reason)
+        result_metadata["value_fetch_error_reason"] = truncate_invalid_value(error_reason)
 
     return MaterializeResult(metadata=result_metadata)
