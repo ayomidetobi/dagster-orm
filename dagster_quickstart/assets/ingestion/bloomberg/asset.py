@@ -1,5 +1,8 @@
 """Bloomberg ingestion Dagster assets (definitions only)."""
 
+from typing import List, Optional
+
+import pandas as pd
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
 
 from dagster_quickstart.assets.ingestion.bloomberg.config import (
@@ -11,12 +14,27 @@ from dagster_quickstart.assets.ingestion.bloomberg.wide_materialize import (
     materialize_bloomberg_wide_partition,
 )
 from dagster_quickstart.orm.data_api import DataAPI
-from dagster_quickstart.orm.schema import TickerSource
+from dagster_quickstart.orm.schema import MetadataColumns, TableNames
+
+
+def load_bloomberg_metadata_for_field(
+    data_api: DataAPI,
+    field_type: str,
+    series_codes: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """Load validated primary-catalog metadata for a Bloomberg ``field_type`` partition."""
+    filters = {
+        "control_table": TableNames.METADATA,
+        MetadataColumns.BBG_FIELD: field_type,
+    }
+    if series_codes:
+        filters[MetadataColumns.SERIES_CODE] = series_codes
+    return data_api.get(**filters).info(allow_empty=True)
 
 
 @asset(
     partitions_def=FIELD_TYPE_PARTITIONS,
-    required_resource_keys={"duckdb", "pypdl"},
+    required_resource_keys={"data_api"},
     name="ingest_bloomberg_data_daily",
     deps=["load_lookup_tables_to_s3", "load_meta_series_to_s3", "load_series_dependencies_to_s3"],
 )
@@ -24,7 +42,7 @@ def ingest_bloomberg_data_daily(
     context: AssetExecutionContext,
     config: BloombergIngestionConfig,
 ) -> MaterializeResult:
-    """Daily ingestion: PyPDL fetch, wide time-by-series matrix, monthly Parquet partitions.
+    """Daily ingestion: DataAPI value fetch, wide time-by-series matrix, monthly Parquet partitions.
 
     Storage layout: ``value-data/wide/{source}/field_type={ft}/year=YYYY/month=MM/data.parquet``.
 
@@ -50,19 +68,15 @@ def ingest_bloomberg_data_daily(
             "field_type": field_type,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
-            "use_dummy_data": config.use_dummy_data,
         },
     )
 
-    data_api = DataAPI(context.resources.duckdb)
-    series_codes = data_api.get_series_codes(
-        field_type=field_type,
-        ticker_source=TickerSource.BLOOMBERG,
-    )
+    data_api = context.resources.data_api.get_api()
+    metadata_df = load_bloomberg_metadata_for_field(data_api, field_type)
 
-    if not series_codes:
+    if metadata_df.empty:
         context.log.warning(
-            f"No series codes found for field_type={field_type}",
+            f"No metadata rows found for field_type={field_type}",
             extra={"field_type": field_type},
         )
         return MaterializeResult(
@@ -78,22 +92,21 @@ def ingest_bloomberg_data_daily(
         )
 
     context.log.info(
-        f"Found {len(series_codes)} series codes for field_type={field_type}",
-        extra={"field_type": field_type, "series_count": len(series_codes)},
+        f"Loaded {len(metadata_df)} metadata rows for field_type={field_type}",
+        extra={"field_type": field_type, "series_count": len(metadata_df)},
     )
 
     return materialize_bloomberg_wide_partition(
         context,
         config,
         field_type,
-        series_codes,
-        metadata_series_count=len(series_codes),
+        metadata_df,
     )
 
 
 @asset(
     partitions_def=FIELD_TYPE_PARTITIONS,
-    required_resource_keys={"duckdb", "pypdl"},
+    required_resource_keys={"data_api"},
     deps=["load_lookup_tables_to_s3", "load_meta_series_to_s3", "load_series_dependencies_to_s3"],
 )
 def ingest_bloomberg_data_backfill(
@@ -127,16 +140,14 @@ def ingest_bloomberg_data_backfill(
         },
     )
 
-    data_api = DataAPI(context.resources.duckdb)
-    allowed = set(
-        data_api.get_series_codes(
-            field_type=field_type,
-            ticker_source=TickerSource.BLOOMBERG,
-        )
+    data_api = context.resources.data_api.get_api()
+    metadata_df = load_bloomberg_metadata_for_field(
+        data_api,
+        field_type,
+        series_codes=config.series_codes,
     )
-    series_codes = [sc for sc in config.series_codes if sc in allowed]
 
-    if not series_codes:
+    if metadata_df.empty:
         context.log.warning(
             "No requested series_codes match metadata for this field_type partition",
             extra={"field_type": field_type},
@@ -156,6 +167,5 @@ def ingest_bloomberg_data_backfill(
         context,
         config,
         field_type,
-        series_codes,
-        metadata_series_count=len(series_codes),
+        metadata_df,
     )

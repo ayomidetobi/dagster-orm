@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pandas as pd
 
+from dagster_quickstart.orm.derived_fetch import get_derived_out_of_cache_values
 from dagster_quickstart.orm.direct_source_fetch import get_direct_source_values
 from dagster_quickstart.orm.domain.metadata_repository import MetadataRepository
 from dagster_quickstart.orm.domain.validation_repository import ValidationRepository
@@ -406,15 +407,14 @@ class QuerySet:
 
         effective_out_of_cache = self._out_of_cache if out_of_cache is None else out_of_cache
 
-        if tickersource is None:
-            value_df = self._get_values_by_default_source(resolved_series_codes, params=params)
-        elif effective_out_of_cache:
-            value_df = get_direct_source_values(
-                load_metadata_rows=lambda filters: self._load_metadata_rows(filters, exclude=False),
-                series_codes=resolved_series_codes,
+        if effective_out_of_cache:
+            value_df = self._get_values_out_of_cache(
+                resolved_series_codes,
                 tickersource=tickersource,
                 params=params,
             )
+        elif tickersource is None:
+            value_df = self._get_values_by_default_source(resolved_series_codes, params=params)
         else:
             value_df = self._value_repository.get_batch_series_data(
                 series_codes=resolved_series_codes,
@@ -442,6 +442,135 @@ class QuerySet:
             pivoted_df = pivoted_df.rename(columns=name_map)
 
         return pivoted_df
+
+    def _split_derived_and_primary_codes(
+        self, series_codes: List[str]
+    ) -> Tuple[List[str], List[str]]:
+        """Partition codes into derived (metadata_derived) vs primary catalog series."""
+        derived_df = self._metadata_repository.filter(
+            filters={MetadataColumns.SERIES_CODE: series_codes},
+            control_type=TableNames.METADATA_DERIVED,
+            exclude=False,
+        )
+        if derived_df.empty:
+            return [], list(series_codes)
+
+        derived_set = set(derived_df[MetadataColumns.SERIES_CODE].astype(str).str.strip())
+        derived = [code for code in series_codes if str(code).strip() in derived_set]
+        primary = [code for code in series_codes if str(code).strip() not in derived_set]
+        return derived, primary
+
+    def _load_primary_metadata_rows(self, filters: Dict[str, List[str]]) -> pd.DataFrame:
+        return self._metadata_repository.filter(
+            filters=filters,
+            control_type=TableNames.METADATA,
+            exclude=False,
+        )
+
+    def _load_derived_dependency_rows(self, series_codes: List[str]) -> pd.DataFrame:
+        return self._metadata_repository.filter(
+            filters={MetadataColumns.SERIES_CODE: series_codes},
+            control_type=TableNames.METADATA_DERIVED,
+            exclude=False,
+        )
+
+    def _resolve_out_of_cache_tickersource(
+        self,
+        series_codes: List[str],
+        tickersource: Optional[TickerSource],
+    ) -> TickerSource:
+        if tickersource is not None:
+            return tickersource
+        metadata_df = self._load_primary_metadata_rows(
+            {MetadataColumns.SERIES_CODE: series_codes}
+        )
+        if MetadataColumns.DEFAULT_SOURCE not in metadata_df.columns:
+            return TickerSource.BLOOMBERG
+        sources = (
+            metadata_df[MetadataColumns.DEFAULT_SOURCE]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+        if len(sources) == 1:
+            try:
+                return TickerSource(sources[0])
+            except ValueError:
+                pass
+        return TickerSource.BLOOMBERG
+
+    def _get_values_out_of_cache(
+        self,
+        resolved_series_codes: List[str],
+        *,
+        tickersource: Optional[TickerSource],
+        params: Optional[ValueQueryParams] = None,
+    ) -> pd.DataFrame:
+        """Load values bypassing parquet cache; compute derived series from parent fetches."""
+        derived_codes, primary_codes = self._split_derived_and_primary_codes(
+            resolved_series_codes
+        )
+
+        result_frames: List[pd.DataFrame] = []
+
+        if primary_codes:
+            source = self._resolve_out_of_cache_tickersource(primary_codes, tickersource)
+            result_frames.append(
+                get_direct_source_values(
+                    load_metadata_rows=self._load_primary_metadata_rows,
+                    series_codes=primary_codes,
+                    tickersource=source,
+                    params=params,
+                )
+            )
+
+        if derived_codes:
+            parent_codes: List[str] = []
+            dependencies_df = self._load_derived_dependency_rows(derived_codes)
+            for _, row in dependencies_df.iterrows():
+                parent_str = row.get(MetadataColumns.PARENT_SERIES_CODE, "")
+                if parent_str and not pd.isna(parent_str):
+                    parent_codes.extend(
+                        code.strip()
+                        for code in str(parent_str).split("|")
+                        if code.strip()
+                    )
+            parent_codes = list(dict.fromkeys(parent_codes))
+            source = self._resolve_out_of_cache_tickersource(
+                parent_codes or derived_codes, tickersource
+            )
+            result_frames.append(
+                get_derived_out_of_cache_values(
+                    load_primary_metadata_rows=self._load_primary_metadata_rows,
+                    load_derived_dependency_rows=self._load_derived_dependency_rows,
+                    derived_series_codes=derived_codes,
+                    tickersource=source,
+                    params=params,
+                )
+            )
+
+        if not result_frames:
+            return pd.DataFrame(
+                columns=[
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.VALUE,
+                ]
+            )
+
+        non_empty = [frame for frame in result_frames if not frame.empty]
+        if not non_empty:
+            return pd.DataFrame(
+                columns=[
+                    ValueColumns.SERIES_CODE,
+                    ValueColumns.TIMESTAMP,
+                    ValueColumns.VALUE,
+                ]
+            )
+
+        return pd.concat(non_empty, ignore_index=True)
 
     def _get_values_by_default_source(
         self,

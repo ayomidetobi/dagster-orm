@@ -56,6 +56,7 @@ class MetadataColumns:
     CALCULATION_FORMULA = "calculation_formula"
     DES_NOTES = "des_notes"
     CALC_TYPE = "calc_type"
+    PARENT_SERIES_CODE = "parent_series_code"
     DESCRIPTION = "description"
 
 FilterValue = Union[str, List[str]]
@@ -261,14 +262,3 @@ class PreviewColumns:
             cls.SERIES_NAME,
             cls.ASSET_CLASS,
         ]
-
-
-class DataPoint(TypedDict):
-    """Data point structure for time-series data.
-
-    Represents a single data point with timestamp and value.
-    Used consistently across PyPDL ingestion and value data operations.
-    """
-
-    timestamp: datetime
-    value: float
