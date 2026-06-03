@@ -25,7 +25,7 @@ from dagster_quickstart.jobs import (
 )
 from dagster_quickstart.orm.io_manager import duckdb_io_manager
 from dagster_quickstart.schedule import populate_value_data_schedule
-from dagster_quickstart.resources import DuckDBResource, HawkResource, PyPDLResource
+from dagster_quickstart.resources import DataAPIResource, DuckDBResource, HawkResource, PyPDLResource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 
 all_assets = [
@@ -56,6 +56,11 @@ duckdb_cacher = duckdb_datacacher(
 # Initialize DuckDB resource with datacacher
 duckdb_resource = DuckDBResource(cacher=duckdb_cacher)
 
+data_api_resource = DataAPIResource(
+    duckdb=duckdb_resource,
+    out_of_cache=config("DATA_API_OUT_OF_CACHE", default=False, cast=bool),
+)
+
 # Initialize PyPDL resource
 pypdl_resource = PyPDLResource(
     host=config("PYPDL_HOST", default="localhost"),
@@ -71,6 +76,7 @@ hawk_resource = HawkResource(
 # Define resources
 resources = {
     "duckdb": duckdb_resource,
+    "data_api": data_api_resource,
     "hawk": hawk_resource,
     "pypdl": pypdl_resource,
     "io_manager": duckdb_io_manager,

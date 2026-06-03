@@ -12,7 +12,6 @@ from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, ass
 
 from dagster_quickstart.assets.derived.config import DerivedConfig
 from dagster_quickstart.assets.derived.partitions import DERIVED_CALC_PARTITIONS
-from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.derived_calc import compute_derived_series, parse_parent_series_codes
 from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 from dagster_quickstart.orm.schema import MetadataColumns, TickerSource, ValueColumns
@@ -21,7 +20,7 @@ from dagster_quickstart.orm.schema.constants import CALCULATION_FORMULA_TYPES
 
 @asset(
     partitions_def=DERIVED_CALC_PARTITIONS,
-    required_resource_keys={"duckdb"},
+    required_resource_keys={"data_api"},
     name="calculate_derived_series",
 )
 def calculate_derived_series(
@@ -42,8 +41,7 @@ def calculate_derived_series(
     """
     partition_key = context.partition_key
 
-    duckdb_resource = context.resources.duckdb
-    data_api = DataAPI(duckdb_resource)
+    data_api = context.resources.data_api.get_api()
 
     metadata_glob_relative = build_s3_control_table_path(config.control_table_type)
     dependencies_df = data_api.get(field_type=partition_key).info(allow_empty=True)
