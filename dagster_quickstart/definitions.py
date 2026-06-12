@@ -23,9 +23,10 @@ from dagster_quickstart.jobs import (
     populate_value_data_job,
 )
 from dagster_quickstart.orm.io_manager import duckdb_io_manager
-from dagster_quickstart.schedule import populate_value_data_schedule
 from dagster_quickstart.resources import DataAPIResource, DuckDBResource, HawkResource
 from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
+from dagster_quickstart.schedule import bloomberg_daily_schedule, hawk_daily_schedule
+from dagster_quickstart.sensors import derived_after_ingestion_sensor
 
 all_assets = [
     load_lookup_tables_to_s3,
@@ -86,7 +87,12 @@ all_jobs = [
 ]
 
 all_schedules = [
-    populate_value_data_schedule,
+    bloomberg_daily_schedule,
+    hawk_daily_schedule,
+]
+
+all_sensors = [
+    derived_after_ingestion_sensor,
 ]
 
 defs = Definitions(
@@ -94,5 +100,6 @@ defs = Definitions(
     asset_checks=all_asset_checks,
     jobs=all_jobs,
     schedules=all_schedules,
+    sensors=all_sensors,
     resources=resources,
 )
