@@ -14,38 +14,15 @@ _WIDE_MISSING_SENTINELS = frozenset(
 )
 
 
-def _coerce_wide_value_series(series: pd.Series) -> pd.Series:
-    """Map vendor missing markers to NaN and coerce to float64."""
-    if series.empty:
-        return series.astype("float64")
-
-    if series.dtype == object or pd.api.types.is_string_dtype(series):
-
-        def _to_float(value: object) -> float:
-            if value is None:
-                return np.nan
-            if isinstance(value, str):
-                if value.strip().upper() in _WIDE_MISSING_SENTINELS:
-                    return np.nan
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return np.nan
-
-        return series.map(_to_float).astype("float64")
-
-    return pd.to_numeric(series, errors="coerce").astype("float64")
-
-
 def sanitize_wide_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Coerce wide value columns to float64; vendor sentinels (e.g. NOT FOUND) become NaN."""
     if df.empty:
         return df
-    out = df.copy()
-    for col in out.columns:
-        out[col] = _coerce_wide_value_series(out[col])
-    return out
 
+    return (
+        df.replace({s: np.nan for s in _WIDE_MISSING_SENTINELS})
+          .apply(pd.to_numeric, errors="coerce")
+          .astype("float64")
+    )
 
 def normalize_wide_timestamp_index(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DatetimeIndex UTC, normalized to midnight, sorted."""
