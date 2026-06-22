@@ -9,6 +9,43 @@ import pandas as pd
 from dagster_quickstart.orm.schema import ValueColumns
 from dagster_quickstart.utils.datetime_utils import normalize_date_to_utc
 
+_WIDE_MISSING_SENTINELS = frozenset(
+    {"", "NA", "N/A", "NAN", "NULL", "NONE", "NOT FOUND", "#N/A", "#N/A N/A"}
+)
+
+
+def _coerce_wide_value_series(series: pd.Series) -> pd.Series:
+    """Map vendor missing markers to NaN and coerce to float64."""
+    if series.empty:
+        return series.astype("float64")
+
+    if series.dtype == object or pd.api.types.is_string_dtype(series):
+
+        def _to_float(value: object) -> float:
+            if value is None:
+                return np.nan
+            if isinstance(value, str):
+                if value.strip().upper() in _WIDE_MISSING_SENTINELS:
+                    return np.nan
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return np.nan
+
+        return series.map(_to_float).astype("float64")
+
+    return pd.to_numeric(series, errors="coerce").astype("float64")
+
+
+def sanitize_wide_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce wide value columns to float64; vendor sentinels (e.g. NOT FOUND) become NaN."""
+    if df.empty:
+        return df
+    out = df.copy()
+    for col in out.columns:
+        out[col] = _coerce_wide_value_series(out[col])
+    return out
+
 
 def normalize_wide_timestamp_index(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DatetimeIndex UTC, normalized to midnight, sorted."""
@@ -55,8 +92,10 @@ def merge_wide_monthly_partition(
 
     if not ex.empty:
         ex = normalize_wide_timestamp_index(ex)
+        ex = sanitize_wide_numeric_columns(ex)
     if not inc.empty:
         inc = normalize_wide_timestamp_index(inc)
+        inc = sanitize_wide_numeric_columns(inc)
 
     if strip_date_range is not None:
         rs, re = strip_date_range
@@ -77,7 +116,7 @@ def merge_wide_monthly_partition(
         for col in inc.columns:
             if col not in out.columns:
                 out[col] = np.nan
-            out.loc[inc.index, col] = inc[col].values
+            out.loc[inc.index, col] = inc[col].to_numpy(dtype="float64", na_value=np.nan)
         out = out.sort_index()
 
     if out.empty:

@@ -1,5 +1,6 @@
 """DataAPI class for semantic ORM layer."""
 
+import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Unpack, Union
 
@@ -29,6 +30,7 @@ from dagster_quickstart.orm.schema import (
 )
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
+    sanitize_wide_numeric_columns,
     slice_wide_for_calendar_month,
     wide_frame_covers_utc_dates,
 )
@@ -630,9 +632,10 @@ class DataAPI:
                 "row_count_max": 0,
                 "column_count": 0,
                 "written_relative_paths": [],
+                "partition_errors": [],
             }
 
-        wide = wide_df.sort_index()
+        wide = sanitize_wide_numeric_columns(wide_df.sort_index())
         strip_range: Optional[Tuple[Any, Any]] = None
         if force_refresh:
             strip_range = (
@@ -641,25 +644,45 @@ class DataAPI:
             )
 
         written_paths: List[str] = []
+        partition_errors: List[Dict[str, Any]] = []
         row_max = 0
+        logger = logging.getLogger(__name__)
         for year, month in iter_year_months(start_date, end_date):
-            inc = slice_wide_for_calendar_month(wide, year, month)
-            if inc.empty:
-                continue
-            existing = self.read_wide_value_partition(field_type, year, month, ticker_source)
-            merged = merge_wide_monthly_partition(existing, inc, strip_range)
-            if merged.empty:
-                continue
-            rel = self.write_wide_value_partition(
-                merged, field_type, year, month, ticker_source
-            )
-            written_paths.append(rel)
-            row_max = max(row_max, len(merged))
+            try:
+                inc = slice_wide_for_calendar_month(wide, year, month)
+                if inc.empty:
+                    continue
+                existing = self.read_wide_value_partition(field_type, year, month, ticker_source)
+                merged = merge_wide_monthly_partition(existing, inc, strip_range)
+                if merged.empty:
+                    continue
+                rel = self.write_wide_value_partition(
+                    merged, field_type, year, month, ticker_source
+                )
+                written_paths.append(rel)
+                row_max = max(row_max, len(merged))
+            except Exception as exc:
+                error_info = {
+                    "year": year,
+                    "month": month,
+                    "field_type": field_type,
+                    "error": str(exc),
+                }
+                partition_errors.append(error_info)
+                logger.warning(
+                    "Failed to write wide partition year=%s month=%s field_type=%s: %s",
+                    year,
+                    month,
+                    field_type,
+                    exc,
+                    exc_info=True,
+                )
 
         return {
             "partitions_written": len(written_paths),
             "row_count_max": row_max,
             "column_count": int(wide.shape[1]),
             "written_relative_paths": written_paths,
+            "partition_errors": partition_errors,
         }
 from dagster_quickstart.orm.fx import FX

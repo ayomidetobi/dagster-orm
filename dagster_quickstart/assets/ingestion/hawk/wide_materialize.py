@@ -11,6 +11,7 @@ from dagster import AssetExecutionContext, MaterializeResult, MetadataValue
 from dagster_quickstart.assets.ingestion.hawk.config import HawkIngestionConfig
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.schema import TickerSource, ValueColumns
+from dagster_quickstart.orm.storage.wide_partition import sanitize_wide_numeric_columns
 from dagster_quickstart.utils.datetime_utils import utc_calendar_days_inclusive, utc_midnight
 
 
@@ -48,7 +49,7 @@ def _hawk_payload_to_wide(
             df[sc] = float("nan")
     out = df[series_codes].copy()
     out.index.name = ValueColumns.TIMESTAMP
-    return out.sort_index()
+    return sanitize_wide_numeric_columns(out.sort_index())
 
 
 def materialize_hawk_wide_partition(
@@ -157,14 +158,40 @@ def materialize_hawk_wide_partition(
         fame_to_series_code,
     )
 
-    write_stats = data_api.write_wide_value_partitions(
-        wide_df=wide_df,
-        field_type=field_type,
-        ticker_source=TickerSource.HAWKEYE,
-        start_date=start_date,
-        end_date=end_date,
-        force_refresh=config.force_refresh,
-    )
+    write_stats: Dict[str, Any]
+    try:
+        write_stats = data_api.write_wide_value_partitions(
+            wide_df=wide_df,
+            field_type=field_type,
+            ticker_source=TickerSource.HAWKEYE,
+            start_date=start_date,
+            end_date=end_date,
+            force_refresh=config.force_refresh,
+        )
+    except Exception as exc:
+        context.log.error(
+            "Hawk wide partition write failed",
+            extra={"field_type": field_type, "error": str(exc)},
+        )
+        return MaterializeResult(
+            metadata={
+                "field_type": field_type,
+                "series_count": metadata_series_count,
+                "partitions_written": 0,
+                "wide_row_count_max": 0,
+                "wide_column_count": int(wide_df.shape[1]),
+                "write_error": str(exc)[:500],
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            }
+        )
+
+    partition_errors = write_stats.get("partition_errors") or []
+    if partition_errors:
+        context.log.warning(
+            "Some Hawk wide partitions failed to write",
+            extra={"field_type": field_type, "partition_errors": partition_errors},
+        )
 
     context.log.info(
         "Hawk wide partition write complete",
@@ -193,5 +220,7 @@ def materialize_hawk_wide_partition(
     }
     if error_reason:
         result_metadata["hawk_error_reason"] = error_reason[:500]
+    if partition_errors:
+        result_metadata["partition_write_errors"] = MetadataValue.json(partition_errors)
 
     return MaterializeResult(metadata=result_metadata)

@@ -3,6 +3,7 @@
 from dagster_quickstart.orm.storage.wide_partition import (
     merge_wide_monthly_partition,
     normalize_wide_timestamp_index,
+    sanitize_wide_numeric_columns,
     slice_wide_for_calendar_month,
     wide_frame_covers_utc_dates,
 )
@@ -10,6 +11,7 @@ from dagster_quickstart.orm.storage.wide_partition import (
 __all__ = [
     "merge_wide_monthly_partition",
     "normalize_wide_timestamp_index",
+    "sanitize_wide_numeric_columns",
     "slice_wide_for_calendar_month",
     "wide_frame_covers_utc_dates",
 ]
