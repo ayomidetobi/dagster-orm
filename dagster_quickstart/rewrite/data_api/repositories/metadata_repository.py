@@ -8,7 +8,6 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns
 from rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
 from rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
 
@@ -109,21 +108,6 @@ class MetadataRepository:
             return options_by_field[requested_fields[0]]
 
         return options_by_field
-
-    def get_series_codes(
-        self,
-        filters: Mapping[str, Sequence[str]],
-    ) -> list[str]:
-        """
-        Resolve metadata filters into series codes.
-        """
-
-        metadata = self.get_metadata(filters)
-
-        if metadata.empty:
-            return []
-
-        return metadata[MetadataColumns.SERIES_CODE].drop_duplicates().tolist()
 
     def save_metadata(
         self,

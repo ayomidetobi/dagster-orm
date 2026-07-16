@@ -121,15 +121,6 @@ class MetadataService:
         logger.info("metadata_service_import", row_count=len(frame))
         self._repository.save_metadata(self._validate(frame))
 
-    def export_metadata(
-        self,
-        filters: Mapping[str, Sequence[str]] | None = None,
-        *,
-        exclude: bool = False,
-    ) -> pd.DataFrame:
-        """Export metadata rows."""
-        return self.list_metadata(filters, exclude=exclude)
-
     def refresh_metadata(self) -> None:
         """Refresh repository-backed metadata state."""
         self._repository.refresh()

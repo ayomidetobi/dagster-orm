@@ -11,6 +11,7 @@ from rewrite.data_api.ingestion.file_loader import FileIngestionService
 from rewrite.data_api.ingestion.ingestion_service import IngestionService
 from rewrite.data_api.ingestion.writer import IngestionWriter
 from rewrite.data_api.repositories.metadata_repository import MetadataRepository
+from rewrite.data_api.repositories.value_repository import ValueRepository
 from rewrite.data_api.services.direct_fetch_service import DirectFetchService
 from rewrite.data_api.services.metadata_service import MetadataService
 from rewrite.data_api.services.value_service import ValueService
@@ -58,9 +59,14 @@ class RewriteContainer(containers.DeclarativeContainer):
         repository=metadata_business_repository,
     )
 
+    value_business_repository = providers.Factory(
+        ValueRepository,
+        storage=value_repository,
+    )
+
     value_service = providers.Factory(
         ValueService,
-        repository=value_repository,
+        repository=value_business_repository,
     )
 
     vendor_service = providers.Factory(
