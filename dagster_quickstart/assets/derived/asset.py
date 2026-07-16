@@ -92,9 +92,7 @@ def calculate_derived_series(
         calc_type_upper = str(calc_type).upper()
         required_count = CALCULATION_FORMULA_TYPES.get(calc_type_upper)
         if required_count is None:
-            context.log.error(
-                f"Unknown calc_type '{calc_type}' for series {series_code}"
-            )
+            context.log.error(f"Unknown calc_type '{calc_type}' for series {series_code}")
             series_failed += 1
             failed_series.append(series_code)
             continue
@@ -163,9 +161,7 @@ def calculate_derived_series(
     write_stats_by_field: Dict[str, Any] = {}
 
     if code_to_series:
-        data_api.validate_date_range_for_force_refresh(
-            True, config.start_date, config.end_date
-        )
+        data_api.validate_date_range_for_force_refresh(True, config.start_date, config.end_date)
 
         wide_df = pd.concat(code_to_series, axis=1)
         wide_df = wide_df.sort_index()

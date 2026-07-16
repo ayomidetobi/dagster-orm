@@ -1,0 +1,129 @@
+You are a senior Python software architect.
+
+Rewrite this project into a clean DuckLake-based architecture.
+
+Core direction:
+- Greenfield rewrite of the infrastructure layer.
+- Keep the public DataAPI surface stable where practical.
+- Do not preserve internal compatibility shims, deprecated aliases, or legacy storage code.
+- Delete code freely when it simplifies the design.
+
+Target architecture:
+Client -> DataAPI -> QuerySet -> Services -> Repositories -> DuckLakeRepository -> DuckLake
+
+Storage rules:
+- DuckLakeRepository is the only class that knows about DuckLake internals.
+- No code outside DuckLakeRepository should know about S3, parquet files, manifests, partitions, or file layout.
+- DuckLake catalog PostgreSQL stores metadata, lookup tables, mappings, series definitions, ingestion history, and audit data.
+- DuckLake manages time-series value storage.
+
+Remove:
+- S3Adapter
+- ParquetAdapter
+- manual S3 path builders
+- wide parquet readers
+- month/year partition discovery
+- glob readers
+- manual parquet merge logic
+- manual partition logic
+- DuckDB SQL that exists only because of parquet storage
+
+Keep:
+- DataAPI.get(...)
+- DataAPI.get_values(...)
+- QuerySet.info()
+- QuerySet.value()
+- QuerySet.last()
+- QuerySet.filter_options()
+- vendor abstractions for Bloomberg, MDS, and Hawk
+
+Suggested structure:
+- data_api/api/data_api.py
+- data_api/api/queryset.py
+- data_api/services/metadata_service.py
+- data_api/services/value_service.py
+- data_api/services/vendor_service.py
+- data_api/repositories/metadata_repository.py
+- data_api/repositories/value_repository.py
+- data_api/repositories/ducklake_repository.py
+- data_api/infrastructure/postgres.py
+- data_api/infrastructure/ducklake.py
+- data_api/vendors/bloomberg.py
+- data_api/vendors/hawk.py
+- data_api/vendors/mds.py
+- data_api/models/metadata.py
+- data_api/models/lookup.py
+- data_api/models/series.py
+- data_api/ingestion/ingestion_service.py
+- data_api/ingestion/writer.py
+
+Responsibilities:
+
+DataAPI
+- Public API only.
+- Constructs QuerySets.
+- No SQL.
+- No storage logic.
+
+QuerySet
+- Filter normalization.
+- Caching resolved series codes.
+- Orchestrating services.
+- Formatting output.
+- Pivoting.
+- Humanization.
+- Must know nothing about DuckLake internals.
+
+MetadataService
+- Business logic around metadata.
+- Delegates persistence to MetadataRepository.
+
+ValueService
+- Business logic around values.
+- Delegates persistence to ValueRepository.
+
+MetadataRepository
+- Reads and writes metadata from PostgreSQL.
+- No DuckLake implementation details.
+
+ValueRepository
+- Reads and writes values using DuckLakeRepository.
+- No S3 paths.
+- No parquet paths.
+- No partition logic.
+
+DuckLakeRepository
+- The only class that communicates with DuckLake.
+- Supports execute(), append(), merge(), delete(), update(), optimize(), vacuum(), time_travel(), and create_table().
+
+Ingestion:
+Vendor -> normalize dataframe -> DuckLake append()
+
+Vendor fetches:
+- Keep vendor-specific fetchers.
+- They return normalized DataFrames only.
+- Persistence belongs elsewhere.
+
+Design principles:
+- Dependency injection
+- Repository pattern
+- Service layer
+- SOLID
+- Single responsibility
+- Composition over inheritance
+- Strong typing
+- Dataclasses where appropriate
+- Protocols or ABCs for repository interfaces
+- Avoid global state
+
+Implementation order:
+1. Propose the architecture.
+2. Show the folder structure.
+3. Show the dependency graph.
+4. Show the class diagram.
+5. Show sequence diagrams for api.get().value(), ingestion, and metadata query.
+6. Identify files to delete.
+7. Identify files to rewrite.
+8. Identify files to keep mostly unchanged.
+9. Explain how PostgreSQL and DuckLake interact.
+10. Implement incrementally in small, reviewable changes.

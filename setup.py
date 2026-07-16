@@ -7,6 +7,12 @@ setup(
         "dagster",
         "dagster-cloud",
         "pandas",
+        "structlog",
+        "pydantic",
+        "dependency-injector",
+        "pandera",
+        "openpyxl",
+        "python-decouple",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )

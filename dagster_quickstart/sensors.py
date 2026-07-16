@@ -114,9 +114,7 @@ def derived_after_ingestion_sensor(
         )
     )
 
-    run_key_suffix = (
-        f"{int(bloomberg_completion.timestamp())}-{int(hawk_completion.timestamp())}"
-    )
+    run_key_suffix = f"{int(bloomberg_completion.timestamp())}-{int(hawk_completion.timestamp())}"
     for partition_key in DERIVED_CALC_PARTITIONS.get_partition_keys():
         yield RunRequest(
             run_key=f"derived-{partition_key}-{run_key_suffix}",

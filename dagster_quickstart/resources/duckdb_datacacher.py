@@ -1,25 +1,27 @@
-"""Local implementation of DuckDBDataCacher for S3 Parquet operations.
-
-This module provides a local implementation of the DuckDB datacacher
-that was previously imported from qr_common. It handles S3 operations
-using DuckDB's httpfs extension.
-"""
+"""DuckDB connection helpers for S3 and DuckLake."""
 
 import glob
 import json
-import logging
 import os
 import sys
 import warnings
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Protocol
 
 import duckdb
 import pandas as pd
+import structlog
 
-logger = logging.getLogger(__name__)
+from rewrite.data_api.models.config import (
+    DuckLakeCatalogConfig,
+    DuckLakeConfig,
+    S3SecretConfig,
+)
+
+logger = structlog.get_logger(__name__)
 
 
 class SQL:
@@ -39,6 +41,96 @@ class SQL:
         """
         self.sql = sql
         self.bindings = bindings
+
+    def __add__(self, other: "SQL") -> "SQL":
+        """Concatenate two SQL fragments.
+
+        Each side is rendered via render_ducklake_sql() using only its own
+        bindings *before* concatenation, so fragments built with generically
+        named placeholders (e.g. every WHERE clause using $column/$value)
+        never collide when joined together.
+        """
+        if not isinstance(other, SQL):
+            return NotImplemented
+        return SQL(render_ducklake_sql(self) + render_ducklake_sql(other))
+
+    @staticmethod
+    def identifier(name: str) -> "SQLIdentifier":
+        """Mark a binding value as a SQL identifier (quoted, not a literal)."""
+        return SQLIdentifier(name)
+
+    @staticmethod
+    def join(parts: list["SQL"], separator: "SQL", *, prefix: str = "") -> "SQL":
+        """Join SQL fragments with a separator, optionally prefixed."""
+        if not parts:
+            return SQL("")
+
+        combined = parts[0]
+        for part in parts[1:]:
+            combined = combined + separator + part
+
+        if prefix:
+            combined = SQL(prefix) + combined
+
+        return combined
+
+
+@dataclass(frozen=True, slots=True)
+class SQLIdentifier:
+    """Marks a SQL binding value as an identifier (table/column name) rather than a literal."""
+
+    name: str
+
+
+def quote_identifier(identifier: str) -> str:
+    """Safely quote a SQL identifier, splitting on '.' for catalog.schema.table names."""
+    return ".".join('"' + part.replace('"', '""') + '"' for part in identifier.split("."))
+
+
+def sql_literal(value: str) -> str:
+    """Return a safely quoted SQL string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _format_sql_literal(value: Any) -> str:
+    """Render a scalar Python value as a SQL literal."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, datetime):
+        return sql_literal(value.isoformat())
+    if isinstance(value, str):
+        return sql_literal(value)
+    raise ValueError(f"Cannot render SQL literal for type: {type(value)}")
+
+
+def render_ducklake_sql(sql_obj: "SQL") -> str:
+    """Render a SQL object into plain SQL text for DuckLake table queries.
+
+    This is a pure, connection-free counterpart to
+    DuckDBDataCacher._sql_to_string(): it has no notion of S3 file paths or
+    Parquet encryption keys. Identifier bindings are quoted, scalars/tuples
+    are rendered as SQL literals, and nested SQL objects render recursively.
+    """
+    if not isinstance(sql_obj, SQL):
+        raise ValueError(f"Expected SQL object, got {type(sql_obj)}")
+
+    replacements: Dict[str, str] = {}
+
+    for key, value in sql_obj.bindings.items():
+        if isinstance(value, SQLIdentifier):
+            replacements[key] = quote_identifier(value.name)
+        elif isinstance(value, SQL):
+            replacements[key] = render_ducklake_sql(value)
+        elif isinstance(value, (list, tuple)):
+            replacements[key] = "(" + ", ".join(_format_sql_literal(v) for v in value) + ")"
+        else:
+            replacements[key] = _format_sql_literal(value)
+
+    return Template(sql_obj.sql).safe_substitute(replacements)
 
 
 def join_s3(bucket: str, relative_path: str) -> str:
@@ -100,6 +192,224 @@ def install_plugin(plugin_name: str, extension_name: str) -> None:
         logger.error(f"Failed to install plugin {extension_name}: {e}")
 
 
+class DuckLakeCatalogBackend(Protocol):
+    """DuckLake catalog backend contract.
+
+    Backends can be attached independently from extension loading.
+    Each backend declares the DuckDB extensions it needs and how to attach
+    its catalog to a live connection.
+    """
+
+    def required_extensions(self) -> tuple[str, ...]:
+        """Return DuckDB extensions required by this backend."""
+        ...
+
+    def attach(self, con: duckdb.DuckDBPyConnection) -> None:
+        """Attach the catalog to the provided DuckDB connection."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresDuckLakeCatalogBackend:
+    """DuckLake catalog backend that attaches a PostgreSQL catalog."""
+
+    config: DuckLakeCatalogConfig
+    ducklake_extension: DuckLakeConfig | None = None
+
+    def required_extensions(self) -> tuple[str, ...]:
+        extension = self.ducklake_extension or DuckLakeConfig()
+        return (
+            extension.extension_name,
+            extension.postgres_extension_name,
+        )
+
+    def attach(self, con: duckdb.DuckDBPyConnection) -> None:
+        catalog = self.config
+        if catalog.postgres is None:
+            raise ValueError("DuckLake catalog configuration requires PostgreSQL settings")
+
+        pg = catalog.postgres
+        target = (
+            "ducklake:postgres:"
+            f"dbname={pg.database} host={pg.host} port={pg.port} "
+            f"user={pg.user} password={pg.password}"
+        )
+        if pg.sslmode:
+            target += f" sslmode={pg.sslmode}"
+        options: list[str] = [
+            f"DATA_PATH {sql_literal(catalog.data_path)}",
+            f"METADATA_SCHEMA {sql_literal(catalog.schema_name)}",
+        ]
+        if catalog.attach_options:
+            options.extend(catalog.attach_options)
+        con.execute(
+            f"ATTACH {sql_literal(target)} AS {catalog.catalog_alias} ({', '.join(options)})"
+        )
+        try:
+            con.execute(f"USE {catalog.catalog_alias}")
+        except Exception:
+            logger.warning("ducklake_use_failed", catalog_alias=catalog.catalog_alias)
+
+
+@dataclass(frozen=True, slots=True)
+class DuckDBConnectionFactory:
+    """Create preconfigured DuckDB connections for S3 and DuckLake."""
+
+    bucket: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    region: Optional[str] = None
+    database: str = ":memory:"
+    ducklake_extension: Optional[DuckLakeConfig] = None
+    ducklake_catalog: Optional[DuckLakeCatalogConfig] = None
+    ducklake_catalog_backend: DuckLakeCatalogBackend | None = None
+    s3_secret: S3SecretConfig | None = None
+    enable_ducklake: bool = False
+
+    def _load_extension(self, con: duckdb.DuckDBPyConnection, extension_name: str) -> None:
+        """Install and load a single DuckDB extension."""
+        con.execute(f"INSTALL {extension_name}")
+        con.execute(f"LOAD {extension_name}")
+
+    def _load_extensions(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        extension_names: Iterable[str],
+    ) -> None:
+        """Install and load extensions once, preserving order."""
+        seen: set[str] = set()
+        for extension_name in extension_names:
+            if extension_name in seen:
+                continue
+            seen.add(extension_name)
+            self._load_extension(con, extension_name)
+
+    def _load_httpfs(self, con: duckdb.DuckDBPyConnection) -> None:
+        """Install and load httpfs for S3 access."""
+        extension = self.ducklake_extension or DuckLakeConfig()
+        self._load_extension(con, extension.httpfs_extension_name)
+
+    def _create_s3_secret(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        secret: S3SecretConfig,
+    ) -> None:
+        """Create or replace the DuckDB S3 secret used by httpfs."""
+        clauses = [
+            "TYPE s3",
+            f"PROVIDER {secret.provider}",
+            f"KEY_ID {sql_literal(secret.key_id)}",
+            f"SECRET {sql_literal(secret.secret)}",
+            f"REGION {sql_literal(secret.region)}",
+        ]
+        if secret.session_token is not None:
+            clauses.append(f"SESSION_TOKEN {sql_literal(secret.session_token)}")
+        if secret.endpoint is not None:
+            clauses.append(f"ENDPOINT {sql_literal(secret.endpoint)}")
+        sql = f"CREATE OR REPLACE SECRET {secret.name} ({', '.join(clauses)})"
+        con.execute(sql)
+
+    def _resolve_catalog_backend(self) -> DuckLakeCatalogBackend | None:
+        """Resolve the catalog backend to attach, if any."""
+        if self.ducklake_catalog_backend is not None:
+            return self.ducklake_catalog_backend
+        if self.ducklake_catalog is not None:
+            return PostgresDuckLakeCatalogBackend(
+                self.ducklake_catalog,
+                self.ducklake_extension,
+            )
+        return None
+
+    def _resolve_s3_secret(self) -> S3SecretConfig | None:
+        """Resolve the S3 secret independently from catalog attachment."""
+        if self.s3_secret is not None:
+            return self.s3_secret
+        if self.ducklake_catalog is not None and self.ducklake_catalog.s3_secret is not None:
+            return self.ducklake_catalog.s3_secret
+        if all([self.bucket, self.access_key, self.secret_key, self.region]):
+            return S3SecretConfig(
+                key_id=self.access_key or "",
+                secret=self.secret_key or "",
+                region=self.region or "",
+            )
+        return None
+
+    def _load_ducklake_support(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        backend: DuckLakeCatalogBackend | None,
+    ) -> None:
+        """Load DuckLake support when requested by config or backend."""
+        if not (self.enable_ducklake or backend is not None or self.ducklake_extension is not None):
+            return
+
+        extension_names: list[str] = []
+        if self.ducklake_extension is not None or self.enable_ducklake:
+            extension = self.ducklake_extension or DuckLakeConfig()
+            extension_names.extend(
+                (
+                    extension.extension_name,
+                    extension.postgres_extension_name,
+                )
+            )
+        if backend is not None:
+            extension_names.extend(backend.required_extensions())
+
+        self._load_extensions(con, extension_names)
+
+    def _attach_catalog_backend(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        backend: DuckLakeCatalogBackend,
+    ) -> None:
+        """Attach a catalog backend to the connection."""
+        backend.attach(con)
+
+    def create_connection(self) -> duckdb.DuckDBPyConnection:
+        """Create a DuckDB connection configured for the requested storage mode."""
+        con = duckdb.connect(database=self.database)
+        self._load_httpfs(con)
+        backend = self._resolve_catalog_backend()
+        self._load_ducklake_support(con, backend)
+
+        secret = self._resolve_s3_secret()
+        if secret is not None:
+            self._create_s3_secret(con, secret)
+
+        if backend is not None:
+            self._attach_catalog_backend(con, backend)
+        return con
+
+
+def create_duckdb_connection(
+    *,
+    bucket: Optional[str] = None,
+    access_key: Optional[str] = None,
+    secret_key: Optional[str] = None,
+    region: Optional[str] = None,
+    database: str = ":memory:",
+    ducklake_extension: DuckLakeConfig | None = None,
+    ducklake_catalog: DuckLakeCatalogConfig | None = None,
+    ducklake_catalog_backend: DuckLakeCatalogBackend | None = None,
+    s3_secret: S3SecretConfig | None = None,
+    enable_ducklake: bool = False,
+) -> duckdb.DuckDBPyConnection:
+    """Create a preconfigured DuckDB connection."""
+    factory = DuckDBConnectionFactory(
+        bucket=bucket,
+        access_key=access_key,
+        secret_key=secret_key,
+        region=region,
+        database=database,
+        ducklake_extension=ducklake_extension,
+        ducklake_catalog=ducklake_catalog,
+        ducklake_catalog_backend=ducklake_catalog_backend,
+        s3_secret=s3_secret,
+        enable_ducklake=enable_ducklake,
+    )
+    return factory.create_connection()
+
+
 class DuckDBDataCacher:
     """DuckDB datacacher for S3 Parquet operations.
 
@@ -117,6 +427,11 @@ class DuckDBDataCacher:
         env_name: Optional[str] = None,
         pandas_analyze_sample: Optional[int] = None,
         app_name: Optional[str] = None,
+        ducklake_extension: Optional[DuckLakeConfig] = None,
+        ducklake_catalog: Optional[DuckLakeCatalogConfig] = None,
+        ducklake_catalog_backend: DuckLakeCatalogBackend | None = None,
+        s3_secret: S3SecretConfig | None = None,
+        enable_ducklake: bool = False,
     ):
         """Initialize DuckDBDataCacher with S3 credentials.
 
@@ -181,33 +496,16 @@ class DuckDBDataCacher:
                         f"DuckDB={duckdb.__version__}, Plugin={version}"
                     )
 
-        # Load DuckDB extensions
-        try:
-            duckdb.load_extension("httpfs")
-        except Exception as e:
-            logger.warning(f"Failed to load httpfs extension: {e}")
-            logger.info("Attempting to install httpfs extension...")
-            try:
-                duckdb.install_extension("httpfs")
-                duckdb.load_extension("httpfs")
-            except Exception as install_error:
-                logger.error(f"Failed to install httpfs extension: {install_error}")
-                raise
-
-        # Create DuckDB connection
-        self._con = duckdb.connect()
-
-        # Configure S3 secret
-        self._con.execute(
-            f"""
-            CREATE SECRET IF NOT EXISTS secret (
-                TYPE S3,
-                KEY_ID '{access_key}',
-                SECRET '{secret_key}',
-                REGION '{region}',
-                URL_STYLE 'path'
-            );
-            """
+        self._con = create_duckdb_connection(
+            bucket=self.bucket,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+            ducklake_extension=ducklake_extension,
+            ducklake_catalog=ducklake_catalog,
+            ducklake_catalog_backend=ducklake_catalog_backend,
+            s3_secret=s3_secret,
+            enable_ducklake=enable_ducklake,
         )
 
     @property
@@ -434,6 +732,11 @@ def duckdb_datacacher(
     secret_key: Optional[str] = None,
     region: Optional[str] = None,
     env_name: Optional[str] = None,
+    ducklake_extension: Optional[DuckLakeConfig] = None,
+    ducklake_catalog: Optional[DuckLakeCatalogConfig] = None,
+    ducklake_catalog_backend: DuckLakeCatalogBackend | None = None,
+    s3_secret: S3SecretConfig | None = None,
+    enable_ducklake: bool = False,
 ) -> DuckDBDataCacher:
     """Factory function to create DuckDBDataCacher instance.
 
@@ -468,5 +771,10 @@ def duckdb_datacacher(
         access_key=access_key,
         secret_key=secret_key,
         region=region,
+        ducklake_extension=ducklake_extension,
+        ducklake_catalog=ducklake_catalog,
+        ducklake_catalog_backend=ducklake_catalog_backend,
+        s3_secret=s3_secret,
+        enable_ducklake=enable_ducklake,
         env_name=env_name,
     )

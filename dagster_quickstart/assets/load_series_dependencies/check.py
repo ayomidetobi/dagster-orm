@@ -138,22 +138,16 @@ def validate_parent_series_count(
         if invalid_count > 0 or duplicate_count > 0:
             issues = []
             if invalid_count > 0:
-                issues.append(
-                    f"{invalid_count} row(s) with incorrect parent series count"
-                )
+                issues.append(f"{invalid_count} row(s) with incorrect parent series count")
             if duplicate_count > 0:
-                issues.append(
-                    f"{duplicate_count} duplicate series_code value(s)"
-                )
+                issues.append(f"{duplicate_count} duplicate series_code value(s)")
 
             description = "Found " + " and ".join(issues) + "."
 
             if invalid_count > 0:
                 error_summary = _build_error_summary(invalid_df, invalid_count)
                 description += f" Parent series count errors: {error_summary}"
-                context.log.error(
-                    f"Validation failed for parent series count: {error_summary}"
-                )
+                context.log.error(f"Validation failed for parent series count: {error_summary}")
                 _log_validation_errors(context, invalid_df)
 
             duplicate_details = None

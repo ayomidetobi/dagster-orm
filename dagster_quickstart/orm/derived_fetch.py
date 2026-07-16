@@ -109,7 +109,9 @@ def get_derived_out_of_cache_values(
         long = derived_series.reset_index()
         long.columns = [ValueColumns.TIMESTAMP, ValueColumns.VALUE]
         long[ValueColumns.SERIES_CODE] = series_code
-        result_frames.append(long[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]])
+        result_frames.append(
+            long[[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]]
+        )
 
     if not result_frames:
         return empty_direct_value_df()

@@ -62,9 +62,7 @@ CALCULATORS_BY_TYPE: Dict[str, PartitionCalculator] = {
 }
 
 if set(CALCULATORS_BY_TYPE) != set(CALCULATION_FORMULA_TYPES):
-    raise RuntimeError(
-        "CALCULATORS_BY_TYPE keys must match CALCULATION_FORMULA_TYPES keys exactly"
-    )
+    raise RuntimeError("CALCULATORS_BY_TYPE keys must match CALCULATION_FORMULA_TYPES keys exactly")
 
 
 def parse_parent_series_codes(parent_series_code_str: str) -> List[str]:

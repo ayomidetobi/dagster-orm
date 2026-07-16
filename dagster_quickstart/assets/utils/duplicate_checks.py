@@ -55,4 +55,3 @@ def log_duplicate_errors(
             f"Duplicate {key_column} {row[key_column]} appears "
             f"{int(row['duplicate_count'])} time(s) in {location_label}"
         )
-

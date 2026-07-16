@@ -46,7 +46,6 @@ def _is_missing_parquet_partition_error(exc: Exception) -> bool:
     )
 
 
-
 class ValueRepository:
     """Repository for loading value data from parquet files.
 
@@ -210,7 +209,9 @@ class ValueRepository:
         series_codes: List[str],
     ) -> pd.DataFrame:
         """Read one monthly wide parquet partition with only the requested series columns."""
-        empty = pd.DataFrame(columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE])
+        empty = pd.DataFrame(
+            columns=[ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
+        )
         if not series_codes:
             return empty
 
@@ -372,9 +373,7 @@ class ValueRepository:
             glob_uri = self._s3_adapter.get_wide_field_glob_uri(vendor_field, tickersource)
             esc = glob_uri.replace("'", "''")
             try:
-                wide_df = self._repository.execute_raw_sql(
-                    f"SELECT * FROM read_parquet('{esc}')"
-                )
+                wide_df = self._repository.execute_raw_sql(f"SELECT * FROM read_parquet('{esc}')")
             except Exception:
                 wide_df = pd.DataFrame()
 

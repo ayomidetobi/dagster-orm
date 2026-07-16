@@ -1,0 +1,26 @@
+docs/
+│
+├── 01_project_overview.md
+│
+├── 02_architecture.md
+│
+├── 03_engineering_standards.md
+│
+├── 04_development_guide.md
+│
+├── 05_database_design.md
+│
+├── 06_api_design.md
+│
+├── 07_testing_strategy.md
+│
+├── 08_logging_observability.md
+│
+├── 09_vendor_integration.md
+│
+├── 10_metadata_management.md
+│
+└── diagrams/
+    ├── architecture.md
+    ├── sequence_diagrams.md
+    └── class_diagrams.md

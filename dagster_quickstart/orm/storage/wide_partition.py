@@ -20,9 +20,10 @@ def sanitize_wide_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     return (
         df.replace({s: np.nan for s in _WIDE_MISSING_SENTINELS})
-          .apply(pd.to_numeric, errors="coerce")
-          .astype("float64")
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
     )
+
 
 def normalize_wide_timestamp_index(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DatetimeIndex UTC, normalized to midnight, sorted."""

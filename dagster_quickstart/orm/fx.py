@@ -76,5 +76,5 @@ class FX(DataAPI):
         """
         filters = dict(filters)
         self._validate_asset_class_override(filters)
-        control_table = filters.pop("control_table", None)
-        return self.get(control_table=control_table).filter_exclude(**filters)
+        filters[MetadataColumns.ASSET_CLASS] = self._ASSET_CLASS
+        return super().get_excluding(**filters)

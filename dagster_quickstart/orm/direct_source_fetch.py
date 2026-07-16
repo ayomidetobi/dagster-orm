@@ -197,82 +197,6 @@ def fetch_direct_bloomberg_tss(
     return pd.concat(frames, axis=1)
 
 
-def fetch_direct_mds_tss(
-    ticker_groups: MdsTickerGroups,
-    start_dt: Optional[datetime],
-    end_dt: Optional[datetime],
-    *,
-    field_name: str = "vol",
-) -> pd.DataFrame:
-    """Fetch raw business-day vol surface data from MDS TSS.
-
-    Args:
-        ticker_groups: ``(strike, maturity) -> {series_code: mds_ticker}`` groups.
-        start_dt: Optional inclusive start.
-        end_dt: Optional inclusive end.
-        field_name: MDS TSS field segment (default ``vol``).
-
-    Returns:
-        Wide DataFrame indexed by UTC timestamp with one column per series_code.
-    """
-    try:
-        from pyeqdr.services import tss  # type: ignore
-    except Exception as exc:
-        raise ValueQueryParameterError(
-            "Direct MDS fetch requires pyeqdr services TSS client"
-        ) from exc
-
-    if not ticker_groups:
-        return empty_direct_source_raw_df()
-
-    symbols = mapping_df["ticker"].tolist()
-
-    strike = []
-    maturity = []
-    parsed = mapping_df["mds_field"].apply(parse_mds_strike_maturity)
-
-    strike = parsed.str[0].tolist()
-    maturity = parsed.str[1].tolist()
-    symbols = mapping_df["ticker"].tolist()
-    for mds_field in mapping_df["mds_field"]:
-        s, m = parse_mds_strike_maturity(mds_field)
-        strike.append(s)
-        maturity.append(m)
-
-    raw_df = tss.get_history(
-        symbols=symbols,
-        flds=[f"mds/ts/{field_name}"],
-        strike=strike,
-        maturity=maturity,
-        add_live=False,
-        frequency="B",
-        fromDate=start_dt,
-        toDate=end_dt,
-)
-        if raw_df is None or raw_df.empty:
-            continue
-
-        try:
-            field_df = _normalize_tss_history_wide_df(raw_df)
-        except ValueQueryParameterError:
-            continue
-
-        rename_map = {
-            ticker: series_code
-            for series_code, ticker in tickers.items()
-            if ticker in field_df.columns
-        }
-        if not rename_map:
-            continue
-
-        field_df = field_df.rename(columns=rename_map)
-        frames.append(field_df[list(rename_map.values())])
-
-    if not frames:
-        return empty_direct_source_raw_df()
-    return pd.concat(frames, axis=1)
-
-
 def fetch_direct_hawk(
     tickers: Dict[str, str],
     start_dt: Optional[datetime],
@@ -310,9 +234,7 @@ def fetch_direct_hawk(
         return empty_direct_source_raw_df()
 
     rename_map = {
-        ticker: series_code
-        for series_code, ticker in tickers.items()
-        if ticker in raw_df.columns
+        ticker: series_code for series_code, ticker in tickers.items() if ticker in raw_df.columns
     }
     if not rename_map:
         return empty_direct_source_raw_df()
@@ -366,9 +288,7 @@ def fetch_direct_onetick(
 
     raw_df.index.names = [ValueColumns.TIMESTAMP]
     rename_map = {
-        ticker: series_code
-        for series_code, ticker in tickers.items()
-        if ticker in raw_df.columns
+        ticker: series_code for series_code, ticker in tickers.items() if ticker in raw_df.columns
     }
     if not rename_map:
         return empty_direct_source_raw_df()

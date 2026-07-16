@@ -81,7 +81,7 @@ class QuerySet:
         self._series_codes: Optional[List[str]] = series_codes
         self._control_table = control_table or TableNames.METADATA_WILDCARD
         normalized_filters = (
-            self._normalize_filters(metadata_filters) if metadata_filters is not None else {}
+            self._normalize_filter_input(metadata_filters) if metadata_filters is not None else {}
         )
         self._include_filters = {} if exclude else normalized_filters
         self._exclude_filters = normalized_filters if exclude else {}
@@ -141,10 +141,6 @@ class QuerySet:
                 normalized_filters[filter_field] = [str(filter_values)]
 
         return normalized_filters
-
-    def _normalize_filters(self, filters: Dict[str, List[str]]) -> Dict[str, List[str]]:
-        """Backwards-compatible wrapper for normalized metadata filters."""
-        return self._normalize_filter_input(filters)
 
     def _merge_filters(
         self,
@@ -235,11 +231,7 @@ class QuerySet:
         if metadata_df.empty or field not in metadata_df.columns:
             return {}
 
-        return dict(
-            metadata_df[
-                [MetadataColumns.SERIES_CODE, field]
-            ].dropna().values
-        )
+        return dict(metadata_df[[MetadataColumns.SERIES_CODE, field]].dropna().values)
 
     def _apply_column_groups(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply column groups to a DataFrame.
@@ -481,9 +473,7 @@ class QuerySet:
     ) -> TickerSource:
         if tickersource is not None:
             return tickersource
-        metadata_df = self._load_primary_metadata_rows(
-            {MetadataColumns.SERIES_CODE: series_codes}
-        )
+        metadata_df = self._load_primary_metadata_rows({MetadataColumns.SERIES_CODE: series_codes})
         if MetadataColumns.DEFAULT_SOURCE not in metadata_df.columns:
             return TickerSource.BLOOMBERG
         sources = (
@@ -509,9 +499,7 @@ class QuerySet:
         params: Optional[ValueQueryParams] = None,
     ) -> pd.DataFrame:
         """Load values bypassing parquet cache; compute derived series from parent fetches."""
-        derived_codes, primary_codes = self._split_derived_and_primary_codes(
-            resolved_series_codes
-        )
+        derived_codes, primary_codes = self._split_derived_and_primary_codes(resolved_series_codes)
 
         result_frames: List[pd.DataFrame] = []
 
@@ -533,9 +521,7 @@ class QuerySet:
                 parent_str = row.get(MetadataColumns.PARENT_SERIES_CODE, "")
                 if parent_str and not pd.isna(parent_str):
                     parent_codes.extend(
-                        code.strip()
-                        for code in str(parent_str).split("|")
-                        if code.strip()
+                        code.strip() for code in str(parent_str).split("|") if code.strip()
                     )
             parent_codes = list(dict.fromkeys(parent_codes))
             source = self._resolve_out_of_cache_tickersource(
@@ -940,20 +926,19 @@ class QuerySet:
                 group_values = (group_values,)
 
             series_codes = (
-                group_df[MetadataColumns.SERIES_CODE]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                group_df[MetadataColumns.SERIES_CODE].dropna().astype(str).unique().tolist()
             )
 
-            yield group_values, QuerySet(
-                metadata_repository=self._metadata_repository,
-                value_repository=self._value_repository,
-                metadata_filters=None,
-                validation_repository=self._validation_repository,
-                exclude=False,
-                series_codes=series_codes,
-                out_of_cache=self._out_of_cache,
-                control_table=self._control_table,
+            yield (
+                group_values,
+                QuerySet(
+                    metadata_repository=self._metadata_repository,
+                    value_repository=self._value_repository,
+                    metadata_filters=None,
+                    validation_repository=self._validation_repository,
+                    exclude=False,
+                    series_codes=series_codes,
+                    out_of_cache=self._out_of_cache,
+                    control_table=self._control_table,
+                ),
             )

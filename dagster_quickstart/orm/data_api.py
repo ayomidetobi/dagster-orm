@@ -44,6 +44,7 @@ from dagster_quickstart.utils.datetime_utils import (
     normalize_pandas_timestamp_to_utc,
 )
 
+
 def _metadata_vendor_field_column(ticker_source: TickerSource) -> str:
     """Metadata Parquet column for vendor field code (e.g. PX_LAST, YIELD)."""
     return get_vendor_field_column(ticker_source)
@@ -151,22 +152,7 @@ class DataAPI:
         Raises:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
-        filters = dict(filters)
-        control_table = filters.pop("control_table", None)
-        effective_control = control_table or TableNames.METADATA_WILDCARD
-        if effective_control in (TableNames.METADATA_WILDCARD, TableNames.METADATA_DERIVED):
-            if "field_type" in filters and MetadataColumns.CALC_TYPE not in filters:
-                filters[MetadataColumns.CALC_TYPE] = filters.pop("field_type")
-
-        normalized_filters: Dict[str, List[str]] = {}
-
-        for filter_field, filter_value in filters.items():
-            if isinstance(filter_value, str):
-                normalized_filters[filter_field] = [filter_value]
-            elif isinstance(filter_value, list):
-                normalized_filters[filter_field] = filter_value
-            else:
-                normalized_filters[filter_field] = [str(filter_value)]
+        control_table, normalized_filters = self._normalize_query_filters(filters)
 
         return QuerySet(
             metadata_repository=self._metadata_repository,
@@ -177,6 +163,28 @@ class DataAPI:
             out_of_cache=self._out_of_cache,
             control_table=control_table,
         )
+
+    def _normalize_query_filters(
+        self, filters: Dict[str, Any]
+    ) -> Tuple[Optional[str], Dict[str, List[str]]]:
+        """Normalize filter input for QuerySet construction."""
+        filters = dict(filters)
+        control_table = filters.pop("control_table", None)
+        effective_control = control_table or TableNames.METADATA_WILDCARD
+        if effective_control in (TableNames.METADATA_WILDCARD, TableNames.METADATA_DERIVED):
+            if "field_type" in filters and MetadataColumns.CALC_TYPE not in filters:
+                filters[MetadataColumns.CALC_TYPE] = filters.pop("field_type")
+
+        normalized_filters: Dict[str, List[str]] = {}
+        for filter_field, filter_value in filters.items():
+            if isinstance(filter_value, str):
+                normalized_filters[filter_field] = [filter_value]
+            elif isinstance(filter_value, list):
+                normalized_filters[filter_field] = filter_value
+            else:
+                normalized_filters[filter_field] = [str(filter_value)]
+
+        return control_table, normalized_filters
 
     def load_metadata_from_s3(self) -> pd.DataFrame:
         """Load metadata table from S3 Parquet file.
@@ -225,15 +233,6 @@ class DataAPI:
         """
         lookup_df = self.load_lookup_table_from_s3()
         return dataframe_filter_options(lookup_df, fields=fields, as_dataframe=as_dataframe)
-
-    def query_options(
-        self,
-        for_: Optional[Union[str, List[str]]] = None,
-        **kwargs: Any,
-    ) -> Union[List[str], Dict[str, List[str]], pd.DataFrame]:
-        """Backward-compatible alias for :meth:`filter_options`."""
-        fields = kwargs.pop("fields", for_)
-        return self.filter_options(fields=fields, **kwargs)
 
     def load_value_data_from_s3(
         self,
@@ -456,22 +455,7 @@ class DataAPI:
         Raises:
             InvalidFilterFieldError: If any filter field is not a valid metadata column
         """
-        filters = dict(filters)
-        control_table = filters.pop("control_table", None)
-        effective_control = control_table or TableNames.METADATA_WILDCARD
-        if effective_control in (TableNames.METADATA_WILDCARD, TableNames.METADATA_DERIVED):
-            if "field_type" in filters and MetadataColumns.CALC_TYPE not in filters:
-                filters[MetadataColumns.CALC_TYPE] = filters.pop("field_type")
-
-        normalized_filters: Dict[str, List[str]] = {}
-
-        for filter_field, filter_value in filters.items():
-            if isinstance(filter_value, str):
-                normalized_filters[filter_field] = [filter_value]
-            elif isinstance(filter_value, list):
-                normalized_filters[filter_field] = filter_value
-            else:
-                normalized_filters[filter_field] = [str(filter_value)]
+        control_table, normalized_filters = self._normalize_query_filters(filters)
 
         return QuerySet(
             metadata_repository=self._metadata_repository,
@@ -504,9 +488,7 @@ class DataAPI:
         if not ticker_source_uses_wide_storage(ticker_source):
             return {sc: False for sc in series_codes}
 
-        field_map = self._value_repository._resolve_vendor_field_map(
-            series_codes, ticker_source
-        )
+        field_map = self._value_repository._resolve_vendor_field_map(series_codes, ticker_source)
         by_field: Dict[str, List[str]] = defaultdict(list)
         for sc in series_codes:
             vf = field_map.get(sc)
@@ -535,9 +517,7 @@ class DataAPI:
         ticker_source: TickerSource = TickerSource.BLOOMBERG,
     ) -> pd.DataFrame:
         """Load a monthly wide Parquet partition as a DataFrame (timestamp index, series columns)."""
-        relative_path = build_s3_wide_value_partition_path(
-            field_type, year, month, ticker_source
-        )
+        relative_path = build_s3_wide_value_partition_path(field_type, year, month, ticker_source)
         uri = self._metadata_repository._s3_adapter.get_relative_path_uri(relative_path)
         esc = uri.replace("'", "''")
         sql = f"SELECT * FROM read_parquet('{esc}')"
@@ -560,9 +540,7 @@ class DataAPI:
         parquet_compression: str = "zstd",
     ) -> str:
         """Write one wide monthly partition (overwrites object). Returns relative S3 path."""
-        relative_path = build_s3_wide_value_partition_path(
-            field_type, year, month, ticker_source
-        )
+        relative_path = build_s3_wide_value_partition_path(field_type, year, month, ticker_source)
         if wide_df.empty:
             return relative_path
 
@@ -685,4 +663,6 @@ class DataAPI:
             "written_relative_paths": written_paths,
             "partition_errors": partition_errors,
         }
+
+
 from dagster_quickstart.orm.fx import FX

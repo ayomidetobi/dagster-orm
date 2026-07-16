@@ -112,9 +112,7 @@ def materialize_bloomberg_wide_partition(
     end_date = config.get_end_date()
 
     metadata_series_count = len(metadata_df)
-    series_codes = (
-        metadata_df[MetadataColumns.SERIES_CODE].dropna().astype(str).unique().tolist()
-    )
+    series_codes = metadata_df[MetadataColumns.SERIES_CODE].dropna().astype(str).unique().tolist()
 
     series_code_to_ticker = build_series_to_ticker_map(metadata_df, ticker_source)
 

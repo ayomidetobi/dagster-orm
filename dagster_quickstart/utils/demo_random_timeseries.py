@@ -33,7 +33,5 @@ def demo_random_wide_frame(
         return pd.DataFrame(index=idx)
 
     rng = random.Random(seed) if seed is not None else random.Random()
-    data = {
-        key: [round(rng.uniform(low, high), decimals) for _ in dates] for key in column_keys
-    }
+    data = {key: [round(rng.uniform(low, high), decimals) for _ in dates] for key in column_keys}
     return pd.DataFrame(data, index=idx)
