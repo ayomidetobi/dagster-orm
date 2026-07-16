@@ -15,6 +15,7 @@ import duckdb
 import pandas as pd
 import structlog
 
+from rewrite.data_api.errors import DuckLakeConfigError
 from rewrite.data_api.models.config import (
     DuckLakeCatalogConfig,
     DuckLakeConfig,
@@ -226,7 +227,7 @@ class PostgresDuckLakeCatalogBackend:
     def attach(self, con: duckdb.DuckDBPyConnection) -> None:
         catalog = self.config
         if catalog.postgres is None:
-            raise ValueError("DuckLake catalog configuration requires PostgreSQL settings")
+            raise DuckLakeConfigError("DuckLake catalog configuration requires PostgreSQL settings")
 
         pg = catalog.postgres
         target = (

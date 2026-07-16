@@ -17,7 +17,6 @@ def create_data_api(
     duckdb_data_cacher: object | None = None,
     metadata_derived_repository: object | None = None,
     vendor_clients: Mapping[str, VendorClient] | None = None,
-    ducklake_config: dict | None = None,
 ) -> DataAPI:
     """Create a DataAPI using dependency injection."""
     container = build_rewrite_container(
@@ -27,7 +26,6 @@ def create_data_api(
         duckdb_data_cacher=duckdb_data_cacher,
         metadata_derived_repository=metadata_derived_repository,
         vendor_clients=vendor_clients,
-        ducklake_config=ducklake_config,
     )
     return container.data_api()
 
@@ -40,7 +38,6 @@ def create_container(
     duckdb_data_cacher: object | None = None,
     metadata_derived_repository: object | None = None,
     vendor_clients: Mapping[str, VendorClient] | None = None,
-    ducklake_config: dict | None = None,
 ) -> RewriteContainer:
     """Create a fully configured rewrite DI container."""
     return build_rewrite_container(
@@ -50,5 +47,4 @@ def create_container(
         duckdb_data_cacher=duckdb_data_cacher,
         metadata_derived_repository=metadata_derived_repository,
         vendor_clients=vendor_clients,
-        ducklake_config=ducklake_config,
     )
