@@ -109,7 +109,14 @@ class DuckLakeMetadataStorageRepository(
         return [value for value in df["value"].astype(str).str.strip() if value]
 
     def save_metadata(self, frame: pd.DataFrame) -> None:
-        """Persist normalized metadata rows."""
+        """Persist normalized metadata rows.
+
+        Metadata columns vary per asset class, so a save whose columns
+        don't exactly match the table's existing columns is reconciled
+        rather than left to break: columns the table already has that
+        this frame lacks are NULL-filled, and columns this frame has that
+        the table lacks are added to the table first.
+        """
 
         if frame.empty:
             return
@@ -119,7 +126,21 @@ class DuckLakeMetadataStorageRepository(
         with self.transaction():
             with self.register_dataframe(frame) as relation:
                 self.execute_no_result(self._builder.build_ensure_table(relation))
-                self.execute_no_result(self._builder.build_save_metadata(relation))
+
+                table_columns = self.get_columns()
+                frame_columns = list(frame.columns)
+                new_columns = [column for column in frame_columns if column not in table_columns]
+                for column in new_columns:
+                    self.execute_no_result(self._builder.build_add_column(column))
+                table_columns = table_columns + new_columns
+
+                self.execute_no_result(
+                    self._builder.build_save_metadata(
+                        relation,
+                        table_columns=table_columns,
+                        frame_columns=frame_columns,
+                    )
+                )
 
     def refresh_metadata(self) -> None:
         """

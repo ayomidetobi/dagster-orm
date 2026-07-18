@@ -12,6 +12,7 @@ from rewrite.data_api.columns import MetadataColumns, TickerSource, ValueColumns
 from rewrite.data_api.errors import InvalidOrderByError, MissingMetadataColumnError
 from rewrite.data_api.services.metadata_service import MetadataService
 from rewrite.data_api.services.vendor_service import VendorService
+from rewrite.data_api.shaping import melt_values
 from rewrite.data_api.vendors.derived_calc import compute_derived_series, parse_parent_series_codes
 from rewrite.data_api.vendors.ticker_columns import (
     build_series_to_ticker_map,
@@ -25,34 +26,6 @@ VALUE_COLUMNS = [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.
 
 def _empty_value_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=VALUE_COLUMNS)
-
-
-def reshape_wide_to_long(df: pd.DataFrame) -> pd.DataFrame:
-    """Melt a wide (DatetimeIndex x series_code) vendor frame into long form.
-
-    Vendor data is daily, so the timestamp column is normalized to a plain
-    date (yyyy-mm-dd, no time-of-day/timezone) rather than a full datetime.
-    """
-
-    if df.empty or not isinstance(df.index, pd.DatetimeIndex):
-        return _empty_value_frame()
-
-    normalized = df.copy()
-    normalized.index.names = [ValueColumns.TIMESTAMP]
-    out = (
-        normalized.reset_index()
-        .melt(
-            id_vars=[ValueColumns.TIMESTAMP],
-            var_name=ValueColumns.SERIES_CODE,
-            value_name=ValueColumns.VALUE,
-        )
-        .dropna(subset=[ValueColumns.VALUE])
-    )
-    timestamps = pd.to_datetime(out[ValueColumns.TIMESTAMP])
-    if timestamps.dt.tz is not None:
-        timestamps = timestamps.dt.tz_convert(None)
-    out[ValueColumns.TIMESTAMP] = timestamps.dt.normalize()
-    return out[VALUE_COLUMNS]
 
 
 def sort_and_limit(
@@ -140,7 +113,7 @@ def get_direct_values(
             )
 
     long_frames = [
-        reshape_wide_to_long(raw) for raw in raw_frames if raw is not None and not raw.empty
+        melt_values(raw) for raw in raw_frames if raw is not None and not raw.empty
     ]
     if not long_frames:
         logger.info(

@@ -180,11 +180,25 @@ class DuckLakeValueQueryBuilder:
         Build an append-only INSERT statement.
 
         DuckLake snapshots every write, so history is preserved without a
-        manual upsert/merge strategy.
+        manual upsert/merge strategy. Inserts by column name rather than
+        `SELECT *` -- a positional insert would silently misalign columns
+        (or hard-fail on a count mismatch) whenever the source relation's
+        columns aren't in exactly the table's physical order. The caller
+        (DuckLakeValueStorageRepository.save_values()) guarantees the
+        relation has every one of these columns first.
         """
 
+        columns = ", ".join(
+            (
+                ValueColumns.SERIES_CODE,
+                ValueColumns.TIMESTAMP,
+                ValueColumns.VALUE,
+                ValueColumns.TICKER_SOURCE,
+            )
+        )
+
         return SQL(
-            "INSERT INTO $table SELECT * FROM $relation",
+            f"INSERT INTO $table ({columns}) SELECT {columns} FROM $relation",
             table=SQL.identifier(self._table),
             relation=SQL.identifier(relation),
         )

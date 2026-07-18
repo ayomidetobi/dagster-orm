@@ -83,3 +83,13 @@ class InvalidFilterValueError(RewriteError):
     In non-strict mode, the same mismatch is logged as a warning and the
     invalid value is dropped rather than raised.
     """
+
+
+class InvalidImportSourceError(RewriteError):
+    """Raised when import_metadata() is given neither or both of frame/path."""
+
+
+class IngestionUnavailableError(RewriteError):
+    """Raised when import_metadata(path=...) is called on a DataAPI built
+    without file-ingestion support (no cacher/FileIngestionService configured).
+    """

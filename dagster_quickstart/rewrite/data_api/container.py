@@ -29,6 +29,21 @@ def _build_metadata_derived_service(repository: object | None) -> MetadataServic
     )
 
 
+def _build_file_ingestion_service(
+    metadata_service: MetadataService,
+    value_service: ValueService,
+    cacher: object | None,
+) -> FileIngestionService | None:
+    """File ingestion is opt-in: only build the service if a cacher was given."""
+    if cacher is None:
+        return None
+    return FileIngestionService(
+        metadata_service=metadata_service,
+        value_service=value_service,
+        cacher=cacher,
+    )
+
+
 class RewriteContainer(containers.DeclarativeContainer):
     """Container wiring the rewrite package."""
 
@@ -45,7 +60,7 @@ class RewriteContainer(containers.DeclarativeContainer):
     duckdb_connection = providers.Dependency()
     metadata_repository = providers.Dependency()
     value_repository = providers.Dependency()
-    duckdb_data_cacher = providers.Dependency()
+    duckdb_data_cacher = providers.Object(None)
     metadata_derived_repository = providers.Object(None)
     vendor_clients = providers.Object({})
 
@@ -86,11 +101,19 @@ class RewriteContainer(containers.DeclarativeContainer):
         derived_metadata_service=metadata_derived_service,
     )
 
+    file_ingestion_service = providers.Factory(
+        _build_file_ingestion_service,
+        metadata_service=metadata_service,
+        value_service=value_service,
+        cacher=duckdb_data_cacher,
+    )
+
     services = providers.Factory(
         RewriteServices,
         metadata=metadata_service,
         values=value_service,
         direct_fetch=direct_fetch_service,
+        ingestion=file_ingestion_service,
     )
 
     data_api = providers.Factory(
@@ -107,13 +130,6 @@ class RewriteContainer(containers.DeclarativeContainer):
         IngestionService,
         vendor_service=vendor_service,
         writer=ingestion_writer,
-    )
-
-    file_ingestion_service = providers.Factory(
-        FileIngestionService,
-        metadata_service=metadata_service,
-        value_service=value_service,
-        cacher=duckdb_data_cacher,
     )
 
 

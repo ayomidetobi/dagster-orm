@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import structlog
@@ -12,8 +13,10 @@ import structlog
 from rewrite.data_api.api.metadata_result import MetadataResult
 from rewrite.data_api.api.queryset import QueryState, QuerySet
 from rewrite.data_api.api.requests import validate_value_query
-from rewrite.data_api.api.shaping import pivot_values
 from rewrite.data_api.columns import ValueColumns, normalize_ticker_source
+from rewrite.data_api.shaping import melt_values, pivot_values
+from rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
+from rewrite.data_api.ingestion.file_loader import FileIngestionService
 from rewrite.data_api.services.direct_fetch_service import DirectFetchService
 from rewrite.data_api.services.metadata_service import MetadataService
 from rewrite.data_api.services.value_service import ValueService
@@ -29,6 +32,7 @@ class RewriteServices:
     metadata: MetadataService
     values: ValueService
     direct_fetch: DirectFetchService
+    ingestion: FileIngestionService | None = None
 
 
 class DataAPI:
@@ -113,6 +117,33 @@ class DataAPI:
             fetch_last_values=self.get_last_values,
         )
 
+    def get_metadata_exclude(
+        self,
+        filters: Mapping[str, Sequence[str]] | None = None,
+        *,
+        version: int | None = None,
+        as_of: datetime | None = None,
+        strict: bool = False,
+        **field_filters: Sequence[str] | str,
+    ) -> MetadataResult:
+        """Return metadata rows that do NOT match the requested filters.
+
+        Same filter syntax as get_metadata() -- dict, kwargs, or both:
+
+            data_api.get_metadata_exclude(asset_class=["Equity"])
+
+        returns every series whose asset_class isn't Equity. Equivalent to
+        get_metadata(..., exclude=True); see get_metadata() for `strict`.
+        """
+        return self.get_metadata(
+            filters,
+            exclude=True,
+            version=version,
+            as_of=as_of,
+            strict=strict,
+            **field_filters,
+        )
+
     @staticmethod
     def _merge_filters(
         filters: Mapping[str, Sequence[str]] | None,
@@ -158,9 +189,41 @@ class DataAPI:
             as_dataframe=as_dataframe,
         )
 
-    def import_metadata(self, frame: pd.DataFrame) -> None:
-        """Persist a normalized metadata frame."""
-        self._services.metadata.import_metadata(frame)
+    def import_metadata(
+        self,
+        frame: pd.DataFrame | None = None,
+        *,
+        path: str | Path | None = None,
+        sheet: str | int | None = None,
+    ) -> pd.DataFrame:
+        """Persist metadata -- either an in-memory frame, or a CSV/Excel file.
+
+            data_api.import_metadata(path="meta_series.csv")
+            data_api.import_metadata(path="meta_series.xlsx", sheet="abc")
+            data_api.import_metadata(frame=df)
+
+        Exactly one of `frame`/`path` must be given. `sheet` selects a sheet
+        by name or index for Excel files; ignored for CSV. File imports also
+        archive a raw, pre-validation Parquet copy to S3 for lineage before
+        writing the validated rows into the DuckLake metadata table -- both
+        forms return the validated rows, so the result can be queried right
+        back with get_metadata().
+        """
+        if (frame is None) == (path is None):
+            raise InvalidImportSourceError(
+                "import_metadata() requires exactly one of `frame` or `path`."
+            )
+
+        if path is not None:
+            if self._services.ingestion is None:
+                raise IngestionUnavailableError(
+                    "import_metadata(path=...) requires a DataAPI built with "
+                    "file-ingestion support (e.g. DataAPI(live=True) or "
+                    "DataAPI()) -- this instance has none configured."
+                )
+            return self._services.ingestion.ingest_metadata_file(path, sheet=sheet)
+
+        return self._services.metadata.import_metadata(frame)
 
     def refresh_metadata(self) -> None:
         """Refresh repository-backed metadata state."""
@@ -250,7 +313,26 @@ class DataAPI:
         return pivot_values(frame)
 
     def write_values(self, frame: pd.DataFrame) -> None:
-        """Persist a normalized value frame."""
+        """Persist a value frame -- long form or wide form, detected automatically.
+
+        Long form (series_code, timestamp, value columns) is written as-is.
+        Wide form (a timestamp DatetimeIndex, one column per series_code --
+        exactly what get_values()/get_last_values() return) is melted back
+        to long form first, so a round trip like
+
+            values = data_api.get_values(series_codes)
+            data_api.write_values(values)
+
+        works with no manual reshaping. Detected by the presence of a
+        series_code column: long-form frames always have one, wide-form
+        frames never do. A frame with neither a series_code column nor a
+        DatetimeIndex is passed through unchanged and left to fail
+        validation with a clear error naming what's missing.
+        """
+        if ValueColumns.SERIES_CODE not in frame.columns and isinstance(
+            frame.index, pd.DatetimeIndex
+        ):
+            frame = melt_values(frame)
         self._services.values.write_values(frame)
 
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:

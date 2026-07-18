@@ -32,7 +32,7 @@ DERIVED_METADATA_FRAME_SCHEMA = pa.DataFrameSchema(
 
 VALUE_FRAME_SCHEMA = pa.DataFrameSchema(
     {
-        ValueColumns.TICKER_SOURCE: pa.Column(pa.String, nullable=False, required=False),
+        ValueColumns.TICKER_SOURCE: pa.Column(pa.String, nullable=True, required=False),
         ValueColumns.SERIES_CODE: pa.Column(pa.String, nullable=False, required=True),
         ValueColumns.TIMESTAMP: pa.Column(pa.DateTime, nullable=False, required=True),
         ValueColumns.VALUE: pa.Column(pa.Object, nullable=True, required=False),

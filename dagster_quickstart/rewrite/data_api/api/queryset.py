@@ -9,7 +9,7 @@ from datetime import datetime
 import structlog
 
 from rewrite.data_api.api.requests import validate_value_query
-from rewrite.data_api.api.shaping import pivot_values
+from rewrite.data_api.shaping import pivot_values
 from rewrite.data_api.columns import MetadataColumns, normalize_ticker_source
 from rewrite.data_api.errors import DirectFetchUnavailableError, InvalidFilterFieldError
 from rewrite.data_api.services.direct_fetch_service import DirectFetchService
