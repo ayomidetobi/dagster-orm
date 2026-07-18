@@ -41,8 +41,7 @@ def dataframe_filter_options(
     invalid_fields = [field for field in requested_fields if field not in available_fields]
     if invalid_fields:
         raise InvalidFilterFieldError(
-            f"Invalid field(s): {invalid_fields}. "
-            f"Available fields: {sorted(available_fields)}"
+            f"Invalid field(s): {invalid_fields}. " f"Available fields: {sorted(available_fields)}"
         )
 
     options_by_field: Dict[str, List[str]] = {}

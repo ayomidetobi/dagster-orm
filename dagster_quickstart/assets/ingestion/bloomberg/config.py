@@ -7,7 +7,12 @@ from typing import List, Optional
 
 from dagster import Config
 
-from dagster_quickstart.utils.datetime_utils import parse_datetime_string, utc_now
+from dagster_quickstart.utils.datetime_utils import (
+    parse_datetime_string,
+    utc_now,
+    utc_today_midnight,
+    utc_yesterday_midnight,
+)
 
 
 class IngestionMode(str, Enum):
@@ -33,11 +38,13 @@ class BloombergIngestionConfig(Config):
             return parse_datetime_string(self.start_date).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
-        return utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        if self.mode == IngestionMode.DAILY:
+            return utc_yesterday_midnight()
+        return utc_today_midnight()
 
     def get_end_date(self) -> datetime:
         if self.end_date:
             return parse_datetime_string(self.end_date).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
-        return utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        return utc_today_midnight()

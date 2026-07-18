@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from dagster import ConfigurableResource, InitResourceContext, ResourceDependency, get_dagster_logger
+from dagster import (
+    ConfigurableResource,
+    InitResourceContext,
+    ResourceDependency,
+    get_dagster_logger,
+)
 
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource

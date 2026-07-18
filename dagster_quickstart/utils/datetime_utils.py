@@ -214,6 +214,16 @@ def utc_midnight(dt: datetime) -> datetime:
     return ensure_utc(dt).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+def utc_today_midnight() -> datetime:
+    """UTC midnight for the current calendar day."""
+    return utc_midnight(utc_now())
+
+
+def utc_yesterday_midnight() -> datetime:
+    """UTC midnight for the previous calendar day."""
+    return utc_today_midnight() - timedelta(days=1)
+
+
 def utc_calendar_days_inclusive(start_date: datetime, end_date: datetime) -> List[datetime]:
     """UTC midnight for each calendar day from start through end (inclusive)."""
     start = utc_midnight(start_date)

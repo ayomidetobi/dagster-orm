@@ -17,6 +17,8 @@ from dagster_quickstart.orm.ticker_mapping import build_series_to_ticker_map
 from dagster_quickstart.utils.datetime_utils import parse_timestamp
 
 LoadMetadataRowsFn = Callable[[Dict[str, List[str]]], pd.DataFrame]
+MdsStrikeMaturityKey = Tuple[str, str]
+MdsTickerGroups = Dict[MdsStrikeMaturityKey, Dict[str, str]]
 
 
 def empty_direct_value_df() -> pd.DataFrame:
@@ -79,6 +81,46 @@ def resolve_series_ticker_field_rows(
     return metadata_df[required_cols].dropna(subset=[ticker_col, field_col]).copy()
 
 
+def parse_mds_strike_maturity(mds_field: str) -> Tuple[str, str]:
+    """Parse MDS ``mds_field`` value ``strike|maturity`` (e.g. ``100%|1m``)."""
+    parts = [part.strip() for part in str(mds_field).split("|") if part.strip()]
+    if len(parts) != 2:
+        raise ValueQueryParameterError(
+            f"MDS field must be 'strike|maturity' (e.g. '100%|1m'), got {mds_field!r}"
+        )
+    return parts[0], parts[1]
+
+
+def build_mds_strike_maturity_ticker_groups(
+    mapping_df: pd.DataFrame,
+    ticker_source: TickerSource = TickerSource.MDS,
+) -> MdsTickerGroups:
+    """Group ``series_code -> mds_ticker`` by parsed ``(strike, maturity)`` from ``mds_field``."""
+    ticker_col, field_col = ticker_and_field_columns(ticker_source)
+    groups: MdsTickerGroups = {}
+    for _, row in mapping_df.iterrows():
+        strike, maturity = parse_mds_strike_maturity(row[field_col])
+        key = (strike, maturity)
+        groups.setdefault(key, {})
+        groups[key][str(row[MetadataColumns.SERIES_CODE])] = str(row[ticker_col])
+    return groups
+
+
+def _normalize_tss_history_wide_df(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a TSS history frame to UTC ``DatetimeIndex``."""
+    field_df = raw_df.copy()
+    if ValueColumns.TIMESTAMP in field_df.columns:
+        field_df[ValueColumns.TIMESTAMP] = pd.to_datetime(
+            field_df[ValueColumns.TIMESTAMP],
+            utc=True,
+        )
+        return field_df.set_index(ValueColumns.TIMESTAMP)
+    if isinstance(field_df.index, pd.DatetimeIndex):
+        field_df.index = pd.to_datetime(field_df.index, utc=True)
+        return field_df
+    raise ValueQueryParameterError("TSS history response has no timestamp index or column")
+
+
 def reshape_direct_source_df(raw_df: pd.DataFrame) -> pd.DataFrame:
     if raw_df.empty or not isinstance(raw_df.index, pd.DatetimeIndex):
         return empty_direct_value_df()
@@ -134,16 +176,9 @@ def fetch_direct_bloomberg_tss(
         if raw_df is None or raw_df.empty:
             continue
 
-        field_df = raw_df.copy()
-        if ValueColumns.TIMESTAMP in field_df.columns:
-            field_df[ValueColumns.TIMESTAMP] = pd.to_datetime(
-                field_df[ValueColumns.TIMESTAMP],
-                utc=True,
-            )
-            field_df = field_df.set_index(ValueColumns.TIMESTAMP)
-        elif isinstance(field_df.index, pd.DatetimeIndex):
-            field_df.index = pd.to_datetime(field_df.index, utc=True)
-        else:
+        try:
+            field_df = _normalize_tss_history_wide_df(raw_df)
+        except ValueQueryParameterError:
             continue
 
         rename_map = {
@@ -199,9 +234,7 @@ def fetch_direct_hawk(
         return empty_direct_source_raw_df()
 
     rename_map = {
-        ticker: series_code
-        for series_code, ticker in tickers.items()
-        if ticker in raw_df.columns
+        ticker: series_code for series_code, ticker in tickers.items() if ticker in raw_df.columns
     }
     if not rename_map:
         return empty_direct_source_raw_df()
@@ -255,9 +288,7 @@ def fetch_direct_onetick(
 
     raw_df.index.names = [ValueColumns.TIMESTAMP]
     rename_map = {
-        ticker: series_code
-        for series_code, ticker in tickers.items()
-        if ticker in raw_df.columns
+        ticker: series_code for series_code, ticker in tickers.items() if ticker in raw_df.columns
     }
     if not rename_map:
         return empty_direct_source_raw_df()

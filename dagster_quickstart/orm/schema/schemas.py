@@ -59,8 +59,8 @@ class MetadataColumns:
     PARENT_SERIES_CODE = "parent_series_code"
     DESCRIPTION = "description"
 
-FilterValue = Union[str, List[str]]
 
+FilterValue = Union[str, List[str]]
 
 
 class FilterParams(TypedDict, total=False):
@@ -170,8 +170,7 @@ VENDOR_TICKER_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
 VENDOR_FIELD_COLUMN_BY_SOURCE: Dict[TickerSource, str] = {
     source: config.field_column
     for source, config in TICKER_SOURCE_REGISTRY.items()
-    if config.field_column is not None
-    and source != TickerSource.INTERNAL
+    if config.field_column is not None and source != TickerSource.INTERNAL
 }
 
 

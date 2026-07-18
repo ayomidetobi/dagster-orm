@@ -5,7 +5,9 @@ from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, ass
 from dagster_quickstart.assets.ingestion import HAWK_FIELD_TYPE_PARTITIONS
 from dagster_quickstart.assets.ingestion.bloomberg.config import IngestionMode
 from dagster_quickstart.assets.ingestion.hawk.config import HawkIngestionConfig
-from dagster_quickstart.assets.ingestion.hawk.wide_materialize import materialize_hawk_wide_partition
+from dagster_quickstart.assets.ingestion.hawk.wide_materialize import (
+    materialize_hawk_wide_partition,
+)
 from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.orm.schema import TickerSource
 
@@ -79,7 +81,6 @@ def ingest_hawk_data_daily(
     partitions_def=HAWK_FIELD_TYPE_PARTITIONS,
     required_resource_keys={"duckdb", "hawk"},
     name="ingest_hawk_data_backfill",
-
 )
 def ingest_hawk_data_backfill(
     context: AssetExecutionContext,

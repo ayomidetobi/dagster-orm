@@ -9,6 +9,21 @@ import pandas as pd
 from dagster_quickstart.orm.schema import ValueColumns
 from dagster_quickstart.utils.datetime_utils import normalize_date_to_utc
 
+_WIDE_MISSING_SENTINELS = frozenset(
+    {"", "NA", "N/A", "NAN", "NULL", "NONE", "NOT FOUND", "#N/A", "#N/A N/A"}
+)
+
+
+def sanitize_wide_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    return (
+        df.replace({s: np.nan for s in _WIDE_MISSING_SENTINELS})
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
+    )
+
 
 def normalize_wide_timestamp_index(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DatetimeIndex UTC, normalized to midnight, sorted."""
@@ -55,8 +70,10 @@ def merge_wide_monthly_partition(
 
     if not ex.empty:
         ex = normalize_wide_timestamp_index(ex)
+        ex = sanitize_wide_numeric_columns(ex)
     if not inc.empty:
         inc = normalize_wide_timestamp_index(inc)
+        inc = sanitize_wide_numeric_columns(inc)
 
     if strip_date_range is not None:
         rs, re = strip_date_range
@@ -77,7 +94,7 @@ def merge_wide_monthly_partition(
         for col in inc.columns:
             if col not in out.columns:
                 out[col] = np.nan
-            out.loc[inc.index, col] = inc[col].values
+            out.loc[inc.index, col] = inc[col].to_numpy(dtype="float64", na_value=np.nan)
         out = out.sort_index()
 
     if out.empty:

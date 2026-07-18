@@ -72,9 +72,7 @@ def validate_metadata_against_lookup(
 
             # Get unique series count from invalid rows (only for invalid values)
             unique_series = (
-                invalid_df[MetadataColumns.SERIES_CODE].nunique()
-                if invalid_count > 0
-                else 0
+                invalid_df[MetadataColumns.SERIES_CODE].nunique() if invalid_count > 0 else 0
             )
 
             # Build detailed error messages for invalid values
@@ -92,8 +90,7 @@ def validate_metadata_against_lookup(
             description = "Found " + " and ".join(parts) + "."
             if invalid_count > 0:
                 description += (
-                    f" Invalid lookup values across {unique_series} series: "
-                    f"{error_summary}"
+                    f" Invalid lookup values across {unique_series} series: " f"{error_summary}"
                 )
 
             # Build duplicate summary
@@ -105,13 +102,11 @@ def validate_metadata_against_lookup(
                         f"{row['series_code']} (occurrences={int(row['duplicate_count'])})"
                     )
                 duplicate_summary = "; ".join(duplicate_examples)
-                description += (
-                    f" Duplicate series_code values: {duplicate_summary}"
-                )
+                description += f" Duplicate series_code values: {duplicate_summary}"
 
-                duplicate_details = duplicate_df[
-                    ["series_code", "duplicate_count"]
-                ].to_dict("records")
+                duplicate_details = duplicate_df[["series_code", "duplicate_count"]].to_dict(
+                    "records"
+                )
 
             # Log detailed errors
             context.log.error(f"Validation failed: {description}")
@@ -142,9 +137,7 @@ def validate_metadata_against_lookup(
                     {
                         "unique_series_count": int(unique_series),
                         "invalid_details": invalid_df.to_dict("records"),
-                        "invalid_series_codes": invalid_df[
-                            MetadataColumns.SERIES_CODE
-                        ]
+                        "invalid_series_codes": invalid_df[MetadataColumns.SERIES_CODE]
                         .unique()
                         .tolist(),
                     }
@@ -170,7 +163,7 @@ def validate_metadata_against_lookup(
             metadata={
                 "total_count": total_count,
                 "invalid_count": 0,
-                 "duplicate_count": 0,
+                "duplicate_count": 0,
                 "metadata_uri": metadata_uri,
                 "lookup_uri": lookup_uri,
             },

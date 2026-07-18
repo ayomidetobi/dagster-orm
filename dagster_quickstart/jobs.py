@@ -105,8 +105,8 @@ calculate_derived_series_job = define_asset_job(
 )
 
 # Bloomberg field partitions (PX_LAST, …) differ from derived calc partitions (SPREAD, …);
-# they cannot share one partitioned job. Run ``calculate_derived_series_job`` per derived partition
-# after ingestion (e.g. backfill all keys in ``DERIVED_CALC_PARTITIONS``).
+# they cannot share one partitioned job. ``derived_after_ingestion_sensor`` launches
+# ``calculate_derived_series_job`` for each key in ``DERIVED_CALC_PARTITIONS`` after daily ingestion.
 populate_value_data_job = define_asset_job(
     name="populate_value_data_job",
     selection=[ingest_bloomberg_data_daily],
