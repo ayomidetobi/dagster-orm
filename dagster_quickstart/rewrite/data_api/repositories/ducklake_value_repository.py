@@ -187,7 +187,11 @@ class DuckLakeValueStorageRepository(
             self.execute_no_result(sql)
 
     def initialize_schema(self) -> None:
-        """Create the values table if it doesn't already exist."""
+        """Create the values table if it doesn't already exist.
+
+        Partitioned by ticker_source and year(timestamp) -- see
+        DuckLakeValueQueryBuilder.build_set_partitioned_by().
+        """
 
         logger.info("ducklake_value_initialize_schema", table=self._table)
 
@@ -199,3 +203,4 @@ class DuckLakeValueStorageRepository(
                 table=SQL.identifier(self._table),
             )
         )
+        self.execute_no_result(self._builder.build_set_partitioned_by())
