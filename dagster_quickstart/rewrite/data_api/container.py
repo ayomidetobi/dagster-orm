@@ -29,21 +29,6 @@ def _build_metadata_derived_service(repository: object | None) -> MetadataServic
     )
 
 
-def _build_file_ingestion_service(
-    metadata_service: MetadataService,
-    value_service: ValueService,
-    cacher: object | None,
-) -> FileIngestionService | None:
-    """File ingestion is opt-in: only build the service if a cacher was given."""
-    if cacher is None:
-        return None
-    return FileIngestionService(
-        metadata_service=metadata_service,
-        value_service=value_service,
-        cacher=cacher,
-    )
-
-
 class RewriteContainer(containers.DeclarativeContainer):
     """Container wiring the rewrite package."""
 
@@ -60,7 +45,6 @@ class RewriteContainer(containers.DeclarativeContainer):
     duckdb_connection = providers.Dependency()
     metadata_repository = providers.Dependency()
     value_repository = providers.Dependency()
-    duckdb_data_cacher = providers.Object(None)
     metadata_derived_repository = providers.Object(None)
     vendor_clients = providers.Object({})
 
@@ -102,10 +86,9 @@ class RewriteContainer(containers.DeclarativeContainer):
     )
 
     file_ingestion_service = providers.Factory(
-        _build_file_ingestion_service,
+        FileIngestionService,
         metadata_service=metadata_service,
         value_service=value_service,
-        cacher=duckdb_data_cacher,
     )
 
     services = providers.Factory(
@@ -138,7 +121,6 @@ def build_rewrite_container(
     duckdb_connection: object,
     metadata_repository: object,
     value_repository: object,
-    duckdb_data_cacher: object | None = None,
     metadata_derived_repository: object | None = None,
     vendor_clients: Mapping[str, VendorClient] | None = None,
 ) -> RewriteContainer:
@@ -147,8 +129,6 @@ def build_rewrite_container(
     container.duckdb_connection.override(duckdb_connection)
     container.metadata_repository.override(metadata_repository)
     container.value_repository.override(value_repository)
-    if duckdb_data_cacher is not None:
-        container.duckdb_data_cacher.override(duckdb_data_cacher)
     if metadata_derived_repository is not None:
         container.metadata_derived_repository.override(metadata_derived_repository)
     if vendor_clients is not None:
