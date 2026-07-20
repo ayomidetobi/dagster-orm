@@ -10,7 +10,7 @@ import pandas as pd
 import structlog
 
 from resources.duckdb_datacacher import SQL
-from rewrite.data_api.columns import ControlTables, ValueColumns
+from rewrite.data_api.columns import ControlTables, TickerSource, ValueColumns
 from rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
 from rewrite.data_api.repositories.storage_repository import ValueStorageRepository
 from rewrite.data_api.query.ducklake_query import (
@@ -143,32 +143,34 @@ class DuckLakeValueStorageRepository(
 
     @staticmethod
     def _with_all_value_columns(frame: pd.DataFrame) -> pd.DataFrame:
-        """Add any of the table's physical columns the frame is missing, as NULL.
+        """Add any of the table's physical columns the frame is missing.
 
         build_save() inserts by column name against all four physical
         columns (series_code/timestamp/value/ticker_source) -- e.g.
         ticker_source is optional on the incoming frame (not every caller
         tags a source), so it's backfilled here rather than left to break
         the insert.
+
+        ticker_source specifically is never left NULL (missing column, or
+        present but with null cells): the table is partitioned by it, and
+        DuckLake crashes (InternalException: "StringValue::Get on a NULL
+        value") if a NULL lands in a partitioned column. TickerSource.UNKNOWN
+        is used instead -- a real, queryable value rather than a silent gap.
         """
 
-        missing = [
-            column
-            for column in (
-                ValueColumns.SERIES_CODE,
-                ValueColumns.TIMESTAMP,
-                ValueColumns.VALUE,
-                ValueColumns.TICKER_SOURCE,
-            )
-            if column not in frame.columns
-        ]
-
-        if not missing:
-            return frame
-
         frame = frame.copy()
-        for column in missing:
-            frame[column] = None
+
+        for column in (ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE):
+            if column not in frame.columns:
+                frame[column] = None
+
+        if ValueColumns.TICKER_SOURCE not in frame.columns:
+            frame[ValueColumns.TICKER_SOURCE] = TickerSource.UNKNOWN
+        else:
+            frame[ValueColumns.TICKER_SOURCE] = frame[ValueColumns.TICKER_SOURCE].fillna(
+                TickerSource.UNKNOWN
+            )
+
         return frame
 
     def delete_values(
