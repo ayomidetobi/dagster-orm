@@ -14,7 +14,6 @@ def create_data_api(
     duckdb_connection: object,
     metadata_repository: object,
     value_repository: object,
-    duckdb_data_cacher: object | None = None,
     metadata_derived_repository: object | None = None,
     vendor_clients: Mapping[str, VendorClient] | None = None,
 ) -> DataAPI:
@@ -23,7 +22,6 @@ def create_data_api(
         duckdb_connection=duckdb_connection,
         metadata_repository=metadata_repository,
         value_repository=value_repository,
-        duckdb_data_cacher=duckdb_data_cacher,
         metadata_derived_repository=metadata_derived_repository,
         vendor_clients=vendor_clients,
     )
@@ -35,7 +33,6 @@ def create_container(
     duckdb_connection: object,
     metadata_repository: object,
     value_repository: object,
-    duckdb_data_cacher: object | None = None,
     metadata_derived_repository: object | None = None,
     vendor_clients: Mapping[str, VendorClient] | None = None,
 ) -> RewriteContainer:
@@ -44,7 +41,6 @@ def create_container(
         duckdb_connection=duckdb_connection,
         metadata_repository=metadata_repository,
         value_repository=value_repository,
-        duckdb_data_cacher=duckdb_data_cacher,
         metadata_derived_repository=metadata_derived_repository,
         vendor_clients=vendor_clients,
     )

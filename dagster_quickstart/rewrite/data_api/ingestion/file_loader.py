@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import structlog
 
-from resources.duckdb_datacacher import SQL, DuckDBDataCacher
 from rewrite.data_api.errors import UnsupportedFileTypeError
 from rewrite.data_api.services.metadata_service import MetadataService
 from rewrite.data_api.services.value_service import ValueService
@@ -39,29 +37,27 @@ def read_tabular_file(path: str | Path, *, sheet: str | int | None = None) -> pd
 
 
 class FileIngestionService:
-    """Land CSV/Excel files in the lake.
+    """Land CSV/Excel files in the DuckLake-backed data lake.
 
-    Each file gets a raw, unvalidated Parquet copy archived to S3 (for
-    lineage/audit) before the normalized frame is loaded into the DuckLake
-    catalog through the metadata/value services.
+    Reads the file, then writes it straight through the metadata/value
+    services. DuckLake alone decides where the data physically lives (its
+    own S3 layout, partitioning, and snapshot-per-write history) -- there is
+    no separate ingestion-owned path or raw copy outside its catalog.
     """
 
     def __init__(
         self,
         metadata_service: MetadataService,
         value_service: ValueService,
-        cacher: DuckDBDataCacher,
     ) -> None:
         self._metadata = metadata_service
         self._values = value_service
-        self._cacher = cacher
 
     def ingest_metadata_file(
         self,
         path: str | Path,
         *,
         sheet: str | int | None = None,
-        raw_prefix: str = "raw/metadata",
         service: MetadataService | None = None,
     ) -> pd.DataFrame:
         """Load a metadata CSV/Excel file into a DuckLake metadata table.
@@ -74,7 +70,6 @@ class FileIngestionService:
 
         logger.info("metadata_file_ingestion_started", path=str(path))
         frame = read_tabular_file(path, sheet=sheet)
-        self._archive(frame, path, raw_prefix)
         validated = (service or self._metadata).import_metadata(frame)
         logger.info("metadata_file_ingestion_completed", path=str(path), row_count=len(frame))
         return validated
@@ -84,23 +79,11 @@ class FileIngestionService:
         path: str | Path,
         *,
         sheet: str | int | None = None,
-        raw_prefix: str = "raw/values",
     ) -> pd.DataFrame:
         """Load a value CSV/Excel file into the DuckLake values table."""
 
         logger.info("value_file_ingestion_started", path=str(path))
         frame = read_tabular_file(path, sheet=sheet)
-        self._archive(frame, path, raw_prefix)
         self._values.write_values(frame)
         logger.info("value_file_ingestion_completed", path=str(path), row_count=len(frame))
         return frame
-
-    def _archive(self, frame: pd.DataFrame, path: str | Path, raw_prefix: str) -> None:
-        """Write a raw, pre-validation Parquet copy of the file to S3."""
-
-        stem = Path(path).stem
-        ingested_at = datetime.now().strftime("%Y%m%dT%H%M%S")
-        file_path = f"{raw_prefix}/{stem}/ingested_at={ingested_at}/data.parquet"
-
-        logger.info("file_ingestion_archive", file_path=file_path, row_count=len(frame))
-        self._cacher.save(SQL("SELECT * FROM $frame", frame=frame), file_path=file_path)

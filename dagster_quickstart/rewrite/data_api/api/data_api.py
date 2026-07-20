@@ -252,6 +252,10 @@ class DataAPI:
         with; pass it explicitly to override for a single call. When true,
         bypasses DuckLake entirely and fetches live from the vendor named by
         ticker_source (required in that case).
+
+        The returned frame remembers its ticker_source (in `.attrs`), so
+        write_values(get_values(...)) tags rows with the right vendor
+        automatically instead of writing them unattributed.
         """
         request = validate_value_query(
             ticker_source=ticker_source,
@@ -294,7 +298,10 @@ class DataAPI:
                 as_of=request.as_of,
             )
 
-        return pivot_values(frame)
+        result = pivot_values(frame)
+        if request.ticker_source:
+            result.attrs["ticker_source"] = request.ticker_source
+        return result
 
     def get_last_values(
         self,
@@ -310,7 +317,10 @@ class DataAPI:
         if ticker_source:
             ticker_source = normalize_ticker_source(ticker_source)
         frame = self._services.values.read_last_values(series_codes, ticker_source=ticker_source)
-        return pivot_values(frame)
+        result = pivot_values(frame)
+        if ticker_source:
+            result.attrs["ticker_source"] = ticker_source
+        return result
 
     def write_values(self, frame: pd.DataFrame) -> None:
         """Persist a value frame -- long form or wide form, detected automatically.
@@ -320,19 +330,22 @@ class DataAPI:
         exactly what get_values()/get_last_values() return) is melted back
         to long form first, so a round trip like
 
-            values = data_api.get_values(series_codes)
+            values = data_api.get_values(series_codes, ticker_source="BBG")
             data_api.write_values(values)
 
-        works with no manual reshaping. Detected by the presence of a
-        series_code column: long-form frames always have one, wide-form
-        frames never do. A frame with neither a series_code column nor a
-        DatetimeIndex is passed through unchanged and left to fail
-        validation with a clear error naming what's missing.
+        works with no manual reshaping -- and tags the melted rows with
+        "bloomberg" automatically, via the ticker_source get_values() left
+        in `values.attrs`, rather than writing them unattributed. Detected
+        by the presence of a series_code column: long-form frames always
+        have one, wide-form frames never do. A frame with neither a
+        series_code column nor a DatetimeIndex is passed through unchanged
+        and left to fail validation with a clear error naming what's
+        missing.
         """
         if ValueColumns.SERIES_CODE not in frame.columns and isinstance(
             frame.index, pd.DatetimeIndex
         ):
-            frame = melt_values(frame)
+            frame = melt_values(frame, ticker_source=frame.attrs.get("ticker_source"))
         self._services.values.write_values(frame)
 
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:

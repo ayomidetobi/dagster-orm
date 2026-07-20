@@ -172,6 +172,23 @@ class DuckLakeValueQueryBuilder:
 
         return sql
 
+    def build_set_partitioned_by(self) -> SQL:
+        """
+        Build the partitioning declaration for the values table.
+
+        Partitions by ticker_source and year(timestamp), so a cache read
+        filtered by ticker_source (e.g. get_values(ticker_source="bbg")
+        with live=False) prunes straight to that vendor's partition files
+        in S3 instead of scanning the whole table. Safe to re-apply --
+        only affects files written after the call, not existing data.
+        """
+
+        return SQL(
+            "ALTER TABLE $table SET PARTITIONED BY "
+            f"({ValueColumns.TICKER_SOURCE}, year({ValueColumns.TIMESTAMP}))",
+            table=SQL.identifier(self._table),
+        )
+
     def build_save(
         self,
         relation: str,

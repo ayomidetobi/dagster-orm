@@ -41,17 +41,21 @@ def pivot_values(df: pd.DataFrame) -> pd.DataFrame:
     ).sort_index()
 
 
-def melt_values(df: pd.DataFrame) -> pd.DataFrame:
+def melt_values(df: pd.DataFrame, *, ticker_source: str | None = None) -> pd.DataFrame:
     """Melt a wide (DatetimeIndex x series_code columns) frame to long form.
 
     Inverse of pivot_values() -- e.g. turns a get_values()-shaped result (or
     a raw vendor response) back into (series_code, timestamp, value) rows.
     Values are daily, so the timestamp is normalized to a plain date
-    (tz-stripped, time-of-day dropped).
+    (tz-stripped, time-of-day dropped). Pass ticker_source to tag every
+    resulting row with it (e.g. when melting a frame you know came from one
+    vendor) -- otherwise the ticker_source column is left out entirely.
     """
 
+    columns = [*VALUE_COLUMNS, ValueColumns.TICKER_SOURCE] if ticker_source else VALUE_COLUMNS
+
     if df.empty or not isinstance(df.index, pd.DatetimeIndex):
-        return pd.DataFrame(columns=VALUE_COLUMNS)
+        return pd.DataFrame(columns=columns)
 
     normalized = df.copy()
     normalized.index.names = [ValueColumns.TIMESTAMP]
@@ -68,4 +72,6 @@ def melt_values(df: pd.DataFrame) -> pd.DataFrame:
     if timestamps.dt.tz is not None:
         timestamps = timestamps.dt.tz_convert(None)
     out[ValueColumns.TIMESTAMP] = timestamps.dt.normalize()
-    return out[VALUE_COLUMNS]
+    if ticker_source:
+        out[ValueColumns.TICKER_SOURCE] = ticker_source
+    return out[columns]

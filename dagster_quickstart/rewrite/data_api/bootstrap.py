@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 import structlog
 from decouple import config as env_config
 
-from resources.duckdb_datacacher import create_duckdb_connection, duckdb_datacacher
+from resources.duckdb_datacacher import create_duckdb_connection
 from rewrite.data_api.columns import TickerSource
 from rewrite.data_api.container import build_rewrite_container
 from rewrite.data_api.models.config import DuckLakeCatalogConfig, PostgresConfig, S3SecretConfig
@@ -91,18 +91,10 @@ def build_default_container(
     value_repository = DuckLakeValueStorageRepository(connection)
     value_repository.initialize_schema()
 
-    cacher = duckdb_datacacher(
-        bucket=bucket,
-        access_key=access_key,
-        secret_key=secret_key,
-        region=region,
-    )
-
     return build_rewrite_container(
         duckdb_connection=connection,
         metadata_repository=metadata_repository,
         value_repository=value_repository,
-        duckdb_data_cacher=cacher,
         vendor_clients=dict(vendor_clients)
         if vendor_clients is not None
         else _default_vendor_clients(),

@@ -43,6 +43,14 @@ class TickerSource:
 
     ALL = (BLOOMBERG, HAWK, MDS)
 
+    # Not a real vendor -- the fallback for value rows saved without a
+    # ticker_source. The values table is partitioned by ticker_source
+    # (see DuckLakeValueQueryBuilder.build_set_partitioned_by()), and
+    # DuckLake crashes (InternalException) when a NULL lands in a
+    # partitioned column, so untagged rows are tagged with this sentinel
+    # instead of NULL -- never left blank.
+    UNKNOWN = "unknown"
+
 
 TICKER_SOURCE_ALIASES: dict[str, str] = {
     "BBG": TickerSource.BLOOMBERG,
