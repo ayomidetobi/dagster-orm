@@ -19,8 +19,11 @@ SUPPORTED_CSV_EXTENSIONS = (".csv",)
 SUPPORTED_EXCEL_EXTENSIONS = (".xlsx", ".xls")
 
 
-def read_tabular_file(path: str | Path) -> pd.DataFrame:
-    """Read a CSV or Excel file into a DataFrame based on its extension."""
+def read_tabular_file(path: str | Path, *, sheet: str | int | None = None) -> pd.DataFrame:
+    """Read a CSV or Excel file into a DataFrame based on its extension.
+
+    sheet selects a sheet by name or index for Excel files; ignored for CSV.
+    """
 
     path = Path(path)
     suffix = path.suffix.lower()
@@ -29,7 +32,7 @@ def read_tabular_file(path: str | Path) -> pd.DataFrame:
         return pd.read_csv(path)
 
     if suffix in SUPPORTED_EXCEL_EXTENSIONS:
-        return pd.read_excel(path)
+        return pd.read_excel(path, sheet_name=sheet if sheet is not None else 0)
 
     logger.warning("unsupported_file_type", path=str(path), suffix=suffix)
     raise UnsupportedFileTypeError(f"Unsupported file extension: {suffix!r}")
@@ -57,33 +60,36 @@ class FileIngestionService:
         self,
         path: str | Path,
         *,
+        sheet: str | int | None = None,
         raw_prefix: str = "raw/metadata",
         service: MetadataService | None = None,
     ) -> pd.DataFrame:
         """Load a metadata CSV/Excel file into a DuckLake metadata table.
 
-        Defaults to the primary metadata table; pass a different
+        sheet selects a sheet by name or index for Excel files; ignored for
+        CSV. Defaults to the primary metadata table; pass a different
         MetadataService (e.g. one backed by "metadata_derived") to load
         series_dependencies-style files with the same loader.
         """
 
         logger.info("metadata_file_ingestion_started", path=str(path))
-        frame = read_tabular_file(path)
+        frame = read_tabular_file(path, sheet=sheet)
         self._archive(frame, path, raw_prefix)
-        (service or self._metadata).import_metadata(frame)
+        validated = (service or self._metadata).import_metadata(frame)
         logger.info("metadata_file_ingestion_completed", path=str(path), row_count=len(frame))
-        return frame
+        return validated
 
     def ingest_value_file(
         self,
         path: str | Path,
         *,
+        sheet: str | int | None = None,
         raw_prefix: str = "raw/values",
     ) -> pd.DataFrame:
         """Load a value CSV/Excel file into the DuckLake values table."""
 
         logger.info("value_file_ingestion_started", path=str(path))
-        frame = read_tabular_file(path)
+        frame = read_tabular_file(path, sheet=sheet)
         self._archive(frame, path, raw_prefix)
         self._values.write_values(frame)
         logger.info("value_file_ingestion_completed", path=str(path), row_count=len(frame))

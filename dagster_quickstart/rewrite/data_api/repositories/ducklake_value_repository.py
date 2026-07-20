@@ -134,12 +134,42 @@ class DuckLakeValueStorageRepository(
         logger.info("ducklake_value_save", table=self._table, row_count=len(frame))
 
         with self.transaction():
-            with self.register_dataframe(frame) as relation:
+            with self.register_dataframe(self._with_all_value_columns(frame)) as relation:
                 sql = self._builder.build_save(
                     relation,
                 )
 
                 self.execute_no_result(sql)
+
+    @staticmethod
+    def _with_all_value_columns(frame: pd.DataFrame) -> pd.DataFrame:
+        """Add any of the table's physical columns the frame is missing, as NULL.
+
+        build_save() inserts by column name against all four physical
+        columns (series_code/timestamp/value/ticker_source) -- e.g.
+        ticker_source is optional on the incoming frame (not every caller
+        tags a source), so it's backfilled here rather than left to break
+        the insert.
+        """
+
+        missing = [
+            column
+            for column in (
+                ValueColumns.SERIES_CODE,
+                ValueColumns.TIMESTAMP,
+                ValueColumns.VALUE,
+                ValueColumns.TICKER_SOURCE,
+            )
+            if column not in frame.columns
+        ]
+
+        if not missing:
+            return frame
+
+        frame = frame.copy()
+        for column in missing:
+            frame[column] = None
+        return frame
 
     def delete_values(
         self,

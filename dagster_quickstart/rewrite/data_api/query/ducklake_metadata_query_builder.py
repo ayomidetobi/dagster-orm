@@ -69,6 +69,9 @@ class DuckLakeMetadataQueryBuilder:
     def build_save_metadata(
         self,
         relation: str,
+        *,
+        table_columns: Sequence[str],
+        frame_columns: Sequence[str],
     ) -> SQL:
         """
         Build an append-only INSERT statement.
@@ -76,12 +79,54 @@ class DuckLakeMetadataQueryBuilder:
         DuckLake snapshots every write, so history is preserved without a
         manual upsert/merge strategy. Call build_ensure_table() first so the
         table exists.
+
+        Inserts by column name against every column the table currently
+        has (table_columns), not just the ones in this particular frame
+        (frame_columns) -- metadata columns vary per asset class, so a
+        later save with fewer/different columns than an earlier one must
+        NULL-fill the table's other columns rather than break on a
+        `SELECT *` position/count mismatch. Callers add any brand-new
+        columns (in frame_columns but not yet in table_columns) via
+        build_add_column() before calling this.
+        """
+
+        frame_column_set = set(frame_columns)
+
+        insert_columns = SQL.join(
+            [SQL("$column", column=SQL.identifier(column)) for column in table_columns],
+            SQL(", "),
+        )
+        select_columns = SQL.join(
+            [
+                SQL("$column", column=SQL.identifier(column))
+                if column in frame_column_set
+                else SQL("NULL AS $column", column=SQL.identifier(column))
+                for column in table_columns
+            ],
+            SQL(", "),
+        )
+
+        return SQL(
+            "INSERT INTO $table ($insert_columns) SELECT $select_columns FROM $relation",
+            table=SQL.identifier(self._table),
+            insert_columns=insert_columns,
+            select_columns=select_columns,
+            relation=SQL.identifier(relation),
+        )
+
+    def build_add_column(self, column: str) -> SQL:
+        """
+        Build ALTER TABLE ... ADD COLUMN for a brand-new metadata attribute.
+
+        Metadata columns are intentionally flexible per asset class -- a
+        save introducing a column the table doesn't have yet gets it added
+        (as a nullable VARCHAR) rather than silently dropped or erroring.
         """
 
         return SQL(
-            "INSERT INTO $table SELECT * FROM $relation",
+            "ALTER TABLE $table ADD COLUMN IF NOT EXISTS $column VARCHAR",
             table=SQL.identifier(self._table),
-            relation=SQL.identifier(relation),
+            column=SQL.identifier(column),
         )
 
     def build_columns(self) -> SQL:
