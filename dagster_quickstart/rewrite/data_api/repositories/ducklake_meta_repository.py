@@ -125,10 +125,10 @@ class DuckLakeMetadataStorageRepository(
 
         with self.transaction():
             with self.register_dataframe(frame) as relation:
-                self.execute_no_result(self._builder.build_ensure_table(relation))
+                frame_columns = list(frame.columns)
+                self.execute_no_result(self._builder.build_ensure_table(relation, frame_columns))
 
                 table_columns = self.get_columns()
-                frame_columns = list(frame.columns)
                 new_columns = [column for column in frame_columns if column not in table_columns]
                 for column in new_columns:
                     self.execute_no_result(self._builder.build_add_column(column))

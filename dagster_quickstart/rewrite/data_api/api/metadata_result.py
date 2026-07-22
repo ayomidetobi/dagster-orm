@@ -175,6 +175,68 @@ class MetadataResult:
         mask = frame[field].isin(values)
         return frame[~mask if exclude else mask]
 
+    def filter_options(
+        self,
+        fields: str | Sequence[str] | None = None,
+        *,
+        as_dataframe: bool = False,
+    ) -> list[str] | dict[str, list[str]] | pd.DataFrame:
+        """Return the distinct values available for column(s) in this result.
+
+        Chains off get_metadata()/get_metadata_exclude() the same way they
+        chain off each other -- computed from this result's already-fetched
+        rows (no new database query), so options reflect however this result
+        has already been narrowed:
+
+            data_api.get_metadata(asset_class=["Equity"]) \\
+                .filter_options("currency")
+
+        returns only the currencies that actually appear among Equity
+        series. fields=None returns options for every column. Passing an
+        unknown field raises InvalidFilterFieldError listing the valid
+        columns.
+        """
+        available_columns = list(self._frame.columns)
+
+        if fields is None:
+            requested_fields = available_columns
+        else:
+            requested_fields = [fields] if isinstance(fields, str) else list(fields)
+
+        if not requested_fields:
+            raise ValueError("filter_options() requires at least one field")
+
+        invalid_fields = [field for field in requested_fields if field not in available_columns]
+        if invalid_fields:
+            raise InvalidFilterFieldError(
+                f"Invalid field(s): {invalid_fields}. Available columns: {sorted(available_columns)}"
+            )
+
+        options_by_field = {
+            field: sorted(
+                value
+                for value in self._frame[field].dropna().astype(str).str.strip().unique().tolist()
+                if value
+            )
+            for field in requested_fields
+        }
+
+        if fields is not None and len(requested_fields) == 1:
+            options = options_by_field[requested_fields[0]]
+            if not as_dataframe:
+                return options
+            options_by_field = {requested_fields[0]: options}
+
+        if not as_dataframe:
+            return options_by_field
+
+        rows = [
+            {"field": field, "value": value}
+            for field, values in options_by_field.items()
+            for value in values
+        ]
+        return pd.DataFrame(rows, columns=["field", "value"])
+
     def union(self, *others: "MetadataResult | pd.DataFrame") -> "MetadataResult":
         """Combine this result with one or more other metadata results.
 
