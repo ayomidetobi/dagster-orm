@@ -35,7 +35,7 @@ def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
 # Zero-config: wires the DuckLake connection, repositories, and vendor
 # clients under the hood. live=True makes get_values()/get_last_values()
 # default to fetching straight from the vendor instead of DuckLake.
-data_api = DataAPI(live=True)
+data_api = DataAPI(live=False)
 
 # Example 1: Query metadata with filters passed as keyword arguments
 print_separator("Example 1: Query metadata with kwargs filters")
@@ -45,14 +45,15 @@ print(f"series_codes: {context.series_codes[:5]}{'...' if len(context) > 5 else 
 if not context.empty:
     print(context.info.head())
 
-# # Example 2: Fetch values straight from that metadata result, no need to
-# # re-extract series_code yourself.
-# print_separator("Example 2: Fetch values directly from the metadata result")
-# values_df = context.get_values(ticker_source="BBG")
-# print(f"Values shape: {values_df.shape}")
-# if not values_df.empty:
-#     print(values_df.tail(5))
+# Example 2: Fetch values straight from that metadata result, no need to
+# re-extract series_code yourself.
+print_separator("Example 2: Fetch values directly from the metadata result")
+values_df = context.get_values(ticker_source="mds")
+print(f"Values shape: {values_df.shape}")
+if not values_df.empty:
+    print(values_df.tail(5))
 
+# data_api.write_values(frame = values_df)
 # last_values_df = context.get_last_values(ticker_source="BBG")
 # print("\nLatest value per series:")
 # if not last_values_df.empty:
