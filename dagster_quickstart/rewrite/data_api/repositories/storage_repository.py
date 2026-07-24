@@ -35,8 +35,12 @@ class MetadataStorageRepository(Protocol):
     ) -> list[str]:
         """Return the distinct, non-null values for a column, optionally filtered."""
 
-    def save_metadata(self, frame: pd.DataFrame) -> None:
-        """Persist normalized metadata rows."""
+    def save_metadata(self, frame: pd.DataFrame, *, fresh: bool = False) -> None:
+        """Persist normalized metadata rows.
+
+        fresh=True replaces any existing rows for the frame's series_codes
+        instead of appending alongside them.
+        """
 
     def refresh_metadata(self) -> None:
         """Refresh any cached catalog state."""

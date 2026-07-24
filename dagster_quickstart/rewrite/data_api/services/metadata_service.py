@@ -116,11 +116,16 @@ class MetadataService:
         series_codes = frame[MetadataColumns.SERIES_CODE].dropna().astype(str).str.strip()
         return [code for code in series_codes.tolist() if code]
 
-    def import_metadata(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Persist a normalized metadata frame, returning the validated rows."""
-        logger.info("metadata_service_import", row_count=len(frame))
+    def import_metadata(self, frame: pd.DataFrame, *, fresh: bool = False) -> pd.DataFrame:
+        """Persist a normalized metadata frame, returning the validated rows.
+
+        fresh=True replaces any existing rows for this frame's series_codes
+        instead of appending alongside them -- see
+        MetadataRepository.save_metadata().
+        """
+        logger.info("metadata_service_import", row_count=len(frame), fresh=fresh)
         validated = self._validate(frame)
-        self._repository.save_metadata(validated)
+        self._repository.save_metadata(validated, fresh=fresh)
         return validated
 
     def refresh_metadata(self) -> None:

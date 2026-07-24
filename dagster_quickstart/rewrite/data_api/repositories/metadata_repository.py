@@ -112,12 +112,14 @@ class MetadataRepository:
     def save_metadata(
         self,
         frame: pd.DataFrame,
+        *,
+        fresh: bool = False,
     ) -> None:
         if frame.empty:
             return
 
-        logger.info("metadata_repository_save", row_count=len(frame))
-        self._storage.save_metadata(frame)
+        logger.info("metadata_repository_save", row_count=len(frame), fresh=fresh)
+        self._storage.save_metadata(frame, fresh=fresh)
 
     def refresh(self) -> None:
         logger.info("metadata_repository_refresh")

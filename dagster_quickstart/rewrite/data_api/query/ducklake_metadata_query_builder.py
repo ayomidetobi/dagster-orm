@@ -144,6 +144,25 @@ class DuckLakeMetadataQueryBuilder:
             column=SQL.identifier(column),
         )
 
+    def build_delete(self, filters: Mapping[str, Sequence[str]]) -> SQL:
+        """
+        Build a DELETE statement for the given filters.
+
+        Reuses the same IN-based _filter_clauses() build_get_metadata()'s
+        WHERE clause uses. Used by save_metadata(fresh=True) to remove
+        existing rows for the series_codes in an incoming frame before
+        re-inserting them, so re-importing the same file replaces those
+        rows instead of accumulating duplicates.
+        """
+
+        sql = SQL("DELETE FROM $table", table=SQL.identifier(self._table))
+
+        clauses = self._filter_clauses(filters)
+        if clauses:
+            sql += SQL.join(clauses, SQL(" AND "), prefix=" WHERE ")
+
+        return sql
+
     def build_columns(self) -> SQL:
         """Build a schema-only query (no rows) to discover available column names."""
 

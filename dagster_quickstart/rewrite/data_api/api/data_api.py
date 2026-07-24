@@ -195,6 +195,7 @@ class DataAPI:
         *,
         path: str | Path | None = None,
         sheet: str | int | None = None,
+        fresh: bool = False,
     ) -> pd.DataFrame:
         """Persist metadata -- either an in-memory frame, or a CSV/Excel file.
 
@@ -203,11 +204,24 @@ class DataAPI:
             data_api.import_metadata(frame=df)
 
         Exactly one of `frame`/`path` must be given. `sheet` selects a sheet
-        by name or index for Excel files; ignored for CSV. File imports also
-        archive a raw, pre-validation Parquet copy to S3 for lineage before
-        writing the validated rows into the DuckLake metadata table -- both
-        forms return the validated rows, so the result can be queried right
-        back with get_metadata().
+        by name or index for Excel files; ignored for CSV. Writes go
+        straight into the DuckLake metadata table -- the result returned is
+        the validated rows, so it can be queried right back with
+        get_metadata().
+
+        fresh controls what happens to existing rows for the series_codes
+        in this import:
+
+        - fresh=False (default): appends, exactly as before. Re-importing
+          the same file duplicates every one of its series_codes, since
+          DuckLake is append-only by design and nothing here dedupes.
+        - fresh=True: deletes any existing rows for this import's
+          series_codes first, then inserts -- so re-importing the same file
+          replaces those rows instead of duplicating them. series_codes
+          belonging to OTHER, previously-imported files are untouched, so
+          importing several distinct files into one catalog still works;
+          only a series_code actually present in *this* import gets
+          replaced. Delete and insert happen in the same transaction.
         """
         if (frame is None) == (path is None):
             raise InvalidImportSourceError(
@@ -221,9 +235,9 @@ class DataAPI:
                     "file-ingestion support (e.g. DataAPI(live=True) or "
                     "DataAPI()) -- this instance has none configured."
                 )
-            return self._services.ingestion.ingest_metadata_file(path, sheet=sheet)
+            return self._services.ingestion.ingest_metadata_file(path, sheet=sheet, fresh=fresh)
 
-        return self._services.metadata.import_metadata(frame)
+        return self._services.metadata.import_metadata(frame, fresh=fresh)
 
     def refresh_metadata(self) -> None:
         """Refresh repository-backed metadata state."""
