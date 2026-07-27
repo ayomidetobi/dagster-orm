@@ -8,10 +8,11 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns, ValueColumns
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.vendor_service import VendorService
-from rewrite.data_api.vendors.direct_fetch import (
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, ValueColumns
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorService
+from dagster_quickstart.rewrite.data_api.vendors.direct_fetch import (
     get_derived_direct_values,
     get_direct_values,
     sort_and_limit,
@@ -27,7 +28,9 @@ class DirectFetchService:
     primary before dispatching, mirroring the metadata/metadata_derived split
     used by the old orm/ system's out_of_cache queries. Derived-series
     support is opt-in: pass derived_metadata_service=None to treat every
-    requested series as primary.
+    requested series as primary. value_service backs a derived series'
+    default parent-value source (the datalake); see get_values()'s
+    parents_out_of_cache.
     """
 
     def __init__(
@@ -35,10 +38,12 @@ class DirectFetchService:
         metadata_service: MetadataService,
         vendor_service: VendorService,
         derived_metadata_service: MetadataService | None = None,
+        value_service: ValueService | None = None,
     ) -> None:
         self._metadata = metadata_service
         self._vendors = vendor_service
         self._derived_metadata = derived_metadata_service
+        self._values = value_service
 
     def get_values(
         self,
@@ -49,8 +54,16 @@ class DirectFetchService:
         end: datetime | None = None,
         order_by: str | None = None,
         limit: int | None = None,
+        parents_out_of_cache: bool = False,
     ) -> pd.DataFrame:
-        """Return live value rows for the requested series."""
+        """Return live value rows for the requested series.
+
+        parents_out_of_cache only matters for derived series: it controls
+        where their PARENT series' values come from -- False (default)
+        reads them from the datalake, True fetches them live from the
+        vendor too. Doesn't affect non-derived (primary) series, which are
+        always fetched live here regardless.
+        """
 
         if not series_codes:
             return pd.DataFrame(
@@ -89,6 +102,8 @@ class DirectFetchService:
                     ticker_source,
                     start=start,
                     end=end,
+                    value_service=self._values,
+                    parents_out_of_cache=parents_out_of_cache,
                 )
             )
 

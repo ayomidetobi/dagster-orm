@@ -8,13 +8,13 @@ from datetime import datetime
 
 import structlog
 
-from rewrite.data_api.api.requests import validate_value_query
-from rewrite.data_api.shaping import pivot_values
-from rewrite.data_api.columns import MetadataColumns, normalize_ticker_source
-from rewrite.data_api.errors import DirectFetchUnavailableError, InvalidFilterFieldError
-from rewrite.data_api.services.direct_fetch_service import DirectFetchService
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.api.requests import validate_value_query
+from dagster_quickstart.rewrite.data_api.shaping import pivot_values
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, normalize_ticker_source
+from dagster_quickstart.rewrite.data_api.errors import DirectFetchUnavailableError, InvalidFilterFieldError
+from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
 
 logger = structlog.get_logger(__name__)
 
@@ -35,6 +35,7 @@ class QueryState:
     as_of: datetime | None = None
     out_of_cache: bool = False
     strict: bool = False
+    parents_out_of_cache: bool = False
 
 
 class QuerySet:
@@ -91,12 +92,24 @@ class QuerySet:
 
         return self._with_state(version=version, as_of=as_of)
 
-    def live(self, ticker_source: str | None = None) -> "QuerySet":
-        """Return a new QuerySet that bypasses DuckLake and fetches live from the vendor."""
+    def live(
+        self,
+        ticker_source: str | None = None,
+        *,
+        parents_out_of_cache: bool | None = None,
+    ) -> "QuerySet":
+        """Return a new QuerySet that bypasses DuckLake and fetches live from the vendor.
+
+        parents_out_of_cache only matters for a derived series: it controls
+        where its PARENT series' values come from -- False (default) reads
+        them from the datalake, True fetches them live from the vendor too.
+        """
 
         changes: dict[str, object] = {"out_of_cache": True}
         if ticker_source is not None:
             changes["ticker_source"] = ticker_source
+        if parents_out_of_cache is not None:
+            changes["parents_out_of_cache"] = parents_out_of_cache
         return self._with_state(**changes)
 
     def cached(self) -> "QuerySet":
@@ -162,6 +175,7 @@ class QuerySet:
                 end=request.end,
                 order_by=request.order_by,
                 limit=request.limit,
+                parents_out_of_cache=self._state.parents_out_of_cache,
             )
         else:
             frame = self._values.read_values(

@@ -8,9 +8,9 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ValueColumns
-from rewrite.data_api.errors import FrameValidationError, SeriesCodesRequiredError
-from rewrite.data_api.repositories.storage_repository import ValueStorageRepository
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
+from dagster_quickstart.rewrite.data_api.errors import FrameValidationError, SeriesCodesRequiredError
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import ValueStorageRepository
 
 logger = structlog.get_logger(__name__)
 

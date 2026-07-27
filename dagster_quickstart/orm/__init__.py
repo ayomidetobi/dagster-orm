@@ -1,5 +1,14 @@
 """Semantic ORM layer for DuckDB with S3 datalake.
 
+.. deprecated::
+    Superseded by the ``rewrite`` package (``rewrite/data_api/``), which is now
+    the DataAPI for new assets/materializations. This module is kept only for
+    code that hasn't been migrated yet -- notably
+    ``assets/load_metaseries/check.py``'s asset check, which still reads the
+    legacy S3 parquet control tables via ``orm.infrastructure``/``orm.schema``.
+    Do not build new functionality on top of ``orm``; migrate call sites to
+    ``rewrite`` instead.
+
 This package provides a high-level ORM interface built on top of DuckDB Tiny ORM
 for querying metadata and value data from S3 Parquet files.
 

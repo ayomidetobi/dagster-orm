@@ -9,10 +9,10 @@ import duckdb
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ControlTables
-from rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
-from rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
-from rewrite.data_api.query.ducklake_metadata_query_builder import (
+from dagster_quickstart.rewrite.data_api.columns import ControlTables, MetadataColumns
+from dagster_quickstart.rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
+from dagster_quickstart.rewrite.data_api.query.ducklake_metadata_query_builder import (
     DuckLakeMetadataQueryBuilder,
 )
 
@@ -108,7 +108,7 @@ class DuckLakeMetadataStorageRepository(
 
         return [value for value in df["value"].astype(str).str.strip() if value]
 
-    def save_metadata(self, frame: pd.DataFrame) -> None:
+    def save_metadata(self, frame: pd.DataFrame, *, fresh: bool = False) -> None:
         """Persist normalized metadata rows.
 
         Metadata columns vary per asset class, so a save whose columns
@@ -116,19 +116,37 @@ class DuckLakeMetadataStorageRepository(
         rather than left to break: columns the table already has that
         this frame lacks are NULL-filled, and columns this frame has that
         the table lacks are added to the table first.
+
+        fresh=True deletes any existing rows whose series_code matches one
+        in this frame before inserting, so re-saving the same series
+        replaces rather than accumulates duplicates -- series_codes from
+        other, previously-saved frames are untouched. fresh=False (default)
+        just appends, exactly as before. Deletion and insertion happen in
+        the same transaction, so a failed insert can't leave the table
+        without those rows.
         """
 
         if frame.empty:
             return
 
-        logger.info("ducklake_metadata_save", table=self._table, row_count=len(frame))
+        logger.info("ducklake_metadata_save", table=self._table, row_count=len(frame), fresh=fresh)
 
         with self.transaction():
             with self.register_dataframe(frame) as relation:
-                self.execute_no_result(self._builder.build_ensure_table(relation))
+                frame_columns = list(frame.columns)
+                self.execute_no_result(self._builder.build_ensure_table(relation, frame_columns))
+
+                if fresh and MetadataColumns.SERIES_CODE in frame.columns:
+                    series_codes = (
+                        frame[MetadataColumns.SERIES_CODE].dropna().astype(str).str.strip()
+                    )
+                    series_codes = [code for code in dict.fromkeys(series_codes.tolist()) if code]
+                    if series_codes:
+                        self.execute_no_result(
+                            self._builder.build_delete({MetadataColumns.SERIES_CODE: series_codes})
+                        )
 
                 table_columns = self.get_columns()
-                frame_columns = list(frame.columns)
                 new_columns = [column for column in frame_columns if column not in table_columns]
                 for column in new_columns:
                     self.execute_no_result(self._builder.build_add_column(column))

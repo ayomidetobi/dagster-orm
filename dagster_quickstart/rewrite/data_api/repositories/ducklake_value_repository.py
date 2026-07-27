@@ -9,11 +9,11 @@ import duckdb
 import pandas as pd
 import structlog
 
-from resources.duckdb_datacacher import SQL
-from rewrite.data_api.columns import ControlTables, TickerSource, ValueColumns
-from rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
-from rewrite.data_api.repositories.storage_repository import ValueStorageRepository
-from rewrite.data_api.query.ducklake_query import (
+from dagster_quickstart.resources.duckdb_datacacher import SQL
+from dagster_quickstart.rewrite.data_api.columns import ControlTables, TickerSource, ValueColumns
+from dagster_quickstart.rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import ValueStorageRepository
+from dagster_quickstart.rewrite.data_api.query.ducklake_query import (
     DuckLakeValueQueryBuilder,
 )
 

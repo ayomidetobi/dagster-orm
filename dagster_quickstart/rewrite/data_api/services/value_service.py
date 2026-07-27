@@ -8,9 +8,9 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ValueColumns
-from rewrite.data_api.repositories.value_repository import ValueRepository
-from rewrite.data_api.validation import validate_value_frame
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
+from dagster_quickstart.rewrite.data_api.repositories.value_repository import ValueRepository
+from dagster_quickstart.rewrite.data_api.validation import validate_value_frame
 
 logger = structlog.get_logger(__name__)
 

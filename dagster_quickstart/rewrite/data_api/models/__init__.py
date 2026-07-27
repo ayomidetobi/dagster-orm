@@ -1,6 +1,6 @@
 """Domain models."""
 
-from rewrite.data_api.models.config import (
+from dagster_quickstart.rewrite.data_api.models.config import (
     DuckLakeCatalogConfig,
     DuckLakeConfig,
     PostgresConfig,

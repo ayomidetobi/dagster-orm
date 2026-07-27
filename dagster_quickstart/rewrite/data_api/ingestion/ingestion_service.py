@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import structlog
 
-from rewrite.data_api.services.vendor_service import VendorService
-from rewrite.data_api.ingestion.writer import IngestionWriter
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorService
+from dagster_quickstart.rewrite.data_api.ingestion.writer import IngestionWriter
 
 logger = structlog.get_logger(__name__)
 

@@ -28,7 +28,7 @@ def __getattr__(name: str) -> object:
     while this package's repositories import back from
     resources/duckdb_datacacher.py. Eagerly importing everything here would
     make that a circular import; resolving on first attribute access breaks
-    the cycle without changing the public `from rewrite import DataAPI` shape.
+    the cycle without changing the public `from dagster_quickstart.rewrite import DataAPI` shape.
     """
     module_name = _EXPORTS.get(name)
     if module_name is None:

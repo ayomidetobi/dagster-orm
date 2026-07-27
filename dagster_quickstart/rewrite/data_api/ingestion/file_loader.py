@@ -7,9 +7,9 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from rewrite.data_api.errors import UnsupportedFileTypeError
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.errors import UnsupportedFileTypeError
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
 
 logger = structlog.get_logger(__name__)
 
@@ -58,6 +58,7 @@ class FileIngestionService:
         path: str | Path,
         *,
         sheet: str | int | None = None,
+        fresh: bool = False,
         service: MetadataService | None = None,
     ) -> pd.DataFrame:
         """Load a metadata CSV/Excel file into a DuckLake metadata table.
@@ -65,12 +66,14 @@ class FileIngestionService:
         sheet selects a sheet by name or index for Excel files; ignored for
         CSV. Defaults to the primary metadata table; pass a different
         MetadataService (e.g. one backed by "metadata_derived") to load
-        series_dependencies-style files with the same loader.
+        series_dependencies-style files with the same loader. fresh=True
+        replaces any existing rows for this file's series_codes instead of
+        appending alongside them -- see MetadataService.import_metadata().
         """
 
         logger.info("metadata_file_ingestion_started", path=str(path))
         frame = read_tabular_file(path, sheet=sheet)
-        validated = (service or self._metadata).import_metadata(frame)
+        validated = (service or self._metadata).import_metadata(frame, fresh=fresh)
         logger.info("metadata_file_ingestion_completed", path=str(path), row_count=len(frame))
         return validated
 

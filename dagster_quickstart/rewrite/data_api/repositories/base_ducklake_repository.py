@@ -10,8 +10,8 @@ from typing import Iterator
 import duckdb
 import pandas as pd
 
-from resources.duckdb_datacacher import SQL, render_ducklake_sql
-from resources.duckdb_datacacher import quote_identifier as _quote_identifier
+from dagster_quickstart.resources.duckdb_datacacher import SQL, render_ducklake_sql
+from dagster_quickstart.resources.duckdb_datacacher import quote_identifier as _quote_identifier
 
 
 logger = structlog.get_logger(__name__)
@@ -144,6 +144,22 @@ class BaseDuckLakeRepository:
             self._connection.execute(query)
         else:
             self._connection.execute(query, parameters)
+
+    def list_snapshots(self) -> pd.DataFrame:
+        """
+        Return every DuckLake snapshot for the attached catalog, oldest first.
+
+        Powers "what changed since last time" checks (a newly introduced
+        column or column value) directly off DuckLake's own version history,
+        instead of a separate static reference file.
+        """
+        try:
+            return self.execute(
+                "SELECT * FROM ducklake_snapshots(current_catalog()) ORDER BY snapshot_id"
+            )
+        except Exception:
+            self._logger.debug("ducklake_snapshots_unavailable")
+            return pd.DataFrame(columns=["snapshot_id", "snapshot_time"])
 
     def qualify_table(self, table_name: str) -> str:
         """

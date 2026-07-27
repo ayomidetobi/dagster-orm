@@ -8,8 +8,8 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
-from rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
+from dagster_quickstart.rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -112,16 +112,23 @@ class MetadataRepository:
     def save_metadata(
         self,
         frame: pd.DataFrame,
+        *,
+        fresh: bool = False,
     ) -> None:
         if frame.empty:
             return
 
-        logger.info("metadata_repository_save", row_count=len(frame))
-        self._storage.save_metadata(frame)
+        logger.info("metadata_repository_save", row_count=len(frame), fresh=fresh)
+        self._storage.save_metadata(frame, fresh=fresh)
 
     def refresh(self) -> None:
         logger.info("metadata_repository_refresh")
         self._storage.refresh_metadata()
+
+    def list_snapshots(self) -> pd.DataFrame:
+        """Return every catalog snapshot (oldest first), for quality/drift reporting."""
+
+        return self._storage.list_snapshots()
 
     def _validate_filter_fields(
         self,

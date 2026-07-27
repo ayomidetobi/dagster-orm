@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from resources.duckdb_datacacher import SQL
-from rewrite.data_api.query.snapshot import table_reference
+from dagster_quickstart.resources.duckdb_datacacher import SQL
+from dagster_quickstart.rewrite.data_api.query.snapshot import table_reference
 
 
 class DuckLakeMetadataQueryBuilder:
@@ -51,18 +51,33 @@ class DuckLakeMetadataQueryBuilder:
 
         return sql
 
-    def build_ensure_table(self, relation: str) -> SQL:
+    def build_ensure_table(self, relation: str, columns: Sequence[str]) -> SQL:
         """
-        Create the table from a sample relation's schema if it doesn't exist yet.
+        Create the table (with these columns) if it doesn't exist yet.
 
         Metadata columns are meant to stay flexible (arbitrary per-asset-class
-        attributes), so the schema is inferred from the first write rather
-        than declared up front.
+        attributes), so which columns exist is inferred from the first write
+        rather than declared up front -- but every column is explicitly cast
+        to VARCHAR rather than left to DuckDB's type inference from the
+        sample relation. Left uncast, a column that's entirely NULL in the
+        first-ever write (e.g. a derived series saved before parent_series_code
+        is populated) infers a numeric SQL type; any later write with real
+        text in that column (e.g. a pipe-delimited parent_series_code list)
+        then fails with a ConversionException.
         """
 
+        select_list = SQL.join(
+            [
+                SQL("$column::VARCHAR AS $column", column=SQL.identifier(column))
+                for column in columns
+            ],
+            SQL(", "),
+        )
+
         return SQL(
-            "CREATE TABLE IF NOT EXISTS $table AS SELECT * FROM $relation LIMIT 0",
+            "CREATE TABLE IF NOT EXISTS $table AS SELECT $select_list FROM $relation LIMIT 0",
             table=SQL.identifier(self._table),
+            select_list=select_list,
             relation=SQL.identifier(relation),
         )
 
@@ -128,6 +143,25 @@ class DuckLakeMetadataQueryBuilder:
             table=SQL.identifier(self._table),
             column=SQL.identifier(column),
         )
+
+    def build_delete(self, filters: Mapping[str, Sequence[str]]) -> SQL:
+        """
+        Build a DELETE statement for the given filters.
+
+        Reuses the same IN-based _filter_clauses() build_get_metadata()'s
+        WHERE clause uses. Used by save_metadata(fresh=True) to remove
+        existing rows for the series_codes in an incoming frame before
+        re-inserting them, so re-importing the same file replaces those
+        rows instead of accumulating duplicates.
+        """
+
+        sql = SQL("DELETE FROM $table", table=SQL.identifier(self._table))
+
+        clauses = self._filter_clauses(filters)
+        if clauses:
+            sql += SQL.join(clauses, SQL(" AND "), prefix=" WHERE ")
+
+        return sql
 
     def build_columns(self) -> SQL:
         """Build a schema-only query (no rows) to discover available column names."""

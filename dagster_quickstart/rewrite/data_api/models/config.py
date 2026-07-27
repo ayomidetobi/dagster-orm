@@ -1,58 +1,23 @@
-"""Pydantic configuration models for the rewrite package."""
+"""Backwards-compatible re-export shim.
+
+These Pydantic models now live in resources/duckdb_cacher/config.py --
+moved there since they're consumed by the DuckDB/DuckLake connection layer,
+not anything specific to the rewrite package. Re-exported here unchanged so
+existing `from dagster_quickstart.rewrite.data_api.models.config import ...` imports keep working.
+"""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from dagster_quickstart.resources.duckdb_cacher.config import (
+    DuckLakeCatalogConfig,
+    DuckLakeConfig,
+    PostgresConfig,
+    S3SecretConfig,
+)
 
-
-class PostgresConfig(BaseModel):
-    """Connection settings for PostgreSQL-backed DuckLake catalogs."""
-
-    model_config = ConfigDict(frozen=True)
-
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
-    schema: str = "public"
-    sslmode: str | None = None
-
-
-class DuckLakeConfig(BaseModel):
-    """Configuration for DuckLake extension installation."""
-
-    model_config = ConfigDict(frozen=True)
-
-    extension_name: str = "ducklake"
-    postgres_extension_name: str = "postgres"
-    httpfs_extension_name: str = "httpfs"
-    install: bool = True
-    load: bool = True
-
-
-class S3SecretConfig(BaseModel):
-    """DuckDB secret configuration for S3 access via httpfs."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str = "secret"
-    key_id: str
-    secret: str
-    region: str
-    provider: str = "config"
-    session_token: str | None = None
-    endpoint: str | None = None
-
-
-class DuckLakeCatalogConfig(BaseModel):
-    """DuckLake attach configuration for PostgreSQL and object storage."""
-
-    model_config = ConfigDict(frozen=True)
-
-    postgres: PostgresConfig | None = None
-    s3_secret: S3SecretConfig | None = None
-    catalog_alias: str = "my_ducklake"
-    data_path: str = "data_files/"
-    attach_options: tuple[str, ...] = ()
-    schema_name: str = "public"
+__all__ = [
+    "DuckLakeCatalogConfig",
+    "DuckLakeConfig",
+    "PostgresConfig",
+    "S3SecretConfig",
+]

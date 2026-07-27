@@ -6,17 +6,17 @@ from collections.abc import Mapping
 
 from dependency_injector import containers, providers
 
-from rewrite.data_api.api.data_api import DataAPI, RewriteServices
-from rewrite.data_api.ingestion.file_loader import FileIngestionService
-from rewrite.data_api.ingestion.ingestion_service import IngestionService
-from rewrite.data_api.ingestion.writer import IngestionWriter
-from rewrite.data_api.repositories.metadata_repository import MetadataRepository
-from rewrite.data_api.repositories.value_repository import ValueRepository
-from rewrite.data_api.services.direct_fetch_service import DirectFetchService
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
-from rewrite.data_api.services.vendor_service import VendorClient, VendorService
-from rewrite.data_api.validation import validate_derived_metadata_frame
+from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI, RewriteServices
+from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
+from dagster_quickstart.rewrite.data_api.ingestion.ingestion_service import IngestionService
+from dagster_quickstart.rewrite.data_api.ingestion.writer import IngestionWriter
+from dagster_quickstart.rewrite.data_api.repositories.metadata_repository import MetadataRepository
+from dagster_quickstart.rewrite.data_api.repositories.value_repository import ValueRepository
+from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient, VendorService
+from dagster_quickstart.rewrite.data_api.validation import validate_derived_metadata_frame
 
 
 def _build_metadata_derived_service(repository: object | None) -> MetadataService | None:
@@ -34,11 +34,11 @@ class RewriteContainer(containers.DeclarativeContainer):
 
     wiring_config = containers.WiringConfiguration(
         modules=[
-            "rewrite.data_api.api.data_api",
-            "rewrite.data_api.api.queryset",
-            "rewrite.data_api.ingestion.ingestion_service",
-            "rewrite.data_api.services.metadata_service",
-            "rewrite.data_api.services.value_service",
+            "dagster_quickstart.rewrite.data_api.api.data_api",
+            "dagster_quickstart.rewrite.data_api.api.queryset",
+            "dagster_quickstart.rewrite.data_api.ingestion.ingestion_service",
+            "dagster_quickstart.rewrite.data_api.services.metadata_service",
+            "dagster_quickstart.rewrite.data_api.services.value_service",
         ]
     )
 
@@ -83,6 +83,7 @@ class RewriteContainer(containers.DeclarativeContainer):
         metadata_service=metadata_service,
         vendor_service=vendor_service,
         derived_metadata_service=metadata_derived_service,
+        value_service=value_service,
     )
 
     file_ingestion_service = providers.Factory(
