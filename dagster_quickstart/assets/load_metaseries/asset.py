@@ -33,7 +33,9 @@ def load_meta_series_to_s3(
     validated_df = data_api.import_metadata(path=config.csv_path, fresh=config.fresh)
     row_count = len(validated_df)
 
-    report = data_api.get_metadata_quality_report()
+    report = data_api.get_metadata_quality_report(
+        series_codes=validated_df["series_code"].tolist()
+    )
     context.log.info(f"Loaded {row_count} meta series rows into the DuckLake metadata table")
     context.log.info(f"Metadata quality report: {report.summary()}")
 

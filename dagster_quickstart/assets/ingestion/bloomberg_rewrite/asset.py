@@ -1,0 +1,99 @@
+"""DuckLake-native Bloomberg values ingestion asset (rewrite DataAPI).
+
+Gets Bloomberg-sourced metadata, fetches live values straight from the
+vendor, and writes them into the DuckLake values table -- no wide-format
+monthly partitions, no S3 control tables. See assets/ingestion/bloomberg/
+for the legacy orm-based wide-partition asset. No asset check -- this is a
+simple get-metadata / get-values / write-values flow with its own
+MaterializeResult report.
+"""
+
+from datetime import datetime
+
+from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
+
+from dagster_quickstart.assets.ingestion.bloomberg_rewrite.config import BloombergValuesConfig
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, TickerSource
+from dagster_quickstart.rewrite.data_api.vendors.ticker_columns import resolve_ticker_field_columns
+
+BBG_TICKER_COLUMN, _ = resolve_ticker_field_columns(TickerSource.BLOOMBERG)
+
+
+@asset(
+    required_resource_keys={"rewrite_data_api"},
+    name="ingest_bloomberg_values",
+)
+def ingest_bloomberg_values(
+    context: AssetExecutionContext, config: BloombergValuesConfig
+) -> MaterializeResult:
+    """Fetch Bloomberg values live and write them into the DuckLake values table.
+
+    Args:
+        context: Dagster asset execution context
+        config: BloombergValuesConfig with series/date-range selection
+
+    Returns:
+        MaterializeResult with series/row counts and the S3 path the values
+        were written to (queried live from DuckLake, not assumed).
+    """
+    data_api = context.resources.rewrite_data_api.api
+
+    metadata_df = data_api.get_metadata().frame
+    if BBG_TICKER_COLUMN in metadata_df.columns:
+        bloomberg_metadata = metadata_df[metadata_df[BBG_TICKER_COLUMN].notna()]
+    else:
+        bloomberg_metadata = metadata_df.iloc[0:0]
+
+    if config.series_codes:
+        bloomberg_metadata = bloomberg_metadata[
+            bloomberg_metadata[MetadataColumns.SERIES_CODE].isin(config.series_codes)
+        ]
+
+    series_codes = (
+        bloomberg_metadata[MetadataColumns.SERIES_CODE]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .unique()
+        .tolist()
+    )
+
+    if not series_codes:
+        context.log.warning("No Bloomberg-sourced series found in metadata")
+        return MaterializeResult(metadata={"series_count": 0, "timestamp_count": 0})
+
+    context.log.info(f"Fetching {len(series_codes)} Bloomberg series live")
+
+    values_df = data_api.get_values(
+        series_codes,
+        ticker_source=TickerSource.BLOOMBERG,
+        out_of_cache=True,
+        start=datetime.fromisoformat(config.start) if config.start else None,
+        end=datetime.fromisoformat(config.end) if config.end else None,
+    )
+
+    if values_df.empty:
+        context.log.warning("Bloomberg vendor returned no values for the requested series")
+        return MaterializeResult(
+            metadata={"series_count": len(series_codes), "timestamp_count": 0}
+        )
+
+    data_api.write_values(values_df)
+
+    data_points_written = int(values_df.notna().sum().sum())
+    s3_path = data_api.get_values_storage_path()
+
+    context.log.info(
+        f"Wrote {data_points_written} Bloomberg data point(s) across "
+        f"{len(values_df.columns)} series to {s3_path}"
+    )
+
+    return MaterializeResult(
+        metadata={
+            "series_count": len(values_df.columns),
+            "timestamp_count": len(values_df),
+            "data_points_written": data_points_written,
+            "series_codes_sample": MetadataValue.json(series_codes[:20]),
+            "s3_path": s3_path,
+        }
+    )

@@ -166,6 +166,7 @@ class DataAPI:
     def get_metadata_quality_report(
         self,
         *,
+        series_codes: Sequence[str] | None = None,
         null_check_columns: Sequence[str] = DEFAULT_NULL_CHECK_COLUMNS,
     ) -> MetadataQualityReport:
         """Return a data-quality report for the metadata catalog.
@@ -179,6 +180,16 @@ class DataAPI:
             if not report.is_clean:
                 ...
 
+        series_codes scopes the report to just those series -- e.g. the ones
+        from the file you just imported -- so unrelated rows already
+        sitting in the catalog (old test data, a different file's series)
+        never get reported:
+
+            validated = data_api.import_metadata(path="meta_series.csv")
+            report = data_api.get_metadata_quality_report(
+                series_codes=validated["series_code"].tolist()
+            )
+
         null_check_columns controls which columns get flagged for null
         values -- defaults to series_code/series_name; pass more (e.g.
         asset_class) as new required fields come up:
@@ -191,7 +202,10 @@ class DataAPI:
         import just introduced) or standalone (e.g. from a Dagster asset
         check re-run independently of any specific import).
         """
-        return self._services.metadata.get_quality_report(null_check_columns=null_check_columns)
+        return self._services.metadata.get_quality_report(
+            series_codes=series_codes,
+            null_check_columns=null_check_columns,
+        )
 
     def filter_options(
         self,
@@ -404,3 +418,12 @@ class DataAPI:
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:
         """Check whether value rows exist for the requested series."""
         return self._services.values.value_exists(series_codes)
+
+    def get_values_storage_path(self) -> str | None:
+        """Return the common S3/local path DuckLake is currently using for the values table.
+
+        Queried live via ducklake_list_files() -- always reflects reality
+        (partitioning, bucket, prefix) rather than an assumed convention.
+        None if nothing has been written yet.
+        """
+        return self._services.values.get_storage_path()

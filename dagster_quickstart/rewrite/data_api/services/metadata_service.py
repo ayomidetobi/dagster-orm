@@ -148,6 +148,7 @@ class MetadataService:
     def get_quality_report(
         self,
         *,
+        series_codes: Sequence[str] | None = None,
         null_check_columns: Sequence[str] = DEFAULT_NULL_CHECK_COLUMNS,
     ) -> MetadataQualityReport:
         """Report data-quality signals for the metadata catalog.
@@ -158,6 +159,12 @@ class MetadataService:
         -- to flag newly introduced columns/column values, alongside
         duplicate series_code rows and null-value counts in the current
         state.
+
+        series_codes scopes the report to just those series (e.g. the ones
+        in a specific import's source file) -- duplicates/nulls/new-values
+        are then computed only within that scope, so unrelated rows already
+        sitting in the catalog (old test data, a different file's series)
+        never get reported. None (default) reports on the whole table.
 
         ducklake_snapshots() is catalog-wide (every table's writes, not just
         this one), so the immediately-preceding snapshot_id often leaves
@@ -175,7 +182,9 @@ class MetadataService:
         (e.g. a null series_code already sitting in the catalog) would
         otherwise fail validation.
         """
-        current = self._repository.get_metadata({})
+        filters = {MetadataColumns.SERIES_CODE: list(series_codes)} if series_codes else {}
+
+        current = self._repository.get_metadata(filters)
         snapshots = self._repository.list_snapshots()
 
         current_version: int | None = None
@@ -189,7 +198,7 @@ class MetadataService:
 
             for version in reversed(candidate_versions):
                 try:
-                    candidate = self._repository.get_metadata({}, version=version)
+                    candidate = self._repository.get_metadata(filters, version=version)
                 except Exception:
                     logger.debug("quality_report_baseline_predates_table", version=version)
                     break

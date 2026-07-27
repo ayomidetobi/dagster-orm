@@ -1,13 +1,19 @@
 """Asset check reporting DuckLake metadata quality (rewrite DataAPI, snapshot-based).
 
-Duplicates/nulls are real defects (ERROR). New columns/new column values are
-informational -- metadata legitimately grows over time -- so they're surfaced
-as a WARN rather than blocking the pipeline.
+Scoped to the series_codes in the current meta_series.csv -- pre-existing
+catalog rows for series not in that file (e.g. old test/demo data, a
+different file's series) are never reported. Duplicates/nulls are real
+defects (ERROR). New columns/new column values are informational -- metadata
+legitimately grows over time -- so they're surfaced as a WARN rather than
+blocking the pipeline.
 """
 
 from dagster import AssetCheckExecutionContext, AssetCheckResult, AssetCheckSeverity, asset_check
 
+from dagster_quickstart.assets.load_metaseries.config import LoadMetaSeriesConfig
 from dagster_quickstart.assets.utils.duplicate_checks import log_duplicate_errors
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns
+from dagster_quickstart.rewrite.data_api.ingestion.file_loader import read_tabular_file
 
 
 @asset_check(
@@ -15,16 +21,27 @@ from dagster_quickstart.assets.utils.duplicate_checks import log_duplicate_error
     name="validate_metadata_quality",
     description=(
         "Reports duplicate series_code rows, null values, and new columns/column values "
-        "in the DuckLake metadata catalog, diffed against its own prior snapshot"
+        "for the current meta_series.csv's series, diffed against DuckLake's own prior snapshot"
     ),
     required_resource_keys={"rewrite_data_api"},
 )
-def validate_metadata_quality(context: AssetCheckExecutionContext) -> AssetCheckResult:
-    """Report DuckLake metadata quality using the rewrite DataAPI's quality report."""
+def validate_metadata_quality(
+    context: AssetCheckExecutionContext, config: LoadMetaSeriesConfig
+) -> AssetCheckResult:
+    """Report DuckLake metadata quality, scoped to the current source file's series_codes."""
     data_api = context.resources.rewrite_data_api.api
 
     try:
-        report = data_api.get_metadata_quality_report()
+        source_frame = read_tabular_file(config.csv_path)
+        series_codes = (
+            source_frame[MetadataColumns.SERIES_CODE]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
+        )
+        report = data_api.get_metadata_quality_report(series_codes=series_codes)
     except Exception as exc:
         return AssetCheckResult(
             passed=False,

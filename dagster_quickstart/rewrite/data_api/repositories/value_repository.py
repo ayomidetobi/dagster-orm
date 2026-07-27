@@ -121,6 +121,11 @@ class ValueRepository:
         logger.info("value_repository_delete", filter_fields=sorted(filters.keys()))
         self._storage.delete_values(filters)
 
+    def get_storage_path(self) -> str | None:
+        """Return the common physical storage path backing the values table, if any."""
+
+        return self._storage.get_storage_path()
+
     @staticmethod
     def _validate_series_codes(
         series_codes: Sequence[str],

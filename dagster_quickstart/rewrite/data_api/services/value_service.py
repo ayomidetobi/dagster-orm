@@ -79,3 +79,7 @@ class ValueService:
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:
         """Check whether value rows exist for the requested series."""
         return self._repository.value_exists(series_codes)
+
+    def get_storage_path(self) -> str | None:
+        """Return the common physical storage path backing the values table, if any."""
+        return self._repository.get_storage_path()

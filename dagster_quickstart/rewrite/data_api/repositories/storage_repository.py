@@ -93,6 +93,9 @@ class ValueStorageRepository(Protocol):
     def delete_values(self, filters: Mapping[str, object]) -> None:
         """Delete value rows matching the supplied filters."""
 
+    def get_storage_path(self) -> str | None:
+        """Return the common physical storage path backing this table, if any."""
+
 
 @runtime_checkable
 class LifecycleRepository(Protocol):

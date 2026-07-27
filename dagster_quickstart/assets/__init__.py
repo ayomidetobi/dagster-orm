@@ -9,6 +9,7 @@ All temp table management, queries, and S3 operations go through the ORM.
 #     ingest_bloomberg_data_backfill,
 #     ingest_bloomberg_data_daily,
 # )
+from dagster_quickstart.assets.ingestion.bloomberg_rewrite import ingest_bloomberg_values
 # from dagster_quickstart.assets.ingestion.hawk import (
 #     ingest_hawk_data_backfill,
 #     ingest_hawk_data_daily,
@@ -31,6 +32,7 @@ __all__ = [
     # "load_series_dependencies_to_s3",
     # "ingest_bloomberg_data_daily",
     # "ingest_bloomberg_data_backfill",
+    "ingest_bloomberg_values",
     # "ingest_hawk_data_daily",
     # "ingest_hawk_data_backfill",
     "validate_metadata_quality",
