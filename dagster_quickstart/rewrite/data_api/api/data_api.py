@@ -10,17 +10,18 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from rewrite.data_api.api.metadata_result import MetadataResult
-from rewrite.data_api.api.queryset import QueryState, QuerySet
-from rewrite.data_api.api.requests import validate_value_query
-from rewrite.data_api.columns import ValueColumns, normalize_ticker_source
-from rewrite.data_api.shaping import melt_values, pivot_values
-from rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
-from rewrite.data_api.ingestion.file_loader import FileIngestionService
-from rewrite.data_api.services.direct_fetch_service import DirectFetchService
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
-from rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.api.metadata_result import MetadataResult
+from dagster_quickstart.rewrite.data_api.api.queryset import QueryState, QuerySet
+from dagster_quickstart.rewrite.data_api.api.requests import validate_value_query
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns, normalize_ticker_source
+from dagster_quickstart.rewrite.data_api.shaping import melt_values, pivot_values
+from dagster_quickstart.rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
+from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
+from dagster_quickstart.rewrite.data_api.quality import DEFAULT_NULL_CHECK_COLUMNS, MetadataQualityReport
+from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
 
 logger = structlog.get_logger(__name__)
 
@@ -59,7 +60,7 @@ class DataAPI:
         vendor_clients: Mapping[str, VendorClient] | None = None,
     ) -> None:
         if services is None:
-            from rewrite.data_api.bootstrap import build_default_services
+            from dagster_quickstart.rewrite.data_api.bootstrap import build_default_services
 
             services = build_default_services(vendor_clients=vendor_clients)
         self._services = services
@@ -162,6 +163,36 @@ class DataAPI:
         """Return the available metadata column names (valid filter keys for get_metadata())."""
         return self._services.metadata.list_columns()
 
+    def get_metadata_quality_report(
+        self,
+        *,
+        null_check_columns: Sequence[str] = DEFAULT_NULL_CHECK_COLUMNS,
+    ) -> MetadataQualityReport:
+        """Return a data-quality report for the metadata catalog.
+
+        Compares the current metadata state against DuckLake's own
+        immediately-preceding snapshot -- no external reference file needed
+        -- to flag newly introduced columns/column values, alongside
+        duplicate series_code rows and null-value counts:
+
+            report = data_api.get_metadata_quality_report()
+            if not report.is_clean:
+                ...
+
+        null_check_columns controls which columns get flagged for null
+        values -- defaults to series_code/series_name; pass more (e.g.
+        asset_class) as new required fields come up:
+
+            data_api.get_metadata_quality_report(
+                null_check_columns=[*DEFAULT_NULL_CHECK_COLUMNS, "asset_class"]
+            )
+
+        Suited to call right after import_metadata() (to report on what an
+        import just introduced) or standalone (e.g. from a Dagster asset
+        check re-run independently of any specific import).
+        """
+        return self._services.metadata.get_quality_report(null_check_columns=null_check_columns)
+
     def filter_options(
         self,
         fields: str | Sequence[str] | None = None,
@@ -256,6 +287,7 @@ class DataAPI:
         version: int | None = None,
         as_of: datetime | None = None,
         out_of_cache: bool | None = None,
+        parents_out_of_cache: bool = False,
     ) -> pd.DataFrame:
         """Return value rows for the requested series.
 
@@ -266,6 +298,12 @@ class DataAPI:
         with; pass it explicitly to override for a single call. When true,
         bypasses DuckLake entirely and fetches live from the vendor named by
         ticker_source (required in that case).
+
+        parents_out_of_cache only matters for a derived series requested
+        with out_of_cache=True: it controls where its PARENT series' values
+        come from -- False (default) reads them from the datalake
+        (DuckLake), True fetches them live from the vendor too. Has no
+        effect on non-derived series or on out_of_cache=False calls.
 
         The returned frame remembers its ticker_source (in `.attrs`), so
         write_values(get_values(...)) tags rows with the right vendor
@@ -298,6 +336,7 @@ class DataAPI:
                 end=request.end,
                 order_by=request.order_by,
                 limit=request.limit,
+                parents_out_of_cache=parents_out_of_cache,
             )
         else:
             frame = self._services.values.read_values(

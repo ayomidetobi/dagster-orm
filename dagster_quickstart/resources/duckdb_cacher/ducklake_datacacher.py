@@ -16,7 +16,7 @@ import pandas as pd
 import structlog
 
 from .config import DuckLakeCatalogConfig, DuckLakeConfig, S3SecretConfig
-from .exceptions import DuckLakeConfigError
+from dagster_quickstart.rewrite.data_api.errors import DuckLakeConfigError
 from .utils import (
     SQL,
     create_s3_secret,

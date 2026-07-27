@@ -9,10 +9,10 @@ import duckdb
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ControlTables, MetadataColumns
-from rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
-from rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
-from rewrite.data_api.query.ducklake_metadata_query_builder import (
+from dagster_quickstart.rewrite.data_api.columns import ControlTables, MetadataColumns
+from dagster_quickstart.rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
+from dagster_quickstart.rewrite.data_api.query.ducklake_metadata_query_builder import (
     DuckLakeMetadataQueryBuilder,
 )
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
-from resources.duckdb_datacacher import SQL
-from rewrite.data_api.query.snapshot import table_reference
+from dagster_quickstart.resources.duckdb_datacacher import SQL
+from dagster_quickstart.rewrite.data_api.query.snapshot import table_reference
 
 
 class DuckLakeMetadataQueryBuilder:

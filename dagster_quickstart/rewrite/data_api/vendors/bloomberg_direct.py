@@ -24,8 +24,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from rewrite.data_api.services.vendor_service import VendorClient
-from rewrite.data_api.vendors.demo_data import fetch_demo_values
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.vendors.demo_data import fetch_demo_values
 
 OUT_FROM_CACHE_OPTIONS = ("yes", "no", "ignore")
 
@@ -88,7 +88,7 @@ def resolve_bloomberg_client() -> VendorClient:
     Server (is_local() -> False): BloombergDirectIgnoreClient, TSS/Server API.
     """
     if is_local():
-        from rewrite.data_api.vendors.bloomberg import BloombergClient
+        from dagster_quickstart.rewrite.data_api.vendors.bloomberg import BloombergClient
 
         return BloombergClient()
 

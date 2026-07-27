@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import CalcType
-from rewrite.data_api.errors import InvalidParentSeriesCountError, UnknownCalcTypeError
+from dagster_quickstart.rewrite.data_api.columns import CalcType
+from dagster_quickstart.rewrite.data_api.errors import InvalidParentSeriesCountError, UnknownCalcTypeError
 
 logger = structlog.get_logger(__name__)
 

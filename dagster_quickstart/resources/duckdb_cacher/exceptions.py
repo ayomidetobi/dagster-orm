@@ -9,6 +9,6 @@ several different files in this folder.
 
 from __future__ import annotations
 
-from rewrite.data_api.errors import DuckLakeConfigError
+from dagster_quickstart.rewrite.data_api.errors import DuckLakeConfigError
 
 __all__ = ["DuckLakeConfigError"]

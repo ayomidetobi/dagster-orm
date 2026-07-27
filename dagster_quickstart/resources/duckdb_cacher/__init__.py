@@ -28,7 +28,7 @@ from .ducklake_datacacher import (
     create_duckdb_connection,
 )
 from .duckdb_datacacher import DuckDBDataCacher, duckdb_datacacher
-from .exceptions import DuckLakeConfigError
+from dagster_quickstart.rewrite.data_api.errors import DuckLakeConfigError
 from .utils import (
     SQL,
     SQLIdentifier,

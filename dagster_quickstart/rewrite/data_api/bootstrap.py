@@ -14,20 +14,20 @@ from urllib.parse import parse_qs, urlparse
 import structlog
 from decouple import config as env_config
 
-from resources.duckdb_datacacher import create_duckdb_connection
-from rewrite.data_api.columns import TickerSource
-from rewrite.data_api.container import build_rewrite_container
-from rewrite.data_api.models.config import DuckLakeCatalogConfig, PostgresConfig, S3SecretConfig
-from rewrite.data_api.repositories.ducklake_meta_repository import (
+from dagster_quickstart.resources.duckdb_datacacher import create_duckdb_connection
+from dagster_quickstart.rewrite.data_api.columns import TickerSource
+from dagster_quickstart.rewrite.data_api.container import build_rewrite_container
+from dagster_quickstart.rewrite.data_api.models.config import DuckLakeCatalogConfig, PostgresConfig, S3SecretConfig
+from dagster_quickstart.rewrite.data_api.repositories.ducklake_meta_repository import (
     DuckLakeMetadataStorageRepository,
 )
-from rewrite.data_api.repositories.ducklake_value_repository import (
+from dagster_quickstart.rewrite.data_api.repositories.ducklake_value_repository import (
     DuckLakeValueStorageRepository,
 )
-from rewrite.data_api.services.vendor_service import VendorClient
-from rewrite.data_api.vendors.bloomberg import BloombergClient
-from rewrite.data_api.vendors.hawk import HawkClient
-from rewrite.data_api.vendors.mds import MDSClient
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.vendors.bloomberg import BloombergClient
+from dagster_quickstart.rewrite.data_api.vendors.hawk import HawkClient
+from dagster_quickstart.rewrite.data_api.vendors.mds import MDSClient
 
 logger = structlog.get_logger(__name__)
 

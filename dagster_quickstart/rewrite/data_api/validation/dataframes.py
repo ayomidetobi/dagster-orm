@@ -6,8 +6,8 @@ import pandas as pd
 import pandera as pa
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns, ValueColumns
-from rewrite.data_api.errors import FrameValidationError
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, ValueColumns
+from dagster_quickstart.rewrite.data_api.errors import FrameValidationError
 
 logger = structlog.get_logger(__name__)
 

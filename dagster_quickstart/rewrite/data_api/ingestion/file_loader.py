@@ -7,9 +7,9 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from rewrite.data_api.errors import UnsupportedFileTypeError
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.errors import UnsupportedFileTypeError
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
 
 logger = structlog.get_logger(__name__)
 

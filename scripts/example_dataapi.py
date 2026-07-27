@@ -18,9 +18,9 @@ DAGSTER_QUICKSTART = REPO_ROOT / "dagster_quickstart"
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(DAGSTER_QUICKSTART))
 
-from rewrite.data_api.api.data_api import DataAPI
-from rewrite.data_api.columns import MetadataColumns
-from rewrite.data_api.errors import InvalidFilterValueError
+from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns
+from dagster_quickstart.rewrite.data_api.errors import InvalidFilterValueError
 
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:

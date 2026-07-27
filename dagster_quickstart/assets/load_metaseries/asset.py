@@ -1,27 +1,26 @@
-"""Asset for loading meta series CSV to S3 as Parquet file.
+"""Asset for loading meta series CSV into the DuckLake-backed rewrite data lake.
 
-Uses ORM layer (DataAPI) for all operations - no raw SQL.
-Reads meta_series.csv and saves to S3 as Parquet.
+Uses the new rewrite DataAPI (rewrite/data_api/, incl. rewrite/data_api/ingestion/)
+for materialization -- metadata lands straight in the DuckLake metadata table, with
+no separate S3 parquet control-table copy. Data quality (duplicates, nulls, new
+columns/values) is diffed straight off DuckLake's own snapshot history by
+data_api.get_metadata_quality_report() -- see assets/load_metaseries/check.py.
 """
 
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
-from duckdb_tinyorm_py import QueryBuilder
 
 from dagster_quickstart.assets.load_metaseries.config import LoadMetaSeriesConfig
-from dagster_quickstart.orm.data_api import DataAPI
-from dagster_quickstart.orm.infrastructure.duckdb_repository import DuckDbRepository
-from dagster_quickstart.orm.s3_paths import build_s3_control_table_path
 
 
 @asset(
-    required_resource_keys={"duckdb"},
+    required_resource_keys={"rewrite_data_api"},
     name="load_meta_series_to_s3",
     deps=["load_lookup_tables_to_s3"],
 )
 def load_meta_series_to_s3(
     context: AssetExecutionContext, config: LoadMetaSeriesConfig
 ) -> MaterializeResult:
-    """Load meta series CSV to S3 as Parquet file.
+    """Load meta series CSV into the DuckLake metadata table.
 
     Args:
         context: Dagster asset execution context
@@ -30,40 +29,27 @@ def load_meta_series_to_s3(
     Returns:
         MaterializeResult with metadata about the loaded data
     """
-    duckdb_resource = context.resources.duckdb
-    data_api = DataAPI(duckdb_resource)
-    duckdb_repo = DuckDbRepository(duckdb_resource._con)
+    data_api = context.resources.rewrite_data_api.api
+    validated_df = data_api.import_metadata(path=config.csv_path, fresh=config.fresh)
+    row_count = len(validated_df)
 
-    data_api.create_temp_table_from_csv(config.csv_path, config.temp_table_name)
+    report = data_api.get_metadata_quality_report()
+    context.log.info(f"Loaded {row_count} meta series rows into the DuckLake metadata table")
+    context.log.info(f"Metadata quality report: {report.summary()}")
 
-    count_query = QueryBuilder(config.temp_table_name)
-    count_query.select("COUNT(*) as count")
-    count_df = duckdb_repo.fetch_df(count_query)
-    row_count = int(count_df.iloc[0]["count"]) if not count_df.empty else 0
-
-    preview_query = QueryBuilder(config.temp_table_name)
-    preview_query.select(*config.preview_columns).limit(config.preview_limit)
-    preview_df = duckdb_repo.fetch_df(preview_query)
-
-    relative_path = build_s3_control_table_path(config.control_table_type)
-    all_data_query = QueryBuilder(config.temp_table_name)
-    all_data_df = duckdb_repo.fetch_df(all_data_query)
-    data_api.save_dataframe_to_s3(all_data_df, relative_path)
-
-    data_api.drop_temp_table(config.temp_table_name)
-
-    context.log.info(
-        f"Loaded {row_count} meta series rows to S3: {relative_path}",
-        extra={
-            "row_count": row_count,
-            "s3_path": relative_path,
-        },
-    )
+    preview_columns = [column for column in config.preview_columns if column in validated_df.columns]
+    preview_df = validated_df[preview_columns].head(config.preview_limit)
 
     return MaterializeResult(
         metadata={
             "num_records": row_count,
-            "s3_path": relative_path,
             "preview": MetadataValue.md(preview_df.to_markdown()),
+            "quality_report": report.summary(),
+            "duplicate_count": len(report.duplicate_series_codes),
+            "null_counts": report.null_counts,
+            "new_columns": report.new_columns,
+            "new_values": report.new_values,
+            "current_version": report.current_version,
+            "baseline_version": report.baseline_version,
         }
     )

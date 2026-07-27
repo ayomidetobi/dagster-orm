@@ -6,8 +6,8 @@ from datetime import datetime
 
 import structlog
 
-from resources.duckdb_datacacher import SQL
-from rewrite.data_api.errors import SnapshotConflictError
+from dagster_quickstart.resources.duckdb_datacacher import SQL
+from dagster_quickstart.rewrite.data_api.errors import SnapshotConflictError
 
 logger = structlog.get_logger(__name__)
 

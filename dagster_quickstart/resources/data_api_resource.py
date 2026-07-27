@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from dagster import (
     ConfigurableResource,
@@ -11,8 +11,10 @@ from dagster import (
     get_dagster_logger,
 )
 
-from dagster_quickstart.orm.data_api import DataAPI
 from dagster_quickstart.resources.duckdb_resource import DuckDBResource
+
+if TYPE_CHECKING:
+    from dagster_quickstart.orm.data_api import DataAPI
 
 logger = get_dagster_logger()
 
@@ -36,6 +38,8 @@ class DataAPIResource(ConfigurableResource):
     out_of_cache: bool = False
 
     def setup_for_execution(self, context: InitResourceContext) -> None:
+        from dagster_quickstart.orm.data_api import DataAPI
+
         self.duckdb.setup_for_execution(context)
         self._api = DataAPI(
             duckdb_resource=self.duckdb,
