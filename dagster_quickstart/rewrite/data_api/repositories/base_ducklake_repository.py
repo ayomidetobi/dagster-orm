@@ -145,22 +145,6 @@ class BaseDuckLakeRepository:
         else:
             self._connection.execute(query, parameters)
 
-    def list_snapshots(self) -> pd.DataFrame:
-        """
-        Return every DuckLake snapshot for the attached catalog, oldest first.
-
-        Powers "what changed since last time" checks (a newly introduced
-        column or column value) directly off DuckLake's own version history,
-        instead of a separate static reference file.
-        """
-        try:
-            return self.execute(
-                "SELECT * FROM ducklake_snapshots(current_catalog()) ORDER BY snapshot_id"
-            )
-        except Exception:
-            self._logger.debug("ducklake_snapshots_unavailable")
-            return pd.DataFrame(columns=["snapshot_id", "snapshot_time"])
-
     def list_data_files(self, table_name: str) -> pd.DataFrame:
         """
         Return every physical data file currently backing `table_name`.

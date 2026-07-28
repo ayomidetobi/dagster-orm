@@ -45,9 +45,6 @@ class MetadataStorageRepository(Protocol):
     def refresh_metadata(self) -> None:
         """Refresh any cached catalog state."""
 
-    def list_snapshots(self) -> pd.DataFrame:
-        """Return every catalog snapshot (oldest first), for quality/drift reporting."""
-
 
 @runtime_checkable
 class ValueStorageRepository(Protocol):

@@ -17,7 +17,6 @@ from dagster_quickstart.rewrite.data_api.columns import ValueColumns, normalize_
 from dagster_quickstart.rewrite.data_api.shaping import melt_values, pivot_values
 from dagster_quickstart.rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
 from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
-from dagster_quickstart.rewrite.data_api.quality import DEFAULT_NULL_CHECK_COLUMNS, MetadataQualityReport
 from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
 from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
 from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
@@ -162,50 +161,6 @@ class DataAPI:
     def get_metadata_columns(self) -> list[str]:
         """Return the available metadata column names (valid filter keys for get_metadata())."""
         return self._services.metadata.list_columns()
-
-    def get_metadata_quality_report(
-        self,
-        *,
-        series_codes: Sequence[str] | None = None,
-        null_check_columns: Sequence[str] = DEFAULT_NULL_CHECK_COLUMNS,
-    ) -> MetadataQualityReport:
-        """Return a data-quality report for the metadata catalog.
-
-        Compares the current metadata state against DuckLake's own
-        immediately-preceding snapshot -- no external reference file needed
-        -- to flag newly introduced columns/column values, alongside
-        duplicate series_code rows and null-value counts:
-
-            report = data_api.get_metadata_quality_report()
-            if not report.is_clean:
-                ...
-
-        series_codes scopes the report to just those series -- e.g. the ones
-        from the file you just imported -- so unrelated rows already
-        sitting in the catalog (old test data, a different file's series)
-        never get reported:
-
-            validated = data_api.import_metadata(path="meta_series.csv")
-            report = data_api.get_metadata_quality_report(
-                series_codes=validated["series_code"].tolist()
-            )
-
-        null_check_columns controls which columns get flagged for null
-        values -- defaults to series_code/series_name; pass more (e.g.
-        asset_class) as new required fields come up:
-
-            data_api.get_metadata_quality_report(
-                null_check_columns=[*DEFAULT_NULL_CHECK_COLUMNS, "asset_class"]
-            )
-
-        Suited to call right after import_metadata() (to report on what an
-        import just introduced) or standalone (e.g. from a Dagster asset
-        check re-run independently of any specific import).
-        """
-        return self._services.metadata.get_quality_report(
-            series_codes=series_codes,
-            null_check_columns=null_check_columns,
-        )
 
     def filter_options(
         self,

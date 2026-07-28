@@ -1,0 +1,315 @@
+<!--
+  Dagster run notification -- "Run Completed with Warnings"
+  Jinja2 template. Render with e.g.:
+
+      from jinja2 import Template
+      html = Template(open("run_warning.html").read()).render(
+          subject="Run Completed with Warnings - bloomberg_mds_ingestion_job",
+          preheader="Completed with 1 warning: freshness check 12 min behind threshold.",
+          job_name="bloomberg_mds_ingestion_job",
+          partition="PX_LAST",
+          run_id="a3f9c2e1-88b0-4d7a",
+          run_url="https://dagster.internal/runs/a3f9c2e1-88b0-4d7a",
+          source_system="Bloomberg BPIPE (via MDS gateway)",
+          fields_fetched="PX_LAST, PX_BID, PX_ASK, VOLUME",
+          triggered_by="Schedule · daily_eod_close (18:30 UTC)",
+          start_end="2026-07-28 18:30:02 UTC → 18:32:47 UTC",
+          duration="2m 45s",
+          environment="Production",
+          assets=[
+              {"name": "raw_bloomberg_px_last", "rows": "18,432", "delta": "+126", "delta_up": True, "size": "4.1 MB", "status": "OK"},
+              {"name": "curated_eod_prices", "rows": "18,432", "delta": "+126", "delta_up": True, "size": "3.8 MB", "status": "OK"},
+              {"name": "px_last_partition_index", "rows": "1", "delta": None, "delta_up": None, "size": "2 KB", "status": "WARN"},
+          ],
+          checks=[
+              {"label": "Row count within expected range (17.5k–19k)", "status": "PASS", "note": None},
+              {"label": "Null check on PX_LAST", "status": "PASS", "note": None},
+              {"label": "Freshness (max ts within 15 min of partition close)", "status": "WARN",
+               "note": "Latest timestamp is 12 min behind partition close (threshold: 15 min)."},
+              {"label": "Schema match vs contract v3", "status": "PASS", "note": None},
+          ],
+          preview_table_name="curated_eod_prices",
+          preview_columns=["TICKER", "PX_LAST", "VOLUME", "AS_OF"],
+          preview_rows=[
+              ["AAPL US Equity", "228.41", "54,213,900", "2026-07-28"],
+              ["MSFT US Equity", "512.09", "21,884,120", "2026-07-28"],
+              ["JPM US Equity", "301.55", "9,442,003", "2026-07-28"],
+          ],
+      )
+
+  Outlook notes: rounded corners / CSS gradients degrade to square / solid
+  color in Outlook desktop (Word rendering engine) -- intentional graceful
+  degradation. Buttons use the VML "bulletproof button" technique.
+-->
+<!doctype html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<!--[if mso]>
+<noscript>
+<xml>
+<o:OfficeDocumentSettings>
+<o:PixelsPerInch>96</o:PixelsPerInch>
+<o:AllowPNG/>
+</o:OfficeDocumentSettings>
+</xml>
+</noscript>
+<style>
+table {border-collapse:collapse;}
+</style>
+<![endif]-->
+<title>{{ subject }}</title>
+<style>
+  body, table, td, a { font-family: Arial, Helvetica, sans-serif; }
+  img { border: 0; line-height: 100%; outline: none; text-decoration: none; }
+  a { text-decoration: none; }
+  body { margin: 0; padding: 0; background-color: #f2f4f7; }
+  @media screen and (max-width: 620px) {
+    .email-container { width: 100% !important; }
+    .px-24 { padding-left: 16px !important; padding-right: 16px !important; }
+    .stack { display: block !important; width: 100% !important; }
+    .btn-full { width: 100% !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; background-color:#f2f4f7;">
+<div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f2f4f7;">
+  {{ preheader }}
+</div>
+
+<center style="width:100%; background-color:#f2f4f7;">
+<!--[if mso]>
+<table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td>
+<![endif]-->
+<div class="email-container" style="max-width:600px; margin:0 auto;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+    <tr>
+      <td style="padding:24px 16px;">
+
+        <!-- ===================== BANNER ===================== -->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#e08e0b" style="width:100%; background-color:#e08e0b; border-radius:12px 12px 0 0;">
+          <!--[if !mso]><!-->
+          <tr>
+            <td style="background:linear-gradient(135deg,#f59e0b,#c8730a); border-radius:12px 12px 0 0; padding:28px 28px 24px 28px;">
+          <!--<![endif]-->
+          <!--[if mso]>
+          <tr>
+            <td style="padding:28px 28px 24px 28px;">
+          <![endif]-->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td width="56" valign="top">
+                    <table role="presentation" width="56" height="56" cellpadding="0" cellspacing="0" border="0" style="width:56px; height:56px; background-color:#ffffff; border-radius:50%;">
+                      <tr>
+                        <td align="center" valign="middle" style="width:56px; height:56px; font-size:24px; font-weight:bold; color:#e08e0b; line-height:56px;">&#9888;</td>
+                      </tr>
+                    </table>
+                  </td>
+                  <td width="16">&nbsp;</td>
+                  <td valign="middle" style="color:#ffffff;">
+                    <div style="font-size:22px; line-height:28px; font-weight:bold; color:#ffffff;">Run Completed with Warnings</div>
+                    <div style="font-size:14px; line-height:20px; color:#fdedd3; margin-top:2px;">{{ environment | default("Production") }}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+
+        <!-- ===================== BODY CARD ===================== -->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%; background-color:#ffffff; border-radius:0 0 12px 12px;">
+          <tr>
+            <td class="px-24" style="padding:24px 24px 8px 24px;">
+
+              <!-- Job info card -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background-color:#f9fafb; border:1px solid #edf0f3; border-radius:10px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td valign="middle">
+                          <span style="display:inline-block; width:36px; height:36px; background-color:#fef3c7; border-radius:8px; text-align:center; line-height:36px; font-size:16px; color:#b45309;">&#128451;</span>
+                        </td>
+                        <td width="10">&nbsp;</td>
+                        <td valign="middle" style="font-size:17px; font-weight:bold; color:#111827;">{{ job_name }}</td>
+                        <td align="right" valign="middle">
+                          <span style="display:inline-block; background-color:#fef3c7; color:#b45309; font-size:12px; font-weight:bold; padding:5px 10px; border-radius:12px; white-space:nowrap;">{{ partition }}</span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
+                      <tr class="stack">
+                        <td width="50%" valign="top" class="stack" style="font-size:13px; color:#4b5563; line-height:22px;">
+                          <strong style="color:#111827;">Run ID</strong><br>
+                          <a href="{{ run_url }}" style="color:#b45309; font-weight:bold;">{{ run_id }}</a><br><br>
+                          <strong style="color:#111827;">Source system</strong><br>
+                          {{ source_system }}<br><br>
+                          <strong style="color:#111827;">Fields fetched</strong><br>
+                          {{ fields_fetched }}<br><br>
+                          <strong style="color:#111827;">Triggered by</strong><br>
+                          {{ triggered_by }}
+                        </td>
+                        <td width="50%" valign="top" class="stack" style="font-size:13px; color:#4b5563; line-height:22px;">
+                          <strong style="color:#111827;">Start / End</strong><br>
+                          {{ start_end }}<br><br>
+                          <strong style="color:#111827;">Duration</strong><br>
+                          {{ duration }}<br><br>
+                          <strong style="color:#111827;">Environment</strong><br>
+                          {{ environment | default("Production") }}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="height:16px; line-height:16px;">&nbsp;</div>
+
+              <!-- Assets materialized (with Status column) -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background-color:#f9fafb; border:1px solid #edf0f3; border-radius:10px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <div style="font-size:15px; font-weight:bold; color:#111827; margin-bottom:14px;">&#128230; Assets materialized</div>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; font-size:13px;">
+                      <tr>
+                        <td style="padding:6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;">Asset</td>
+                        <td style="padding:6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;" align="right">Rows</td>
+                        <td style="padding:6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;" align="right">&Delta;</td>
+                        <td style="padding:6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;" align="right">Size</td>
+                        <td style="padding:6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;" align="right">Status</td>
+                      </tr>
+                      {% for asset in assets %}
+                      <tr>
+                        <td style="padding:8px 0; border-bottom:1px solid #f0f1f3; color:#111827;">{{ asset.name }}</td>
+                        <td style="padding:8px 0; border-bottom:1px solid #f0f1f3; color:#111827;" align="right">{{ asset.rows }}</td>
+                        <td style="padding:8px 0; border-bottom:1px solid #f0f1f3;" align="right">
+                          {% if asset.delta %}<span style="color:{{ '#178a4c' if asset.delta_up else '#b91c1c' }}; font-weight:bold;">{{ '↑' if asset.delta_up else '↓' }} {{ asset.delta }}</span>{% else %}<span style="color:#9ca3af;">&mdash;</span>{% endif %}
+                        </td>
+                        <td style="padding:8px 0; border-bottom:1px solid #f0f1f3; color:#111827;" align="right">{{ asset.size }}</td>
+                        <td style="padding:8px 0; border-bottom:1px solid #f0f1f3;" align="right">
+                          {% if asset.status == "OK" %}
+                          <span style="display:inline-block; background-color:#dcfce7; color:#178a4c; font-size:11px; font-weight:bold; padding:3px 9px; border-radius:10px;">OK</span>
+                          {% else %}
+                          <span style="display:inline-block; background-color:#fef3c7; color:#b45309; font-size:11px; font-weight:bold; padding:3px 9px; border-radius:10px;">{{ asset.status }}</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="height:16px; line-height:16px;">&nbsp;</div>
+
+              <!-- Data quality checks -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background-color:#f9fafb; border:1px solid #edf0f3; border-radius:10px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <div style="font-size:15px; font-weight:bold; color:#111827; margin-bottom:14px;">&#128737; Data quality checks</div>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; font-size:13px;">
+                      {% for check in checks %}
+                      <tr>
+                        <td style="padding:7px 0; color:#111827;">
+                          {% if check.status == "PASS" %}<span style="color:#178a4c;">&#9679;</span>{% else %}<span style="color:#d97706;">&#9679;</span>{% endif %}
+                          &nbsp;{{ check.label }}
+                        </td>
+                        <td align="right" style="padding:7px 0;">
+                          {% if check.status == "PASS" %}
+                          <span style="display:inline-block; background-color:#dcfce7; color:#178a4c; font-size:11px; font-weight:bold; padding:3px 9px; border-radius:10px;">PASS</span>
+                          {% else %}
+                          <span style="display:inline-block; background-color:#fef3c7; color:#b45309; font-size:11px; font-weight:bold; padding:3px 9px; border-radius:10px;">{{ check.status }}</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                      {% if check.note %}
+                      <tr>
+                        <td colspan="2" style="padding:0 0 8px 0;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fffbeb" style="width:100%; background-color:#fffbeb; border-radius:6px;">
+                            <tr>
+                              <td style="padding:8px 12px; font-size:12px; color:#92400e;">{{ check.note }}</td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                      {% endif %}
+                      {% endfor %}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="height:16px; line-height:16px;">&nbsp;</div>
+
+              <!-- Sample preview -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background-color:#f9fafb; border:1px solid #edf0f3; border-radius:10px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <div style="font-size:15px; font-weight:bold; color:#111827; margin-bottom:14px;">&#128065; Sample preview &mdash; {{ preview_table_name }}</div>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; font-size:12px;">
+                      <tr>
+                        {% for col in preview_columns %}
+                        <td style="padding:6px 8px 6px 0; border-bottom:1px solid #e5e7eb; color:#6b7280; font-size:11px; text-transform:uppercase; letter-spacing:.03em;">{{ col }}</td>
+                        {% endfor %}
+                      </tr>
+                      {% for row in preview_rows %}
+                      <tr>
+                        {% for cell in row %}
+                        <td style="padding:8px 8px 8px 0; border-bottom:1px solid #f0f1f3; color:#111827;">{{ cell }}</td>
+                        {% endfor %}
+                      </tr>
+                      {% endfor %}
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <div style="height:24px; line-height:24px;">&nbsp;</div>
+
+              <!-- Button (bulletproof) -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="center">
+                    <!--[if mso]>
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ run_url }}" style="height:46px;v-text-anchor:middle;width:220px;" arcsize="12%" strokecolor="#e08e0b" fillcolor="#e08e0b">
+                    <w:anchorlock/>
+                    <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">View run in Dagster &#8594;</center>
+                    </v:roundrect>
+                    <![endif]-->
+                    <!--[if !mso]><!-->
+                    <a href="{{ run_url }}" class="btn-full" style="background-color:#e08e0b; border-radius:8px; color:#ffffff; display:inline-block; font-family:Arial,sans-serif; font-size:15px; font-weight:bold; line-height:46px; text-align:center; text-decoration:none; width:220px; -webkit-text-size-adjust:none;">View run in Dagster &#8594;</a>
+                    <!--<![endif]-->
+                  </td>
+                </tr>
+              </table>
+
+              <div style="height:24px; line-height:24px;">&nbsp;</div>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Footer -->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+          <tr>
+            <td align="center" style="padding:20px 16px; font-size:12px; line-height:18px; color:#9ca3af;">
+              Auto-generated by Dagster &middot; {{ job_name }} &middot; {{ environment | default("production") }}<br>
+              Do not reply to this email.
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</div>
+<!--[if mso]>
+</td></tr></table>
+<![endif]-->
+</center>
+</body>
+</html>

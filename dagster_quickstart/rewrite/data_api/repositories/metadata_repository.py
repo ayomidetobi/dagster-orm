@@ -125,11 +125,6 @@ class MetadataRepository:
         logger.info("metadata_repository_refresh")
         self._storage.refresh_metadata()
 
-    def list_snapshots(self) -> pd.DataFrame:
-        """Return every catalog snapshot (oldest first), for quality/drift reporting."""
-
-        return self._storage.list_snapshots()
-
     def _validate_filter_fields(
         self,
         filters: Mapping[str, Sequence[str]],

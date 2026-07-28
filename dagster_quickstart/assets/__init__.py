@@ -15,10 +15,7 @@ from dagster_quickstart.assets.ingestion.bloomberg_rewrite import ingest_bloombe
 #     ingest_hawk_data_daily,
 # )
 # from dagster_quickstart.assets.load_lookup import load_lookup_tables_to_s3
-from dagster_quickstart.assets.load_metaseries import (
-    load_meta_series_to_s3,
-    validate_metadata_quality,
-)
+from dagster_quickstart.assets.load_metaseries import load_meta_series_to_s3
 # from dagster_quickstart.assets.load_series_dependencies import (
 # #     load_series_dependencies_to_s3,
 #     validate_parent_series_count,
@@ -35,6 +32,5 @@ __all__ = [
     "ingest_bloomberg_values",
     # "ingest_hawk_data_daily",
     # "ingest_hawk_data_backfill",
-    "validate_metadata_quality",
     # "validate_parent_series_count",
 ]
