@@ -20,7 +20,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
+import markdown
 from dagster import (
     DagsterEventType,
     DagsterRunStatus,
@@ -71,26 +73,43 @@ def _triggered_by(tags: dict[str, str]) -> str:
 
 
 def _parse_markdown_table(
-    markdown: str, *, max_rows: int = 10, max_columns: int = 8
+    markdown_text: str, *, max_rows: int = 10, max_columns: int = 8
 ) -> tuple[list[str], list[list[str]]]:
     """Parse a GitHub-flavored markdown table (e.g. from DataFrame.to_markdown()) into (columns, rows).
 
-    Capped for an email-sized preview -- MaterializeResult metadata can
-    carry a much bigger table (e.g. ingest_bloomberg_values reports every
-    fetched series/timestamp) than an email should ever try to render.
-    Returns ([], []) if `markdown` doesn't look like a table.
+    Uses the `markdown` package's "tables" extension to convert to real HTML
+    first, then reads that back with ElementTree -- handles table syntax
+    edge cases (escaped pipes, alignment markers, etc.) a hand-rolled
+    "split on |" parser would get wrong. Capped for an email-sized preview --
+    MaterializeResult metadata can carry a much bigger table (e.g.
+    ingest_bloomberg_values reports every fetched series/timestamp) than an
+    email should ever try to render. Returns ([], []) if `markdown_text`
+    doesn't parse into a table.
     """
 
-    lines = [line for line in markdown.strip().splitlines() if line.strip()]
-    if len(lines) < 2:
+    html = markdown.markdown(markdown_text, extensions=["tables"])
+
+    try:
+        table = ElementTree.fromstring(html)
+    except ElementTree.ParseError:
         return [], []
 
-    def split_row(line: str) -> list[str]:
-        return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if table.tag != "table":
+        return [], []
 
-    columns = split_row(lines[0])[:max_columns]
-    # lines[1] is the header/body separator row (---|---|...), skip it.
-    data_rows = [split_row(line)[:max_columns] for line in lines[2 : 2 + max_rows]]
+    thead = table.find("thead")
+    header_row = thead.find("tr") if thead is not None else None
+    if header_row is None:
+        return [], []
+    columns = ["".join(cell.itertext()).strip() for cell in header_row.findall("th")][:max_columns]
+
+    tbody = table.find("tbody")
+    body_rows = tbody.findall("tr") if tbody is not None else []
+    data_rows = [
+        ["".join(cell.itertext()).strip() for cell in tr.findall("td")][:max_columns]
+        for tr in body_rows[:max_rows]
+    ]
+
     return columns, data_rows
 
 

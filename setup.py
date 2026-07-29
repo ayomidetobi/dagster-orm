@@ -13,6 +13,7 @@ setup(
         "pandera",
         "openpyxl",
         "python-decouple",
+        "Markdown",
     ],
     extras_require={"dev": ["dagster-webserver", "pytest"]},
 )
