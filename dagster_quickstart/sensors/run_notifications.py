@@ -70,6 +70,56 @@ def _triggered_by(tags: dict[str, str]) -> str:
     return "Manual"
 
 
+def _parse_markdown_table(
+    markdown: str, *, max_rows: int = 10, max_columns: int = 8
+) -> tuple[list[str], list[list[str]]]:
+    """Parse a GitHub-flavored markdown table (e.g. from DataFrame.to_markdown()) into (columns, rows).
+
+    Capped for an email-sized preview -- MaterializeResult metadata can
+    carry a much bigger table (e.g. ingest_bloomberg_values reports every
+    fetched series/timestamp) than an email should ever try to render.
+    Returns ([], []) if `markdown` doesn't look like a table.
+    """
+
+    lines = [line for line in markdown.strip().splitlines() if line.strip()]
+    if len(lines) < 2:
+        return [], []
+
+    def split_row(line: str) -> list[str]:
+        return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+    columns = split_row(lines[0])[:max_columns]
+    # lines[1] is the header/body separator row (---|---|...), skip it.
+    data_rows = [split_row(line)[:max_columns] for line in lines[2 : 2 + max_rows]]
+    return columns, data_rows
+
+
+def _preview_from_materializations(context: RunStatusSensorContext) -> tuple[str, list[str], list[list[str]]]:
+    """Find the first materialized asset reporting a "preview" metadata entry and parse it.
+
+    Mirrors whatever MaterializeResult.metadata={"preview": MetadataValue.md(...)}
+    the asset itself chose to report -- e.g. load_meta_series_to_s3's CSV head()
+    or ingest_bloomberg_values' fetched values -- rather than the sensor
+    re-deriving its own preview. Returns ("", [], []) if no materialized asset
+    in this run reported one.
+    """
+    records = context.instance.get_records_for_run(
+        run_id=context.dagster_run.run_id,
+        of_type=DagsterEventType.ASSET_MATERIALIZATION,
+    ).records
+
+    for record in records:
+        materialization = record.event_log_entry.dagster_event.event_specific_data.materialization
+        preview_value = materialization.metadata.get("preview")
+        if preview_value is None:
+            continue
+        columns, rows = _parse_markdown_table(str(preview_value.value))
+        if columns:
+            return materialization.asset_key.to_user_string(), columns, rows
+
+    return "", [], []
+
+
 def _materialized_assets(context: RunStatusSensorContext, *, all_checks_passed: bool) -> list[dict[str, Any]]:
     """One row per materialized asset, summarizing whatever MaterializeResult metadata it reported.
 
@@ -150,6 +200,7 @@ def run_succeeded_email_sensor(context: RunStatusSensorContext) -> None:
 
     checks = _check_results(context)
     all_passed = all(check["status"] == "PASS" for check in checks)
+    preview_name, preview_columns, preview_rows = _preview_from_materializations(context)
 
     common: dict[str, Any] = dict(
         job_name=run.job_name,
@@ -163,9 +214,9 @@ def run_succeeded_email_sensor(context: RunStatusSensorContext) -> None:
         duration=_format_duration(stats.start_time, stats.end_time),
         environment=config("DAGSTER_ENVIRONMENT", default="development"),
         assets=_materialized_assets(context, all_checks_passed=all_passed),
-        preview_table_name=run.job_name,
-        preview_columns=[],
-        preview_rows=[],
+        preview_table_name=preview_name or run.job_name,
+        preview_columns=preview_columns,
+        preview_rows=preview_rows,
     )
 
     if all_passed:

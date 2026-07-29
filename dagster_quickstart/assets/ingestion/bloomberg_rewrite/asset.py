@@ -98,11 +98,10 @@ def ingest_bloomberg_values(context: AssetExecutionContext, config: BloombergVal
     data_api.write_values(values_df)
 
     data_points_written = int(values_df.notna().sum().sum())
-    s3_path = data_api.get_values_storage_path()
+
 
     context.log.info(
         f"Wrote {data_points_written} Bloomberg data point(s) across "
-        f"{len(values_df.columns)} series to {s3_path}"
     )
 
     yield build_values_quality_check_result(values_df, log=context.log)
@@ -112,7 +111,8 @@ def ingest_bloomberg_values(context: AssetExecutionContext, config: BloombergVal
             "series_count": len(values_df.columns),
             "timestamp_count": len(values_df),
             "data_points_written": data_points_written,
+            "preview": MetadataValue.md(values_df.to_markdown()),
             "series_codes_sample": MetadataValue.json(series_codes[:20]),
-            "s3_path": s3_path,
+
         }
     )
