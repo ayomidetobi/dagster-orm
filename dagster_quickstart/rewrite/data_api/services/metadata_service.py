@@ -9,23 +9,10 @@ import pandas as pd
 import structlog
 
 from dagster_quickstart.rewrite.data_api.columns import MetadataColumns
-from dagster_quickstart.rewrite.data_api.quality import (
-    DEFAULT_NULL_CHECK_COLUMNS,
-    MetadataQualityReport,
-    build_quality_report,
-    frames_equal,
-)
 from dagster_quickstart.rewrite.data_api.repositories.metadata_repository import MetadataRepository
 from dagster_quickstart.rewrite.data_api.validation import strip_whitespace, validate_metadata_frame
 
 logger = structlog.get_logger(__name__)
-
-#: How many snapshots back to search for this table's real previous state.
-#: ducklake_snapshots() is catalog-wide, so most of a table's own snapshot
-#: history can be writes to *other* tables that leave this one unchanged --
-#: this caps how far back get_quality_report() walks looking for one that
-#: actually differs, rather than scanning the entire catalog history.
-MAX_SNAPSHOT_LOOKBACK = 50
 
 
 class MetadataService:
@@ -144,64 +131,3 @@ class MetadataService:
     def refresh_metadata(self) -> None:
         """Refresh repository-backed metadata state."""
         self._repository.refresh()
-
-    def get_quality_report(
-        self,
-        *,
-        null_check_columns: Sequence[str] = DEFAULT_NULL_CHECK_COLUMNS,
-    ) -> MetadataQualityReport:
-        """Report data-quality signals for the metadata catalog.
-
-        Compares the current (latest) metadata state against this table's
-        own real previous state -- found by walking backward through
-        DuckLake's snapshot history -- no external reference file involved
-        -- to flag newly introduced columns/column values, alongside
-        duplicate series_code rows and null-value counts in the current
-        state.
-
-        ducklake_snapshots() is catalog-wide (every table's writes, not just
-        this one), so the immediately-preceding snapshot_id often leaves
-        this table's content unchanged (e.g. a write to a different table).
-        Walking backward and comparing content (not just snapshot_id order)
-        finds the snapshot that actually changed this table -- capped at
-        MAX_SNAPSHOT_LOOKBACK to bound how much catalog history gets scanned.
-
-        null_check_columns controls which columns get flagged for null
-        values -- defaults to DEFAULT_NULL_CHECK_COLUMNS
-        (series_code/series_name); pass more (e.g. asset_class) as needed.
-
-        Reads straight from the repository (bypassing schema validation) so
-        the report can still be built even if the very defects it looks for
-        (e.g. a null series_code already sitting in the catalog) would
-        otherwise fail validation.
-        """
-        current = self._repository.get_metadata({})
-        snapshots = self._repository.list_snapshots()
-
-        current_version: int | None = None
-        baseline_version: int | None = None
-        baseline: pd.DataFrame | None = None
-
-        if not snapshots.empty:
-            snapshot_ids = [int(value) for value in snapshots["snapshot_id"].tolist()]
-            current_version = snapshot_ids[-1]
-            candidate_versions = snapshot_ids[:-1][-MAX_SNAPSHOT_LOOKBACK:]
-
-            for version in reversed(candidate_versions):
-                try:
-                    candidate = self._repository.get_metadata({}, version=version)
-                except Exception:
-                    logger.debug("quality_report_baseline_predates_table", version=version)
-                    break
-                if not frames_equal(candidate, current):
-                    baseline_version = version
-                    baseline = candidate
-                    break
-
-        return build_quality_report(
-            current=current,
-            baseline=baseline,
-            current_version=current_version,
-            baseline_version=baseline_version,
-            null_check_columns=null_check_columns,
-        )

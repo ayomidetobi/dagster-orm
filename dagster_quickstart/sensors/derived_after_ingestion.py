@@ -1,7 +1,4 @@
-"""Dagster sensor definitions.
-
-Coordinates downstream jobs after upstream ingestion completes.
-"""
+"""Coordinates derived-series calculation after upstream ingestion completes."""
 
 import json
 from datetime import datetime, timedelta

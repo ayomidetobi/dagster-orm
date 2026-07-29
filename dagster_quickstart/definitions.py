@@ -1,15 +1,15 @@
 from dagster import Definitions
-from decouple import config
+from decouple import Csv, config
 
 from dagster_quickstart.assets import (
     # calculate_derived_series,
     # ingest_bloomberg_data_backfill,
     # ingest_bloomberg_data_daily,
+    ingest_bloomberg_values,
     # ingest_hawk_data_backfill,
     # ingest_hawk_data_daily,
     # load_lookup_tables_to_s3,
     load_meta_series_to_s3,
-    validate_metadata_quality,
     # validate_parent_series_count,
 )
 # 'from dagster_quickstart.jobs import (
@@ -23,13 +23,18 @@ from dagster_quickstart.assets import (
 # )'
 # from dagster_quickstart.orm.io_manager import duckdb_io_manager
 from dagster_quickstart.resources import (
- 
+
     # DuckDBResource,
     HawkResource,
+    OutlookEmailResource,
     RewriteDataAPIResource,
 )
 # from dagster_quickstart.resources.duckdb_datacacher import duckdb_datacacher
 # from dagster_quickstart.schedule import bloomberg_daily_schedule, hawk_daily_schedule
+from dagster_quickstart.sensors import (
+    run_failed_email_sensor,
+    run_succeeded_email_sensor,
+)
 # from dagster_quickstart.sensors import derived_after_ingestion_sensor
 
 all_assets = [
@@ -38,13 +43,15 @@ all_assets = [
     # load_series_dependencies_to_s3,
     # ingest_bloomberg_data_daily,
     # ingest_bloomberg_data_backfill,
+    ingest_bloomberg_values,
     # ingest_hawk_data_daily,
     # ingest_hawk_data_backfill,
     # calculate_derived_series,
 ]
 
 all_asset_checks = [
-    validate_metadata_quality,
+    # validate_metadata_quality now runs in-asset via load_meta_series_to_s3's
+    # check_specs -- no separate object to list here.
     # validate_parent_series_count,
 ]
 
@@ -77,12 +84,23 @@ hawk_resource = HawkResource(
     celery_connection=config("HAWK_CELERY_CONNECTION", default="demo://localhost"),
 )
 
+# Demo email resource -- no real mailbox configured yet, just placeholder
+# defaults so Definitions loads cleanly. Set OUTLOOK_EMAIL_* env vars to a
+# real account before turning on run_succeeded_email_sensor/
+# run_failed_email_sensor (both start STOPPED -- see sensors/run_notifications.py).
+outlook_email_resource = OutlookEmailResource(
+    email_from=config("OUTLOOK_EMAIL_FROM", default="dagster-notifications@example.com"),
+    email_password=config("OUTLOOK_EMAIL_PASSWORD", default="demo-password-not-set"),
+    email_to=config("OUTLOOK_EMAIL_TO", default="oncall@example.com", cast=Csv()),
+)
+
 # Define resources
 resources = {
     # "duckdb": duckdb_resource,
     # "data_api": data_api_resource,
     "rewrite_data_api": rewrite_data_api_resource,
     "hawk": hawk_resource,
+    "email": outlook_email_resource,
     # "io_manager": duckdb_io_manager,
     # "duckdb_io_manager": duckdb_io_manager,
 }
@@ -103,15 +121,17 @@ resources = {
 #     hawk_daily_schedule,
 # ]
 
-# all_sensors = [
-#     derived_after_ingestion_sensor,
-# ]
+all_sensors = [
+    # derived_after_ingestion_sensor,
+    run_succeeded_email_sensor,
+    run_failed_email_sensor,
+]
 
 defs = Definitions(
     assets=all_assets,
     asset_checks=all_asset_checks,
     # jobs=all_jobs,
     # schedules=all_schedules,
-    # sensors=all_sensors,
+    sensors=all_sensors,
     resources=resources,
 )

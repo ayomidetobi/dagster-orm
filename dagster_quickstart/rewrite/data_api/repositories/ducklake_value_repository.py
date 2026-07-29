@@ -16,6 +16,7 @@ from dagster_quickstart.rewrite.data_api.repositories.storage_repository import 
 from dagster_quickstart.rewrite.data_api.query.ducklake_query import (
     DuckLakeValueQueryBuilder,
 )
+from dagster_quickstart.rewrite.data_api.storage_info import common_storage_path
 
 logger = structlog.get_logger(__name__)
 
@@ -172,6 +173,15 @@ class DuckLakeValueStorageRepository(
             )
 
         return frame
+
+    def get_storage_path(self) -> str | None:
+        """Return the common S3/local storage path DuckLake is currently using for this table.
+
+        Queried live via ducklake_list_files() -- None if nothing has been
+        written yet.
+        """
+
+        return common_storage_path(self.list_data_files(self._table))
 
     def delete_values(
         self,
