@@ -17,8 +17,6 @@ Three states, mapped from real Dagster primitives -- there's no native
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
@@ -32,44 +30,16 @@ from dagster import (
     run_failure_sensor,
     run_status_sensor,
 )
-from decouple import Csv, config
-from jinja2 import Template
+from decouple import config
 
 from dagster_quickstart.resources.outlook_email_resource import OutlookEmailResource
-
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "email_templates"
-
-
-def _render(template_name: str, **context: Any) -> str:
-    """Render one of email_templates/*.html with the given Jinja2 context."""
-    return Template((TEMPLATES_DIR / template_name).read_text()).render(**context)
-
-
-def _run_url(run_id: str) -> str:
-    base = config("DAGSTER_WEBSERVER_URL", default="http://localhost:3000").rstrip("/")
-    return f"{base}/runs/{run_id}"
-
-
-def _format_utc(timestamp: float | None) -> str:
-    if timestamp is None:
-        return "unknown"
-    return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def _format_duration(start: float | None, end: float | None) -> str:
-    if start is None or end is None:
-        return "unknown"
-    total_seconds = int(end - start)
-    minutes, seconds = divmod(total_seconds, 60)
-    return f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
-
-
-def _triggered_by(tags: dict[str, str]) -> str:
-    if tags.get("dagster/sensor_name"):
-        return f"Sensor · {tags['dagster/sensor_name']}"
-    if tags.get("dagster/schedule_name"):
-        return f"Schedule · {tags['dagster/schedule_name']}"
-    return "Manual"
+from dagster_quickstart.sensors.email_helpers import (
+    format_duration as _format_duration,
+    format_utc as _format_utc,
+    render as _render,
+    run_url as _run_url,
+    triggered_by as _triggered_by,
+)
 
 
 def _parse_markdown_table(

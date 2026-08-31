@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from dagster_quickstart.orm.schema import ValueColumns
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
 from dagster_quickstart.utils.datetime_utils import utc_calendar_days_inclusive
 
 

@@ -1,0 +1,40 @@
+# STEER StrategyConfig -- EM universe.
+#
+# See g10.yaml's header comment -- same dataset-driven pair discovery
+# (rewrite.data_api.dataset.fx.FXEmergingMarkets), same driver-sourcing
+# rules, one static Dagster partition covering every EM pair as data.
+# Every EM pair is currently missing interest_rate_differential coverage
+# too (this catalog's Fixed Income data only covers 6 G10 currencies) --
+# so every EM pair is reported blocked by steer_data_availability right
+# now, same as G10/CHN. That's an honest reflection of this catalog's
+# real data, not a bug.
+
+universe: EM
+ticker_source: bloomberg
+
+# estimate_steer's rolling regression window -- shorter than G10's 12m
+# since EM regimes/relationships shift faster.
+window_months: 6
+
+z_threshold: 1.5
+
+# 1:1 for EM -- tighter reward:risk than G10 given higher EM volatility/gap risk.
+stop_reward_ratio: 1.0
+
+# EM pairs move more day-to-day than G10 -- a lower vol threshold (0.25% vs
+# G10's 1.00%) means EM pairs switch into log-rate regression sooner.
+logged_rate_threshold: 0.0025
+logged_rate_vol_window_days: 20
+
+cointegration_significance: 0.05
+min_observations: 60
+
+global_equity_series: IDX0005_INDEX
+commodity_series: XAU_PX_0032
+
+expected_signs:
+  interest_rate_differential: 1
+  yield_curve_or_cds: -1
+  local_equity: 1
+  global_equity: 1
+  commodity: 1
