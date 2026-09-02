@@ -33,32 +33,20 @@ import pandas as pd
 import structlog
 
 from dagster_quickstart.rewrite.data_api.bootstrap import build_default_connection
-from dagster_quickstart.steer.constants import (
-    GOLD_SCHEMA,
-    SILVER_SCHEMA,
-    STEER_ESTIMATES_TABLE,
-    STEER_RESULT_SUMMARY_TABLE,
-    STEER_RESULTS_TABLE,
-    STEER_SIGNALS_TABLE,
-)
-
-#: STEER_ESTIMATES_TABLE/STEER_SIGNALS_TABLE/STEER_RESULTS_TABLE/STEER_RESULT_SUMMARY_TABLE
-#: aren't referenced in this module itself (SteerCatalog.read/write take schema/table as
-#: plain arguments) -- they're re-exported here only so existing
-#: `from dagster_quickstart.steer.storage import ...` call sites (assets/steer/,
-#: sensors/steer_notifications.py, tests/) keep working now that the values are defined
-#: once in steer/constants.py.
-__all__ = [
-    "SILVER_SCHEMA",
-    "GOLD_SCHEMA",
-    "STEER_ESTIMATES_TABLE",
-    "STEER_SIGNALS_TABLE",
-    "STEER_RESULTS_TABLE",
-    "STEER_RESULT_SUMMARY_TABLE",
-    "SteerCatalog",
-]
 
 logger = structlog.get_logger(__name__)
+
+SILVER_SCHEMA = "silver"
+GOLD_SCHEMA = "gold"
+
+STEER_ESTIMATES_TABLE = "steer_estimates"
+STEER_SIGNALS_TABLE = "steer_signals"
+#: SteerResult's 2 tables -- see steer/results.py's module docstring.
+#: steer_results is long-form (one row per series_code/as_of/date);
+#: steer_result_summary is one row per series_code/as_of (z_score,
+#: upper/lower, and every coefficient/standard_error/p_value, flattened).
+STEER_RESULTS_TABLE = "steer_results"
+STEER_RESULT_SUMMARY_TABLE = "steer_result_summary"
 
 
 class SteerCatalog:

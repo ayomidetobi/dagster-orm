@@ -1,11 +1,11 @@
-"""StrategyConfig: per-universe (G10/EM/CHN) STEER model parameters, loaded from YAML.
+"""StrategyConfig: per-universe (G10/EM/CHN) STEER model parameters.
 
 One StrategyConfig per universe -- no "if universe == 'EM'" branching should
 ever appear in asset code; every universe-specific number (window length,
 z threshold, risk/reward ratio, logged-rate threshold, expected coefficient
-signs) lives here instead. Validated at job start via
-load_strategy_config()/load_all_strategy_configs() -- a bad YAML file fails
-immediately with a clear pydantic error, not partway through a run.
+signs) lives here instead. FX_G10/FX_EM/FX_CHN (steer/universes.py) are the
+3 real, validated instances -- see that module for why they're defined in
+code rather than loaded from YAML at job start.
 
 Currency pairs and their rate series are NOT configured here anymore --
 they come straight from the datalake via rewrite.data_api.dataset.fx
@@ -28,15 +28,11 @@ regressed on a proxy.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict, Literal, Tuple
 
-import yaml
 from pydantic import BaseModel, Field, model_validator
 
 from dagster_quickstart.steer.constants import DRIVER_NAMES
-
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "strategy_configs"
 
 
 class GlobalDriverConfig(BaseModel):
@@ -45,9 +41,9 @@ class GlobalDriverConfig(BaseModel):
     global_equity_series/commodity_series are a curation choice (which
     benchmark to use), not a per-universe setting -- G10/EM/CHN apply the
     identical series to every pair. Defined once here (in code) rather
-    than duplicated across strategy_configs/*.yaml so the 3 universes
+    than duplicated across every universe's config so the 3 universes
     can't drift apart; StrategyConfig.global_equity_series/commodity_series
-    read from GLOBAL_DRIVERS below instead of being loaded from YAML.
+    read from GLOBAL_DRIVERS below instead of being their own fields.
     """
 
     model_config = {"extra": "forbid", "frozen": True}
@@ -76,10 +72,10 @@ class StrategyConfig(BaseModel):
     exceeds this is regressed in log-rate space instead of raw level (see
     steer.features.should_use_logged_rate for the exact rule).
 
-    global_equity_series/commodity_series are NOT YAML fields -- they're
+    global_equity_series/commodity_series are NOT StrategyConfig fields -- they're
     properties reading from the single shared GLOBAL_DRIVERS instance (see
     its docstring for why), so every universe always sees the identical
-    value with no possibility of a per-universe YAML drifting out of sync.
+    value with no possibility of a per-universe copy drifting out of sync.
     """
 
     model_config = {"extra": "forbid"}
@@ -94,7 +90,7 @@ class StrategyConfig(BaseModel):
     cointegration_significance: float = Field(default=0.05, gt=0, lt=1)
     min_observations: int = Field(default=40, gt=0)
     #: This universe's driver set -- defaults to the 5 canonical
-    #: DRIVER_NAMES; CHN overrides it (in its YAML) to add
+    #: DRIVER_NAMES; CHN (steer/universes.py's FX_CHN) overrides it to add
     #: offshore_spread/flows on top, since estimation.py is generic over
     #: however many columns `drivers` (steer/features.py) produces.
     drivers: Tuple[str, ...] = DRIVER_NAMES
@@ -124,38 +120,3 @@ class StrategyConfig(BaseModel):
                 f"expected_signs has driver(s) not in this config's drivers: {sorted(extra)}."
             )
         return self
-
-
-def load_strategy_config(path: str | Path) -> StrategyConfig:
-    """Load and validate one universe's StrategyConfig from a YAML file.
-
-    Raises pydantic.ValidationError (wrapped as-is, not swallowed) on any
-    missing/invalid field -- intentionally fails loudly at job start rather
-    than partway through a run.
-    """
-    with open(path) as handle:
-        raw = yaml.safe_load(handle)
-    return StrategyConfig.model_validate(raw)
-
-
-def load_all_strategy_configs(
-    config_dir: str | Path = DEFAULT_CONFIG_DIR,
-) -> Dict[str, StrategyConfig]:
-    """Load every *.yaml in `config_dir`, keyed by each file's own `universe` field.
-
-    Used at job/resource start (see resources/steer_config_resource.py) so
-    every universe's config is loaded and validated once, up front.
-    """
-    config_dir = Path(config_dir)
-    configs: Dict[str, StrategyConfig] = {}
-    for path in sorted(config_dir.glob("*.yaml")):
-        strategy_config = load_strategy_config(path)
-        if strategy_config.universe in configs:
-            raise ValueError(
-                f"Duplicate StrategyConfig for universe {strategy_config.universe!r} "
-                f"-- both {path} and an earlier file declare it."
-            )
-        configs[strategy_config.universe] = strategy_config
-    if not configs:
-        raise ValueError(f"No strategy config YAML files found in {config_dir}")
-    return configs

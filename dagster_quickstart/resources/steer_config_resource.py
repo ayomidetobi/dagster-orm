@@ -1,47 +1,27 @@
-"""Dagster resource loading/validating every universe's StrategyConfig at job start.
+"""Dagster resource exposing every universe's FXUniverse (steer/universes.py).
 
-Loaded once in setup_for_execution() (process start, not per-asset-call) so
-a bad YAML file fails the whole run immediately with a clear pydantic
-error, rather than partway through a partition.
+FX_G10/FX_EM/FX_CHN are already validated code-defined singletons (see steer/universes.py's
+module docstring) -- this resource no longer loads or validates anything itself, it just gives
+assets a stable `context.resources.steer_config.for_universe(...)` entry point so they don't
+reach into steer.universes directly.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional
+from dagster import ConfigurableResource, get_dagster_logger
 
-from dagster import ConfigurableResource, InitResourceContext, get_dagster_logger
-
-from dagster_quickstart.steer.config import DEFAULT_CONFIG_DIR
-
-if TYPE_CHECKING:
-    from dagster_quickstart.steer.config import StrategyConfig
+from dagster_quickstart.steer.universes import FXUniverse, UNIVERSES
 
 logger = get_dagster_logger()
 
 
 class SteerConfigResource(ConfigurableResource):
-    """Dagster resource wrapping steer.config.load_all_strategy_configs().
+    """Dagster resource wrapping steer.universes.UNIVERSES.
 
-    Use context.resources.steer_config.for_universe("G10"|"EM") inside runs.
+    Use context.resources.steer_config.for_universe("G10"|"EM"|"CHN") inside runs.
     """
 
-    config_dir: str = str(DEFAULT_CONFIG_DIR)
-
-    def setup_for_execution(self, context: InitResourceContext) -> None:
-        from dagster_quickstart.steer.config import load_all_strategy_configs
-
-        self._configs = load_all_strategy_configs(self.config_dir)
-        logger.info("SteerConfigResource ready (universes=%s)", sorted(self._configs))
-
-    def for_universe(self, universe: str) -> "StrategyConfig":
-        configs: Optional[Dict[str, "StrategyConfig"]] = getattr(self, "_configs", None)
-        if configs is None:
-            raise RuntimeError(
-                "SteerConfigResource is not initialized; use only inside a "
-                "Dagster run (context.resources.steer_config)."
-            )
-        if universe not in configs:
-            raise KeyError(
-                f"No StrategyConfig loaded for universe {universe!r} -- have {sorted(configs)}"
-            )
-        return configs[universe]
+    def for_universe(self, universe: str) -> FXUniverse:
+        if universe not in UNIVERSES:
+            raise KeyError(f"No FXUniverse for universe {universe!r} -- have {sorted(UNIVERSES)}")
+        return UNIVERSES[universe]

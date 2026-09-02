@@ -120,14 +120,16 @@ regressed on a corrupted input.
   OLS + sign-check/re-estimate per pair, writes `gold.steer_estimates`) ->
   `steer_signal` (writes `gold.steer_signals`); plus the
   `steer_data_availability` report asset, partitioned the same way.
-- `dagster_quickstart/steer/strategy_configs/{g10,em,chn}.yaml` -- one
-  `StrategyConfig` per universe (window, z-threshold, stop/reward ratio,
-  logged-rate threshold, expected coefficient signs, and the two curated
-  global driver series `global_equity_series`/`commodity_series`) --
-  currency pairs are not configured here anymore. `global_equity_series`/
-  `commodity_series` in the shipped YAML are real series already in this
-  catalog (`IDX0005_INDEX`, `XAU_PX_0032`); swap for your own real global
-  benchmarks if you have better ones.
+- `dagster_quickstart/steer/universes.py` -- `FX_G10`/`FX_EM`/`FX_CHN`, one
+  code-defined, frozen `FXUniverse` (a `StrategyConfig` subclass -- see
+  `steer/config.py`) per universe: window, z-threshold, stop/reward ratio,
+  logged-rate threshold, expected coefficient signs -- currency pairs are
+  not configured here either. Each also carries the pipeline entry point
+  (`FX_G10.fit(lookback_days=5, cointegration="each")` fits every pair in
+  that universe -- see `steer/model.py`). The two curated global driver
+  series `global_equity_series`/`commodity_series` are shared by every
+  universe and live in `steer/config.py`'s `GLOBAL_DRIVERS` instead; swap
+  for your own real global benchmarks if you have better ones.
 
 ### Partitioning
 

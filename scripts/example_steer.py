@@ -23,9 +23,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend -- this script saves PNGs, never plt.show()
 
-from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
-from dagster_quickstart.steer.config import load_all_strategy_configs
-from dagster_quickstart.steer.model import Steer
+from dagster_quickstart.steer.universes import UNIVERSES
 
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
@@ -49,12 +47,11 @@ def main() -> int:
 
     print_separator(f"Steer demo -- universe={args.universe}, lookback_days={args.lookback}")
 
-    # Zero-config, same as example_dataapi.py -- wires the DuckLake connection under the hood.
-    data_api = DataAPI(live=False)
-    strategy_config = load_all_strategy_configs()[args.universe]
-
-    steer = Steer.from_data_api(data_api, universe=args.universe, strategy_config=strategy_config)
-    results = steer.fit(lookback_days=args.lookback, cointegration="each")
+    universe = UNIVERSES[args.universe]
+    # universe.fit() builds its own zero-config DataAPI(live=False) under the hood (see
+    # steer/universes.py's default_data_api()) -- same DuckLake connection example_dataapi.py
+    # wires up explicitly.
+    results = universe.fit(lookback_days=args.lookback, cointegration="each")
 
     fitted_pairs = sorted(results.results.get(results.as_of_dates[-1], {})) if results.as_of_dates else []
 
