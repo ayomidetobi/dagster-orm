@@ -15,7 +15,6 @@ from dagster_quickstart.resources import (
     HawkResource,
     OutlookEmailResource,
     RewriteDataAPIResource,
-    SteerCatalogResource,
     SteerConfigResource,
 )
 from dagster_quickstart.sensors import (
@@ -72,19 +71,14 @@ outlook_email_resource = OutlookEmailResource(
     email_to=config("OUTLOOK_EMAIL_TO", default="oncall@example.com", cast=Csv()),
 )
 
-# StrategyConfig (G10/EM/CHN) loaded + validated once at process start from
-# steer/strategy_configs/*.yaml -- see steer/config.py.
+# FX_G10/FX_EM/FX_CHN code-defined universes -- see steer/universes.py.
 steer_config_resource = SteerConfigResource()
-
-# STEER gold/silver DuckLake schemas -- see steer/storage.py.
-steer_catalog_resource = SteerCatalogResource()
 
 resources = {
     "rewrite_data_api": rewrite_data_api_resource,
     "hawk": hawk_resource,
     "email": outlook_email_resource,
     "steer_config": steer_config_resource,
-    "steer_catalog": steer_catalog_resource,
 }
 
 all_schedules = [

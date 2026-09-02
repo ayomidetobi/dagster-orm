@@ -8,7 +8,6 @@ implementation.
 
 from __future__ import annotations
 
-import duckdb
 import numpy as np
 import pandas as pd
 import pytest
@@ -22,10 +21,8 @@ from dagster_quickstart.assets.steer.signal_asset import steer_signal
 from dagster_quickstart.assets.steer.silver_asset import steer_silver_prices
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
 from dagster_quickstart.steer.model import Steer
-from dagster_quickstart.steer.storage import SteerCatalog
 from tests.test_steer_assets import (
     FakeRewriteDataAPIResource,
-    FakeSteerCatalogResource,
     FakeSteerConfigResource,
     _unblocked_g10_metadata,
     _unblocked_g10_values,
@@ -33,12 +30,9 @@ from tests.test_steer_assets import (
 
 
 def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig):
-    catalog = SteerCatalog(duckdb.connect(":memory:"))
-    catalog.ensure_schemas()
     resources = {
         "rewrite_data_api": FakeRewriteDataAPIResource(metadata, values),
         "steer_config": FakeSteerConfigResource(strategy_config),
-        "steer_catalog": FakeSteerCatalogResource(catalog),
     }
     result = materialize(
         [
@@ -54,7 +48,7 @@ def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, st
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
-    return result, resources["rewrite_data_api"].api, catalog
+    return result, resources["rewrite_data_api"].api
 
 
 def _g10_strategy_config() -> StrategyConfig:
@@ -266,7 +260,7 @@ def test_steer_fit_matches_the_asset_pipeline_exactly(
     values = build_values()
     strategy_config = build_config()
 
-    result, data_api, _ = _materialize_asset_pipeline(metadata, values, strategy_config)
+    result, data_api = _materialize_asset_pipeline(metadata, values, strategy_config)
 
     estimate_row = result.output_for_node("steer_estimate", output_name="result").iloc[0]
     signal_row = result.output_for_node("steer_signal", output_name="result").iloc[0]

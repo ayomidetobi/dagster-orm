@@ -22,12 +22,7 @@ from decouple import config
 
 from dagster_quickstart.resources.outlook_email_resource import OutlookEmailResource
 from dagster_quickstart.sensors.email_helpers import render
-from dagster_quickstart.steer.storage import (
-    GOLD_SCHEMA,
-    STEER_ESTIMATES_TABLE,
-    STEER_SIGNALS_TABLE,
-    SteerCatalog,
-)
+from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
 
 # Fires after steer_daily_schedule's per-pair runs (09:00 Europe/Lisbon,
 # see assets/steer/job.py) have had time to complete.
@@ -35,10 +30,8 @@ _DIGEST_CRON = "30 9 * * 1-5"
 _DIGEST_TIMEZONE = "Europe/Lisbon"
 
 
-def _todays_rows(
-    catalog: SteerCatalog, schema: str, table: str, *, today: pd.Timestamp
-) -> pd.DataFrame:
-    frame = catalog.read(schema, table)
+def _todays_rows(data_api: Any, schema: str, table: str, *, today: pd.Timestamp) -> pd.DataFrame:
+    frame = data_api.read_table(schema, table).frame
     if frame.empty:
         return frame
     return frame[pd.to_datetime(frame["date"]).dt.normalize() == today.normalize()]
@@ -89,16 +82,16 @@ def _check_rows(estimates: pd.DataFrame) -> list[dict[str, Any]]:
     execution_timezone=_DIGEST_TIMEZONE,
     job_name="steer_daily_run",
     default_status=DefaultScheduleStatus.STOPPED,
-    required_resource_keys={"steer_catalog", "email"},
+    required_resource_keys={"rewrite_data_api", "email"},
 )
 def steer_daily_digest_schedule(context: ScheduleEvaluationContext) -> None:
     """Build and send the daily STEER digest. STOPPED by default -- see run_notifications.py's note on OutlookEmailResource."""
-    catalog: SteerCatalog = context.resources.steer_catalog.catalog
+    data_api = context.resources.rewrite_data_api.api
     email: OutlookEmailResource = context.resources.email
 
     today = pd.Timestamp(context.scheduled_execution_time).normalize()
-    estimates = _todays_rows(catalog, GOLD_SCHEMA, STEER_ESTIMATES_TABLE, today=today)
-    signals = _todays_rows(catalog, GOLD_SCHEMA, STEER_SIGNALS_TABLE, today=today)
+    estimates = _todays_rows(data_api, GOLD_SCHEMA, STEER_ESTIMATES_TABLE, today=today)
+    signals = _todays_rows(data_api, GOLD_SCHEMA, STEER_SIGNALS_TABLE, today=today)
 
     if estimates.empty and signals.empty:
         context.log.info("No STEER estimates/signals for today yet -- skipping digest.")

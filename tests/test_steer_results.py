@@ -7,17 +7,58 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.estimation import sign_check_and_reestimate
 from dagster_quickstart.steer.results import SteerResult, build_steer_result
-from dagster_quickstart.steer.storage import SteerCatalog
+
+
+class _EmptyMetadataStorage:
+    def get_metadata(self, **kwargs):
+        return pd.DataFrame()
+
+    def get_columns(self):
+        return []
+
+    def get_distinct_values(self, *args, **kwargs):
+        return []
+
+    def save_metadata(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def refresh_metadata(self):
+        pass
+
+
+class _EmptyValueStorage:
+    def get_values(self, *args, **kwargs):
+        return pd.DataFrame()
+
+    def get_last_values(self, *args, **kwargs):
+        return pd.DataFrame()
+
+    def value_exists(self, *args, **kwargs):
+        return {}
+
+    def save_values(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def delete_values(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def get_storage_path(self):
+        return None
 
 
 @pytest.fixture
-def catalog():
-    """Same in-memory DuckLake pattern as test_steer_assets.py's in_memory_catalog fixture."""
-    steer_catalog = SteerCatalog(duckdb.connect(":memory:"))
-    steer_catalog.ensure_schemas()
-    return steer_catalog
+def data_api():
+    """A real DataAPI (create_data_api) over a real in-memory duckdb connection -- the metadata/
+    value repositories are never touched by SteerResult.save()/.load(), which only ever use
+    data_api.write_table()/.read_table() (see steer/results.py)."""
+    return create_data_api(
+        duckdb_connection=duckdb.connect(":memory:"),
+        metadata_repository=_EmptyMetadataStorage(),
+        value_repository=_EmptyValueStorage(),
+    )
 
 
 @pytest.fixture
@@ -417,11 +458,11 @@ def test_cross_section_rows_concat_into_a_comparison_table(cointegrated_system):
     assert "z_score" in table.columns
 
 
-def test_save_and_load_round_trips_every_field(cointegrated_system, catalog):
+def test_save_and_load_round_trips_every_field(cointegrated_system, data_api):
     result = _build(cointegrated_system, signal_target=1.5, signal_stop_loss=1.0)
 
-    result.save(catalog)
-    loaded = SteerResult.load(catalog, "AUDJPY_SPOT_0004")
+    result.save(data_api)
+    loaded = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
 
     assert loaded.series_code == result.series_code
     assert loaded.universe == result.universe
@@ -448,7 +489,7 @@ def test_save_and_load_round_trips_every_field(cointegrated_system, catalog):
     )
 
 
-def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_system, catalog):
+def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_system, data_api):
     rate, drivers = cointegrated_system
     earlier_as_of = rate.index[-30]
     later_as_of = rate.index[-1]
@@ -469,26 +510,26 @@ def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_
         estimate=_estimate(cointegrated_system, as_of=later_as_of),
         window_months=12,
     )
-    earlier.save(catalog)
-    later.save(catalog)
+    earlier.save(data_api)
+    later.save(data_api)
 
-    loaded_latest = SteerResult.load(catalog, "AUDJPY_SPOT_0004")
+    loaded_latest = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
     assert loaded_latest.as_of == later_as_of
 
-    loaded_earlier = SteerResult.load(catalog, "AUDJPY_SPOT_0004", as_of=earlier_as_of)
+    loaded_earlier = SteerResult.load(data_api, "AUDJPY_SPOT_0004", as_of=earlier_as_of)
     assert loaded_earlier.as_of == earlier_as_of
 
 
-def test_load_missing_pair_raises_lookup_error(catalog):
+def test_load_missing_pair_raises_lookup_error(data_api):
     with pytest.raises(LookupError):
-        SteerResult.load(catalog, "NOT_A_REAL_PAIR")
+        SteerResult.load(data_api, "NOT_A_REAL_PAIR")
 
 
-def test_a_chn_style_seven_driver_result_round_trips_through_storage(catalog):
+def test_a_chn_style_seven_driver_result_round_trips_through_storage(data_api):
     """SteerResult used to hardcode 5 driver dataclass fields -- no room for
     CHN's 2 extras. A 7-driver result must save/load cleanly, and coexist
-    in the same summary table as a 5-driver G10 result (SteerCatalog.write's
-    UNION ALL BY NAME -- see storage.py)."""
+    in the same summary table as a 5-driver G10 result (DataAPI.write_table()'s
+    column widening -- see rewrite.data_api.repositories.generic_table_repository)."""
     rng = np.random.default_rng(3)
     n = 300
     dates = pd.bdate_range("2023-01-02", periods=n)
@@ -519,16 +560,16 @@ def test_a_chn_style_seven_driver_result_round_trips_through_storage(catalog):
     result = build_steer_result(
         "USDCNH_PX_LAST", "CHN", rate, drivers, estimate=estimate, window_months=6
     )
-    result.save(catalog)
+    result.save(data_api)
 
-    loaded = SteerResult.load(catalog, "USDCNH_PX_LAST")
+    loaded = SteerResult.load(data_api, "USDCNH_PX_LAST")
     assert set(loaded.drivers) == set(drivers.columns)
     assert loaded.drivers["offshore_spread"].index.equals(loaded.spot.index)
 
 
-def test_g10_and_chn_summaries_coexist_with_different_driver_columns(catalog, cointegrated_system):
+def test_g10_and_chn_summaries_coexist_with_different_driver_columns(data_api, cointegrated_system):
     g10_result = _build(cointegrated_system)
-    g10_result.save(catalog)
+    g10_result.save(data_api)
 
     rng = np.random.default_rng(9)
     n = 300
@@ -549,10 +590,10 @@ def test_g10_and_chn_summaries_coexist_with_different_driver_columns(catalog, co
     chn_result = build_steer_result(
         "USDCNH_PX_LAST", "CHN", rate, drivers, estimate=estimate, window_months=6
     )
-    chn_result.save(catalog)
+    chn_result.save(data_api)
 
-    g10_loaded = SteerResult.load(catalog, "AUDJPY_SPOT_0004")
-    chn_loaded = SteerResult.load(catalog, "USDCNH_PX_LAST")
+    g10_loaded = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
+    chn_loaded = SteerResult.load(data_api, "USDCNH_PX_LAST")
     assert set(g10_loaded.drivers) == {
         "interest_rate_differential", "yield_curve_or_cds", "local_equity", "global_equity", "commodity",
     }

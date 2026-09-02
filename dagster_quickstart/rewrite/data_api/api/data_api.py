@@ -17,6 +17,9 @@ from dagster_quickstart.rewrite.data_api.columns import ValueColumns, normalize_
 from dagster_quickstart.rewrite.data_api.shaping import melt_values, pivot_values
 from dagster_quickstart.rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
 from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
+from dagster_quickstart.rewrite.data_api.repositories.generic_table_repository import (
+    GenericTableRepository,
+)
 from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
 from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
 from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
@@ -32,6 +35,7 @@ class RewriteServices:
     metadata: MetadataService
     values: ValueService
     direct_fetch: DirectFetchService
+    tables: GenericTableRepository
     ingestion: FileIngestionService | None = None
 
 
@@ -382,3 +386,70 @@ class DataAPI:
         None if nothing has been written yet.
         """
         return self._services.values.get_storage_path()
+
+    def read_table(
+        self,
+        schema: str,
+        table: str,
+        *,
+        strict: bool = False,
+        **filters: Sequence[str] | str,
+    ) -> MetadataResult:
+        """Read an arbitrary DuckLake table, optionally filtered by column values.
+
+        For tables outside the metadata/values schema -- STEER's silver/gold tables, for
+        instance (see steer/results.py, steer/model.py). Returns a MetadataResult, so results
+        chain, narrow further in-memory, and expose filter_options()/union() the same way
+        get_metadata() does:
+
+            results = data_api.read_table("gold", "steer_result_summary", universe="G10")
+            results.get_metadata(series_code="EURNOK_PX_LAST").filter_options("as_of")
+
+        strict controls how an unrecognized filter value is handled, same as get_metadata()
+        (False drops it with a logged warning, True raises InvalidFilterValueError) --
+        "valid options" here means the values actually present in the table.
+
+        Returns an empty MetadataResult if the table doesn't exist yet, rather than raising.
+        get_values()/get_last_values() aren't meaningful on this result -- there's no
+        series_code/value-column convention for an arbitrary table -- so calling either raises
+        a clear NotImplementedError naming this table, instead of failing deeper and less
+        clearly inside MetadataResult.
+        """
+        frame = self._services.tables.read_all(schema, table)
+        result = MetadataResult(
+            frame,
+            fetch_values=_unsupported_on_table(schema, table, "get_values"),
+            fetch_last_values=_unsupported_on_table(schema, table, "get_last_values"),
+        )
+        if filters and not frame.empty:
+            result = result.get_metadata(strict=strict, **filters)
+        return result
+
+    def write_table(self, schema: str, table: str, frame: pd.DataFrame) -> None:
+        """Append `frame` to an arbitrary DuckLake table, creating it on first write.
+
+        Append-only, like the rest of this catalog. If `frame` has columns the existing table
+        lacks, the table is widened with ALTER TABLE ADD COLUMN first, then the rows are
+        appended -- so a wider driver set (e.g. CHN's 7 coefficient columns vs G10's 5) doesn't
+        misalign, and no existing row is ever rewritten (see
+        rewrite.data_api.repositories.generic_table_repository.GenericTableRepository.write()).
+        """
+        self._services.tables.write(schema, table, frame)
+
+
+def _unsupported_on_table(schema: str, table: str, method: str):
+    """A fetch_values/fetch_last_values stand-in for read_table()'s MetadataResult.
+
+    Raises a clear error naming the method and table if actually called, rather than leaving
+    fetch_values=None (which would fail later with an unhelpful TypeError deep inside
+    MetadataResult.get_values()/get_last_values()).
+    """
+
+    def _raise(*_args: object, **_kwargs: object) -> pd.DataFrame:
+        raise NotImplementedError(
+            f"{method}() is not supported on the result of read_table({schema!r}, {table!r}) -- "
+            "there is no series_code/value-column convention for an arbitrary table. Read "
+            "whatever you need directly from the result's .frame instead."
+        )
+
+    return _raise

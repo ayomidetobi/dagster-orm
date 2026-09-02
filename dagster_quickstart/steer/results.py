@@ -53,36 +53,30 @@ markov_state is a reserved field, always None today -- no Markov
 regime-switching model exists anywhere in this codebase; it's a
 placeholder for a future addition, not a fabricated value.
 
-Persisted via SteerCatalog (steer/storage.py) into 2 DuckLake gold tables
--- gold.steer_results (long-form, one row per series_code/as_of/date, the
-time-series fields) and gold.steer_result_summary (one row per
-series_code/as_of, the scalar/cross-sectional fields) -- the same
-DuckLake-backed mechanism gold.steer_estimates/gold.steer_signals already
-use. DuckLake itself is Parquet-backed on disk (S3), so this is real
-Parquet storage under the hood, not a bespoke file format. Both tables are
-append-only, like the rest of this catalog (see SteerCatalog's docstring):
-a re-run for the same pair/as_of writes a new snapshot rather than
-overwriting -- load() returns the most recent one by default. Different
-universes writing different driver sets to the same table is exactly what
-SteerCatalog.write()'s `UNION ALL BY NAME` handles -- see its docstring.
+Persisted via DataAPI.write_table()/.read_table() (rewrite/data_api) into 2 DuckLake gold
+tables -- gold.steer_results (long-form, one row per series_code/as_of/date, the time-series
+fields) and gold.steer_result_summary (one row per series_code/as_of, the scalar/cross-sectional
+fields) -- the same mechanism gold.steer_estimates/gold.steer_signals already use, and the same
+DuckLake connection the rest of a run's DataAPI calls share (no second attach). DuckLake itself
+is Parquet-backed on disk (S3), so this is real Parquet storage under the hood, not a bespoke
+file format. Both tables are append-only, like the rest of this catalog: a re-run for the same
+pair/as_of writes a new snapshot rather than overwriting -- load() returns the most recent one by
+default. Different universes writing different driver sets to the same table is exactly what
+write_table()'s column-widening handles -- see
+rewrite.data_api.repositories.generic_table_repository.GenericTableRepository.write()'s docstring.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 
 from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate, window_slice
-from dagster_quickstart.steer.storage import (
-    GOLD_SCHEMA,
-    STEER_RESULT_SUMMARY_TABLE,
-    STEER_RESULTS_TABLE,
-    SteerCatalog,
-)
+from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, STEER_RESULTS_TABLE
 
 #: to_frame()'s fixed (non-driver) time-series columns -- everything else
 #: in a loaded gold.steer_results row is a driver series (see load()).
@@ -284,8 +278,8 @@ class SteerResult:
         ax.legend()
         return ax
 
-    def save(self, catalog: SteerCatalog) -> None:
-        """Write this result into DuckLake, via SteerCatalog -- see module docstring.
+    def save(self, data_api: Any) -> None:
+        """Write this result via data_api.write_table() -- see module docstring.
 
         Writes to gold.steer_results (the time-series fields, via
         to_frame()) and gold.steer_result_summary (the scalar fields, via
@@ -297,16 +291,16 @@ class SteerResult:
         timeseries.insert(0, "as_of", self.as_of)
         timeseries.insert(0, "universe", self.universe)
         timeseries.insert(0, "series_code", self.series_code)
-        catalog.write(GOLD_SCHEMA, STEER_RESULTS_TABLE, timeseries)
+        data_api.write_table(GOLD_SCHEMA, STEER_RESULTS_TABLE, timeseries)
 
         summary = pd.DataFrame([self.cross_section()])
-        catalog.write(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, summary)
+        data_api.write_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, summary)
 
     @classmethod
     def load(
-        cls, catalog: SteerCatalog, series_code: str, *, as_of: Optional[pd.Timestamp] = None
+        cls, data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None
     ) -> "SteerResult":
-        """Load one pair's SteerResult back from DuckLake -- see save()/module docstring.
+        """Load one pair's SteerResult back via data_api.read_table() -- see save()/module docstring.
 
         Both tables are append-only snapshots -- without `as_of`, the most
         recent snapshot for this series_code is returned; pass `as_of` to
@@ -317,7 +311,9 @@ class SteerResult:
         no fixed driver-name list to check against any more (see the
         module docstring).
         """
-        summary = catalog.read(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, series_codes=[series_code])
+        summary = data_api.read_table(
+            GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, series_code=series_code
+        ).frame
         if summary.empty:
             raise LookupError(f"No SteerResult found in DuckLake for {series_code!r}.")
         summary["as_of"] = pd.to_datetime(summary["as_of"])
@@ -328,7 +324,9 @@ class SteerResult:
         row = summary.sort_values("as_of").iloc[-1]
         row_as_of = row["as_of"]
 
-        timeseries = catalog.read(GOLD_SCHEMA, STEER_RESULTS_TABLE, series_codes=[series_code])
+        timeseries = data_api.read_table(
+            GOLD_SCHEMA, STEER_RESULTS_TABLE, series_code=series_code
+        ).frame
         timeseries["as_of"] = pd.to_datetime(timeseries["as_of"])
         timeseries = timeseries[timeseries["as_of"] == row_as_of].copy()
         timeseries["date"] = pd.to_datetime(timeseries["date"])
@@ -341,8 +339,8 @@ class SteerResult:
             and column not in ("as_of", "universe", "series_code")
             # A column entirely NaN for this pair is padding from another
             # universe's wider driver set sharing this physical table (see
-            # SteerCatalog.write's UNION ALL BY NAME), not one of this
-            # pair's own drivers.
+            # GenericTableRepository.write()'s column widening), not one of
+            # this pair's own drivers.
             and not timeseries[column].isna().all()
         ]
         drivers = {name: timeseries[name] for name in driver_names}

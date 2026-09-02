@@ -239,16 +239,16 @@ class SteerResults:
         ax.legend()
         return ax
 
-    def save(self, catalog: Any) -> None:
+    def save(self, data_api: Any) -> None:
         """Delegates to SteerResult.save() for every fitted (pair, as_of)."""
         for by_pair in self.results.values():
             for result in by_pair.values():
-                result.save(catalog)
+                result.save(data_api)
 
     @classmethod
     def load(
         cls,
-        catalog: Any,
+        data_api: Any,
         universe: str,
         as_of: Optional[pd.Timestamp] = None,
     ) -> "SteerResults":
@@ -260,7 +260,7 @@ class SteerResults:
         """
         from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
 
-        summary = catalog.read(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=universe)
+        summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=universe).frame
         if summary.empty:
             return cls(universe=universe, z_threshold=float("nan"))
 
@@ -271,7 +271,7 @@ class SteerResults:
 
         results: Dict[pd.Timestamp, Dict[str, SteerResult]] = {}
         for series_code in summary["series_code"].unique():
-            result = SteerResult.load(catalog, str(series_code), as_of=as_of)
+            result = SteerResult.load(data_api, str(series_code), as_of=as_of)
             results.setdefault(result.as_of, {})[str(series_code)] = result
 
         return cls(universe=universe, z_threshold=float("nan"), results=results)

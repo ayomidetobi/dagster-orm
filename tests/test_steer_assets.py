@@ -3,11 +3,13 @@
 Uses dagster.materialize() (per the tooling constraints -- pytest + an
 in-memory DuckDB fixture + Dagster's own testing utilities) rather than
 mocking. rewrite_data_api is the REAL DataAPI (rewrite.data_api.factory.create_data_api)
-wired to fake in-memory storage repositories -- this exercises the real
-QuerySet/MetadataService/ValueService stack the FX datasets
+wired to fake in-memory metadata/value storage repositories, but a REAL
+in-memory duckdb connection for `duckdb_connection` -- this exercises the
+real QuerySet/MetadataService/ValueService stack the FX datasets
 (FXDevelopedMarkets etc.) depend on via .query(), not just get_metadata()/
-get_values() in isolation. steer_catalog is the REAL SteerCatalog wrapping
-an in-memory duckdb connection.
+get_values() in isolation, and gives DataAPI.read_table()/.write_table()
+(steer_estimate/steer_signal's gold.steer_estimates/gold.steer_signals
+writes) somewhere real to read/write.
 
 METADATA/PAIRS below deliberately have no role-filter coverage (see
 steer/discovery.py's ROLE_FILTERS) for either pair's legs, so every pair
@@ -40,12 +42,7 @@ from dagster_quickstart.assets.steer.silver_asset import steer_silver_prices
 from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.config import StrategyConfig
-from dagster_quickstart.steer.storage import (
-    GOLD_SCHEMA,
-    STEER_ESTIMATES_TABLE,
-    STEER_SIGNALS_TABLE,
-    SteerCatalog,
-)
+from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
 
 UNIVERSE = "G10"
 PAIRS = ["AUDJPY_PX_LAST", "EURGBP_PX_LAST"]
@@ -147,7 +144,7 @@ def _values_frame() -> pd.DataFrame:
 class FakeRewriteDataAPIResource:
     def __init__(self, metadata: pd.DataFrame, values: pd.DataFrame):
         self.api = create_data_api(
-            duckdb_connection=object(),
+            duckdb_connection=duckdb.connect(":memory:"),
             metadata_repository=FakeMetadataStorage(metadata),
             value_repository=FakeValueStorage(values),
         )
@@ -180,30 +177,15 @@ class FakeSteerConfigResource:
         return self._configs[universe]
 
 
-class FakeSteerCatalogResource:
-    def __init__(self, catalog: SteerCatalog):
-        self.catalog = catalog
-
-
 @pytest.fixture
-def in_memory_catalog() -> SteerCatalog:
-    catalog = SteerCatalog(duckdb.connect(":memory:"))
-    catalog.ensure_schemas()
-    return catalog
-
-
-@pytest.fixture
-def resources(in_memory_catalog: SteerCatalog):
+def resources():
     return {
         "rewrite_data_api": FakeRewriteDataAPIResource(METADATA, _values_frame()),
         "steer_config": FakeSteerConfigResource(_strategy_config()),
-        "steer_catalog": FakeSteerCatalogResource(in_memory_catalog),
     }
 
 
-def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(
-    resources, in_memory_catalog
-):
+def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resources):
     """local_equity is never available (see steer/discovery.py) -- every pair in the universe is blocked,
     and the whole chain should skip cleanly end to end rather than fail, with nothing written to the
     gold tables. Both pairs in the universe are discovered and processed within ONE partition run."""
@@ -235,8 +217,9 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(
     assert isinstance(signal_output, pd.DataFrame)
     assert signal_output.empty
 
-    estimates_table = in_memory_catalog.read(GOLD_SCHEMA, STEER_ESTIMATES_TABLE)
-    signals_table = in_memory_catalog.read(GOLD_SCHEMA, STEER_SIGNALS_TABLE)
+    data_api = resources["rewrite_data_api"].api
+    estimates_table = data_api.read_table(GOLD_SCHEMA, STEER_ESTIMATES_TABLE).frame
+    signals_table = data_api.read_table(GOLD_SCHEMA, STEER_SIGNALS_TABLE).frame
     assert estimates_table.empty
     assert signals_table.empty
 
@@ -353,12 +336,9 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
     written gold.steer_estimates / gold.steer_signals row -- proving the
     new metadata-driven discovery + driver construction actually works end
     to end, not just that it degrades gracefully when data is missing."""
-    catalog = SteerCatalog(duckdb.connect(":memory:"))
-    catalog.ensure_schemas()
     resources = {
         "rewrite_data_api": FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values()),
         "steer_config": FakeSteerConfigResource(_strategy_config()),
-        "steer_catalog": FakeSteerCatalogResource(catalog),
     }
 
     result = materialize(
@@ -391,8 +371,9 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
     assert not signal_output.empty
     assert signal_output.iloc[0]["signal"] in {"BUY", "SELL", "NONE"}
 
-    estimates_table = catalog.read(GOLD_SCHEMA, STEER_ESTIMATES_TABLE)
-    signals_table = catalog.read(GOLD_SCHEMA, STEER_SIGNALS_TABLE)
+    data_api = resources["rewrite_data_api"].api
+    estimates_table = data_api.read_table(GOLD_SCHEMA, STEER_ESTIMATES_TABLE).frame
+    signals_table = data_api.read_table(GOLD_SCHEMA, STEER_SIGNALS_TABLE).frame
     assert not estimates_table.empty
     assert not signals_table.empty
 

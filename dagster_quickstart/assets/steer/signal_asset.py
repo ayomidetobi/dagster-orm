@@ -32,7 +32,7 @@ CHECK_NAME = "validate_steer_signals"
 @asset(
     name="steer_signal",
     partitions_def=STEER_PARTITIONS,
-    required_resource_keys={"steer_config", "steer_catalog"},
+    required_resource_keys={"steer_config", "rewrite_data_api"},
     check_specs=[
         AssetCheckSpec(
             name=CHECK_NAME,
@@ -144,7 +144,7 @@ def steer_signal(
         description=f"{len(row_df)} row(s) passed pandera validation.",
     )
 
-    context.resources.steer_catalog.catalog.write(GOLD_SCHEMA, STEER_SIGNALS_TABLE, row_df)
+    context.resources.rewrite_data_api.api.write_table(GOLD_SCHEMA, STEER_SIGNALS_TABLE, row_df)
 
     yield Output(
         row_df,

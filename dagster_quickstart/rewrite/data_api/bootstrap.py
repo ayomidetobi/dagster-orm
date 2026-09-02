@@ -67,7 +67,7 @@ def build_default_catalog_config() -> DuckLakeCatalogConfig:
     from the environment/.env via python-decouple. Shared by
     build_default_connection() (below) and anything else that needs to
     attach to this exact catalog without going through the full DataAPI
-    stack -- e.g. steer.storage.SteerCatalog.
+    stack.
     """
 
     bucket = env_config("S3_BUCKET")
@@ -93,9 +93,9 @@ def build_default_connection():
     on the `values` table). Two connections both running that DDL at once
     is a real DuckLake transaction conflict (optimistic concurrency control
     on the Postgres-backed catalog) -- callers that don't need the
-    metadata/value repositories at all (e.g. steer.storage.SteerCatalog)
-    should use this instead of build_default_container() to avoid running
-    that DDL redundantly and racing DataAPI's own initialization.
+    metadata/value repositories at all should use this instead of
+    build_default_container() to avoid running that DDL redundantly and
+    racing DataAPI's own initialization.
     """
 
     catalog_config = build_default_catalog_config()
