@@ -6,9 +6,11 @@ assets/utils/ did before it was removed with the legacy pipeline it served.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import List
 
-from dagster_quickstart.steer.discovery import PairAvailability, assess_pair_availability
+import pandas as pd
+
+from dagster_quickstart.steer.discovery import PairAvailability
 
 
 @dataclass(frozen=True)
@@ -19,29 +21,22 @@ class SteerPair:
     availability: PairAvailability
 
 
-def resolve_universe_pairs(
-    universe: str,
-    data_api: Any,
-    *,
-    currency_to_fi_series: Dict[str, List[str]],
-    currency_to_equity_series: Dict[str, List[str]],
-) -> List[SteerPair]:
-    """Every real pair in `universe` (see universe_datasets.discover_pairs), each with its availability assessment."""
-    from dagster_quickstart.assets.steer.universe_datasets import discover_pairs
+def pairs_from_availability_report(report: pd.DataFrame) -> List[SteerPair]:
+    """Every SteerPair in `report` -- one universe's steer_data_availability output.
 
-    metadata = discover_pairs(universe, data_api)
-    if metadata.empty:
+    Reconstructs each row's PairAvailability via PairAvailability.from_report_row
+    -- no data_api, no metadata query. Replaces the old resolve_universe_pairs,
+    which re-resolved every pair's roles from scratch even though
+    steer_data_availability had just done exactly that work for the same
+    partition; steer_silver_prices now depends on that asset directly (see
+    silver_asset.py) and calls this on its output instead.
+    """
+    if report.empty:
         return []
-
     return [
         SteerPair(
-            series_code=series_code,
-            availability=assess_pair_availability(
-                series_code,
-                universe,
-                currency_to_fi_series=currency_to_fi_series,
-                currency_to_equity_series=currency_to_equity_series,
-            ),
+            series_code=str(row["series_code"]),
+            availability=PairAvailability.from_report_row(row),
         )
-        for series_code in metadata["series_code"]
+        for _, row in report.iterrows()
     ]

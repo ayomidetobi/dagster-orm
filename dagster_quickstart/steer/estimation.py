@@ -4,19 +4,40 @@ Pure functions only -- no Dagster, no DuckLake -- so they're directly unit
 testable against synthetic series (see tests/test_steer_estimation.py).
 
 Look-ahead safety: every function here takes `as_of` and only ever touches
-rows with timestamp <= as_of (see `_window_slice`); nothing past `as_of` is
+rows with timestamp <= as_of (see `window_slice`); nothing past `as_of` is
 read, so calling this once per historical day and once "live" today
 produces the same result for that day.
 
-Cointegration design note (an edge case flagged rather than guessed):
-statsmodels.tsa.stattools.coint is bivariate -- it tests exactly two series
-against each other, not a rate against 5 drivers at once. The standard way
-to extend Engle-Granger to a multivariate regression is to first collapse
-the drivers into the OLS-fitted value (a single series), then run coint()
-between the actual rate and that fitted series -- which is what
-cointegration_test() below does. engle_granger_cointegration_test() itself
-stays a generic bivariate wrapper (any two series in, verdict out) so it's
-independently testable and reusable.
+Cointegration design note (matches the reference production model, not a
+locally-derived "fix"): cointegration_test() runs statsmodels.tsa.stattools.
+adfuller() directly on the residuals of the multivariate OLS of rate on
+every driver, with regression="c" and autolag="BIC" -- these are the exact
+parameters BNP Paribas' production STEER model (mqrm-steer-model) uses:
+`stats.adfuller(residuals[pair], regression="c", autolag="BIC")`. There is
+no intermediate "collapse the drivers to one OLS-fitted series, then
+regress the actual rate on THAT" step -- that step was already a
+mathematical no-op (regressing y on its own fitted values from an
+identical design gives slope=1, intercept=0, and residuals identical to
+the original multivariate regression's), and production's use of adfuller
+directly on the multivariate residuals confirms the no-op step was never
+needed, not that it needs replacing with something else.
+
+Known inherited property, documented rather than silently corrected: ADF's
+own critical values are calibrated for testing an observed series, not the
+residuals of an estimated regression -- properly calibrated Engle-Granger
+critical values (e.g. via MacKinnon's tables, as statsmodels.tsa.stattools.
+coint() applies) would be somewhat more conservative, so this test passes
+somewhat more often than a properly-calibrated one would. That gap is a
+known, accepted property of the reference implementation this codebase is
+matching, not a bug to fix locally -- changing it would shift the live
+signal set relative to production and is a model-owner decision, not an
+engineering one.
+
+engle_granger_cointegration_test() stays a separate, reusable bivariate
+(two-series) OLS-then-adfuller wrapper for callers that want a plain
+two-series test (see tests/test_steer_estimation.py) -- cointegration_test()
+no longer routes through it, since routing a multivariate fit through a
+bivariate collapse was exactly the no-op step above.
 """
 
 from __future__ import annotations
@@ -27,11 +48,9 @@ from typing import Dict, Mapping, Tuple
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from statsmodels.tsa.stattools import coint
+from statsmodels.tsa.stattools import adfuller
 
 from dagster_quickstart.steer.errors import InsufficientDataError
-
-CONST_COLUMN = "const"
 
 
 @dataclass(frozen=True)
@@ -51,7 +70,7 @@ class SteerEstimate:
     """One rolling-OLS STEER fit for one currency pair, as of one day.
 
     `coefficients` always has one entry per column of the `drivers` frame
-    passed in, plus CONST_COLUMN -- a driver dropped by
+    passed in, plus "const" (statsmodels' constant-column name) -- a driver dropped by
     sign_check_and_reestimate() simply isn't a key here (rather than being
     present with a null/zero value), so `dropped_variables` is the only
     place that fact is recorded.
@@ -79,7 +98,7 @@ class SteerEstimate:
         return float(np.exp(self.actual_value)) if self.is_logged else self.actual_value
 
 
-def _window_slice(frame: pd.DataFrame, *, as_of: pd.Timestamp, window_months: int) -> pd.DataFrame:
+def window_slice(frame: pd.DataFrame, *, as_of: pd.Timestamp, window_months: int) -> pd.DataFrame:
     """Rows with window_start < timestamp <= as_of, dropping any row with a null anywhere."""
     as_of = pd.Timestamp(as_of)
     window_start = as_of - pd.DateOffset(months=window_months)
@@ -101,7 +120,7 @@ def estimate_steer(
     log(rate) or the raw rate level -- see steer.features.should_use_logged_rate
     for how that's decided per pair/day; this function just applies whatever
     it's told. Uses only the trailing `window_months` of history up to and
-    including `as_of` (see _window_slice) -- never anything after `as_of`.
+    including `as_of` (see window_slice) -- never anything after `as_of`.
 
     Raises InsufficientDataError if fewer than min_observations complete
     rows fall in that window (e.g. early in a pair's history, before a full
@@ -109,7 +128,7 @@ def estimate_steer(
     """
     y_full = np.log(rate) if is_logged else rate
     frame = pd.concat([y_full.rename("y"), drivers], axis=1)
-    windowed = _window_slice(frame, as_of=as_of, window_months=window_months)
+    windowed = window_slice(frame, as_of=as_of, window_months=window_months)
 
     if len(windowed) < min_observations:
         raise InsufficientDataError(
@@ -124,7 +143,10 @@ def estimate_steer(
 
     fitted = model.fittedvalues
     residuals = model.resid
-    residual_std = float(residuals.std(ddof=1))
+    # ddof=0 (population, not sample, std) -- matches the reference production
+    # model; this feeds z_score directly, and the residual_std/ddof choice
+    # lands on the +/-1.5 threshold where signals fire (see steer.signals).
+    residual_std = float(residuals.std(ddof=0))
 
     latest_actual = float(y.iloc[-1])
     latest_fitted = float(fitted.iloc[-1])
@@ -209,11 +231,22 @@ def engle_granger_cointegration_test(
     significance: float = 0.05,
     min_observations: int = 20,
 ) -> CointegrationResult:
-    """Engle-Granger cointegration test between two series (statsmodels.tsa.stattools.coint), as of `as_of`.
+    """Engle-Granger cointegration test between two series: OLS regression, then ADF on the residuals.
 
-    Generic and bivariate -- pass any two series (e.g. actual rate vs. its
-    OLS-fitted STEER value; see cointegration_test() below for that
-    specific wiring). Only uses rows with timestamp <= as_of.
+    Generic and bivariate -- pass any two series. Only uses rows with
+    timestamp <= as_of. cointegration_test() below does NOT route through
+    this (see the module docstring) -- it runs ADF directly on the
+    multivariate regression's own residuals instead, matching production.
+    This function remains for callers that genuinely want a plain
+    two-series test.
+
+    (1) OLS of y on x with a constant; (2) statsmodels.tsa.stattools.
+    adfuller() on the regression residuals, with regression="c" and
+    autolag="BIC" -- the reference production model's exact parameters
+    (see module docstring for why, and for the known critical-value
+    caveat this inherits). `passed` is True when adfuller rejects the
+    unit-root null (p_value <= significance) -- i.e. the residuals are
+    stationary, so y and x are cointegrated.
     """
     aligned = pd.concat([y.rename("y"), x.rename("x")], axis=1)
     aligned = aligned.loc[aligned.index <= pd.Timestamp(as_of)].dropna()
@@ -224,14 +257,19 @@ def engle_granger_cointegration_test(
             f"need at least {min_observations} for a cointegration test."
         )
 
-    test_statistic, p_value, critical_values = coint(aligned["y"], aligned["x"])
+    x_with_const = sm.add_constant(aligned["x"], has_constant="add")
+    residuals = sm.OLS(aligned["y"], x_with_const).fit().resid
+
+    adf_result = adfuller(residuals, regression="c", autolag="BIC", result_object=True)
 
     return CointegrationResult(
         as_of=pd.Timestamp(as_of),
-        passed=bool(p_value <= significance),
-        p_value=float(p_value),
-        test_statistic=float(test_statistic),
-        critical_values=tuple(float(v) for v in critical_values),
+        passed=bool(adf_result.pvalue <= significance),
+        p_value=float(adf_result.pvalue),
+        test_statistic=float(adf_result.statistic),
+        critical_values=tuple(
+            float(adf_result.critical_values[level]) for level in ("1%", "5%", "10%")
+        ),
         n_obs=len(aligned),
     )
 
@@ -246,17 +284,19 @@ def cointegration_test(
     significance: float = 0.05,
     min_observations: int = 20,
 ) -> CointegrationResult:
-    """Cointegration test between a pair's actual rate and its OLS-fitted STEER value, as of `as_of`.
+    """Cointegration test between a pair's actual rate and its drivers, as of `as_of`.
 
-    Fits estimate_steer() over the same rolling window, then runs
-    engle_granger_cointegration_test() between the actual (log or level,
-    per is_logged) series and the fitted series over that window -- see
-    the module docstring for why this is bivariate rather than passing all
-    5 drivers to coint() directly.
+    Fits the identical windowed multivariate OLS estimate_steer() does
+    (rate on every driver, plus a constant) and runs adfuller() directly on
+    THAT regression's own residuals -- regression="c", autolag="BIC",
+    matching the reference production model exactly (see module
+    docstring). No intermediate bivariate collapse: that step was
+    mathematically a no-op, and production's direct-on-multivariate-residuals
+    approach confirms it.
     """
     y_full = np.log(rate) if is_logged else rate
     frame = pd.concat([y_full.rename("y"), drivers], axis=1)
-    windowed = _window_slice(frame, as_of=as_of, window_months=window_months)
+    windowed = window_slice(frame, as_of=as_of, window_months=window_months)
 
     if len(windowed) < max(min_observations, 1):
         raise InsufficientDataError(
@@ -265,13 +305,17 @@ def cointegration_test(
         )
 
     x = sm.add_constant(windowed[list(drivers.columns)], has_constant="add")
-    model = sm.OLS(windowed["y"], x).fit()
-    fitted = model.fittedvalues.rename("fitted")
+    residuals = sm.OLS(windowed["y"], x).fit().resid
 
-    return engle_granger_cointegration_test(
-        windowed["y"],
-        fitted,
-        as_of=as_of,
-        significance=significance,
-        min_observations=min_observations,
+    adf_result = adfuller(residuals, regression="c", autolag="BIC", result_object=True)
+
+    return CointegrationResult(
+        as_of=pd.Timestamp(as_of),
+        passed=bool(adf_result.pvalue <= significance),
+        p_value=float(adf_result.pvalue),
+        test_statistic=float(adf_result.statistic),
+        critical_values=tuple(
+            float(adf_result.critical_values[level]) for level in ("1%", "5%", "10%")
+        ),
+        n_obs=len(windowed),
     )

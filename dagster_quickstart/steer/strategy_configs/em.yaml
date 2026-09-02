@@ -3,11 +3,11 @@
 # See g10.yaml's header comment -- same dataset-driven pair discovery
 # (rewrite.data_api.dataset.fx.FXEmergingMarkets), same driver-sourcing
 # rules, one static Dagster partition covering every EM pair as data.
-# Every EM pair is currently missing interest_rate_differential coverage
-# too (this catalog's Fixed Income data only covers 6 G10 currencies) --
-# so every EM pair is reported blocked by steer_data_availability right
-# now, same as G10/CHN. That's an honest reflection of this catalog's
-# real data, not a bug.
+# yield_curve_or_cds here is the non-USD leg's 5Y sovereign CDS *level*
+# (this catalog has no EM sovereign-yield coverage, so there's no 3m/10y
+# curve slope to build for EM the way G10 has) -- see
+# steer/discovery.py's/steer/features.py's module docstrings for the full
+# per-universe driver-construction rules.
 
 universe: EM
 ticker_source: bloomberg
@@ -28,9 +28,6 @@ logged_rate_vol_window_days: 20
 
 cointegration_significance: 0.05
 min_observations: 60
-
-global_equity_series: IDX0005_INDEX
-commodity_series: XAU_PX_0032
 
 expected_signs:
   interest_rate_differential: 1

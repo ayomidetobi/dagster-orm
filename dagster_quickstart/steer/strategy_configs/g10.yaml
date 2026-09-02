@@ -7,10 +7,11 @@
 # one partition run, not as a separate Dagster partition (see
 # assets/steer/partitions.py). local_equity and
 # interest_rate_differential/yield_curve_or_cds are discovered +
-# availability-checked per pair (see steer/discovery.py);
-# global_equity_series/commodity_series below are curated single series
-# (global benchmarks, not per-pair) -- these two ARE real series_codes
-# already in this catalog (IDX0005_INDEX, XAU_PX_0032), not placeholders.
+# availability-checked per pair (see steer/discovery.py). global_equity_series/
+# commodity_series are NOT configured here -- they're the same single
+# series_codes for every universe (see steer/config.py's GLOBAL_DRIVERS),
+# so they live in code once instead of being copy-pasted into every
+# strategy_configs/*.yaml where they could silently drift apart.
 
 universe: G10
 ticker_source: bloomberg
@@ -31,14 +32,6 @@ logged_rate_vol_window_days: 20
 
 cointegration_significance: 0.05
 min_observations: 60
-
-# "Regional Index 5" -- a global equity-index series already ingested in
-# this catalog. Swap for whatever real global benchmark you actually want
-# (e.g. an MSCI World series) once one exists.
-global_equity_series: IDX0005_INDEX
-
-# "Gold Benchmark 32" -- a global commodity series already ingested.
-commodity_series: XAU_PX_0032
 
 # Economically-expected coefficient sign per driver (+1/-1); 0 = no
 # expectation (never dropped by sign_check_and_reestimate).

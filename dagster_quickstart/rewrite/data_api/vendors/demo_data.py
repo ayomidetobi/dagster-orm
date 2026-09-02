@@ -52,19 +52,34 @@ def fetch_demo_values(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> pd.DataFrame:
-    """Return a wide (DatetimeIndex, series_code columns) demo frame for a vendor client."""
+    """Return a wide (DatetimeIndex, series_code columns) demo frame for a vendor client.
+
+    `tickers` is series_code -> vendor ticker; several series_codes can
+    legitimately share the same ticker (this catalog has several
+    series_codes aliasing the same real-world instrument, e.g. two AUDJPY
+    series with different suffixes -- see rewrite/data_api/dataset/fx.py's
+    docstrings). Each ticker's simulated price series is generated once
+    and broadcast to every series_code that references it -- generating
+    one demo_random_wide_frame column per *ticker* and keying the return
+    frame by series_code (not by ticker) is what makes that safe: a naive
+    ticker-keyed dict would silently collapse duplicate series_codes down
+    to whichever one was iterated last.
+    """
 
     if not tickers:
         return pd.DataFrame()
 
     logger.info("vendor_fetch_started", vendor=vendor, series_count=len(tickers), demo_data=True)
 
-    wide = demo_random_wide_frame(list(tickers.values()), start, end)
+    unique_tickers = sorted(set(tickers.values()))
+    wide = demo_random_wide_frame(unique_tickers, start, end)
 
-    rename_map = {
-        ticker: series_code for series_code, ticker in tickers.items() if ticker in wide.columns
+    columns = {
+        series_code: wide[ticker]
+        for series_code, ticker in tickers.items()
+        if ticker in wide.columns
     }
-    if not rename_map:
+    if not columns:
         return pd.DataFrame()
 
-    return wide.rename(columns=rename_map)[list(rename_map.values())]
+    return pd.DataFrame(columns, index=wide.index)

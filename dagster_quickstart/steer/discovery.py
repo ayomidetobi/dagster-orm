@@ -1,325 +1,387 @@
-"""Dataset-driven pair/driver discovery for STEER, replacing the old YAML variable_set.
+"""Dataset-driven pair/driver discovery for STEER, against the real BNP STEER metadata catalog.
 
-Currency pairs and their rate series now come straight from the datalake
-via rewrite.data_api.dataset.fx (FXDevelopedMarkets/FXEmergingMarkets/
-FXChina), not hand-typed in YAML -- see steer/config.py.
+Currency pairs come from the datalake via rewrite.data_api.dataset.fx
+(FXDevelopedMarkets/FXEmergingMarkets/FXChina) -- see steer/config.py.
+Every pair is one non-USD currency vs USD (the catalog has no FX-spot rows
+of its own; see fx.py's _STEER_FX_FILTERS docstring for why and how those
+rows were added). parse_fx_legs() still parses (base, quote) ISO currency
+codes structurally from a pair's series_code -- the `currency` column
+can't identify a pair (it holds one value; a pair has two legs).
 
-Two of the 5 STEER drivers can only be genuinely sourced per-pair from
-this catalog's real metadata:
-  - global_equity, commodity: single series, config-provided (YAML) --
-    these are supposed to be one global benchmark applied identically to
-    every pair, so there's nothing to "discover" per pair.
-  - local_equity: needs a real per-country/per-currency equity index for
-    BOTH of a pair's currencies. Most of this catalog's Equity metadata
-    (Common Stock / generic "Regional Index" rows) has no per-row country
-    signal at all -- but 14 real per-currency MSCI index series were added
-    explicitly for this (AUD, CNY, EUR, GBP, INR, JPY, MXN, NOK, RUB, SAR,
-    SEK, SGD, USD, ZAR -- see EQUITY_SERIES_TO_CURRENCY). A pair is only
-    "local equity available" if both legs are in that covered set; any
-    other currency (there is currently no broader coverage) is honestly
-    reported unavailable, never a fabricated proxy.
-  - interest_rate_differential / yield_curve_or_cds: both need a real
-    sovereign-yield or interest-rate-swap series for BOTH of a pair's
-    currencies. This catalog's Fixed Income data covers 9 currencies (AUD,
-    CAD, CHF, EUR, GBP, JPY, NOK, SEK, USD -- sovereign yields via 8
-    countries, where DE/FR/IT all map to EUR, plus the 2Y swap series in
-    SWAP_SERIES_TO_CURRENCY, CHF/NOK/SEK's only source). A pair is only
-    "rate data available" if both legs are in that covered set.
-    NKSW2_PX_LAST/SKSW2_PX_LAST (NOK/SEK) are placeholder demo tickers, not
-    verified real Bloomberg mnemonics -- added on explicit request to
-    unblock those currencies in this demo catalog, unlike the other swap
-    entries (which are real tickers the requester supplied).
+Every driver leg is resolved as a metadata *filter query* against the real
+catalog's controlled vocabulary (sub_asset_class/tenor/market_segment/
+currency), not a hand-maintained mnemonic dictionary -- see ROLE_FILTERS
+and RoleResolver below. RoleResolver fetches the whole metadata table
+*once* (get_metadata() with no filters) and indexes it in memory by
+(role, currency), rather than issuing one get_metadata() call per
+(role, currency) pair -- with ~195 catalog rows and ~106 distinct
+(role, currency) combinations across every universe, that was ~106 real
+database round trips per run for a table small enough to just hold in
+memory. A role is looked up by currency alone (no market_development
+filter): USD's own rate/equity rows are tagged market_development="G10"
+in this catalog even though USD is the anchor leg of every EM/CHN pair
+too, so filtering role lookups by universe would silently fail to find
+them.
 
-A pair missing either local_equity or rate data is explicitly reported as
-blocked (see assess_pair_availability) rather than silently regressed on
-a partial/corrupted driver set -- this was a direct instruction, not a
-judgment call: never substitute a global proxy for a missing per-country
-input, and never let a pair with missing genuine data reach estimation.
+Required roles differ by universe (see REQUIRED_ROLES):
+  - G10: swap_2y, rate_3m, yield_10y, local_equity, for BOTH legs.
+    interest_rate_differential uses swap_2y (both legs); yield_curve_or_cds
+    is the (3m - 10y) curve-slope differential, using rate_3m/yield_10y
+    (see steer/features.py) -- two different rate drivers, not the same
+    series reused twice.
+  - EM/CHN: swap_2y and local_equity for BOTH legs; cds_5y for the
+    non-USD leg ONLY (yield_curve_or_cds is that leg's CDS *level*, not a
+    difference -- see steer/features.py). EM/CHN currently has no
+    sovereign-yield coverage in this catalog, so there's no 3m/10y curve
+    slope to build for them; cds_5y is the published methodology's driver
+    2 for these universes instead.
+
+CHN's cds_5y role resolves to CNHCDS_PX_LAST, a SYNTHETIC PLACEHOLDER (see
+its des_notes in meta_series_steer.csv) added on the assumption that CHN
+takes the same driver-2 treatment as EM -- the source ticker sheet
+supplies no CNH curve legs and no China CDS, so this is unconfirmed. All
+catalog data (synthetic or not) is treated as real for resolution
+purposes -- is_synthetic is kept only as a deterministic tie-break sort
+key (real before synthetic, then series_code) for the rare case where a
+role matches more than one row, e.g. CNH's local_equity matching both the
+real CNHLIVEMSCI_PX_LAST and the synthetic CNHMSCI_PX_LAST. Nothing
+filters on is_synthetic any more.
+
+A pair missing any required role for any required leg is reported blocked
+(see PairAvailability.blocked) rather than silently regressed on a
+partial/corrupted driver set -- never substitute a global proxy for a
+missing per-country input, and never let a pair with missing genuine data
+reach estimation.
+
+steer_data_availability (assets/steer/availability_asset.py) does this
+resolution once per universe and persists every resolved (leg, role) as a
+flat column in its report (build_availability_report); steer_silver_prices
+depends on that asset and reconstructs each pair's PairAvailability from
+the report row (PairAvailability.from_report_row) instead of re-resolving
+from scratch -- the two assets used to duplicate all of this work.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-#: Country code (from a Fixed Income series_code's prefix, e.g. "US2Y_YIELD_0021")
-#: -> the currency that country's sovereign yield is relevant to.
-COUNTRY_TO_CURRENCY: Dict[str, str] = {
-    "US": "USD",
-    "UK": "GBP",
-    "JP": "JPY",
-    "DE": "EUR",
-    "FR": "EUR",
-    "IT": "EUR",
-    "CA": "CAD",
-    "AU": "AUD",
-}
+_FX_PAIR_PATTERN = re.compile(r"^([A-Z]{3})([A-Z]{3})_")
 
-#: 2Y interest-rate-swap series_code -> currency. Unlike sovereign-yield
-#: series_codes (parsed structurally via _FI_COUNTRY_PATTERN), these are
-#: vendor mnemonics with no derivable country-prefix structure -- listed
-#: explicitly rather than guessed at with a regex. CHF/NOK/SEK have no
-#: sovereign-yield series in this catalog at all, so their swap entry is
-#: currently their only rate-data source. EUSA2/USOSFR2/BPSW2/JYSO2/SFSW2/
-#: ADSW2 are real Bloomberg mnemonics supplied by the catalog owner;
-#: NKSW2/SKSW2 are placeholder demo tickers (not verified real), added on
-#: explicit request just to unblock NOK/SEK in this demo catalog.
-SWAP_SERIES_TO_CURRENCY: Dict[str, str] = {
-    "EUSA2_PX_LAST": "EUR",
-    "USOSFR2_PX_LAST": "USD",
-    "BPSW2_PX_LAST": "GBP",
-    "JYSO2_PX_LAST": "JPY",
-    "SFSW2_PX_LAST": "CHF",
-    "ADSW2_PX_LAST": "AUD",
-    "NKSW2_PX_LAST": "NOK",
-    "SKSW2_PX_LAST": "SEK",
-}
-
-#: Local-equity-index series_code -> currency. Same reasoning as
-#: SWAP_SERIES_TO_CURRENCY: these are real per-currency MSCI index
-#: mnemonics (e.g. "AUD_PX_LAST" -> MXAU Index) with no structure to parse
-#: generically -- listed explicitly. Everything else in this catalog's
-#: Equity metadata (Common Stock / generic "Regional Index" rows) carries
-#: no country/currency signal at all and is never matched here.
-EQUITY_SERIES_TO_CURRENCY: Dict[str, str] = {
-    "AUD_PX_LAST": "AUD",
-    "CNY_PX_LAST": "CNY",
-    "EUR_PX_LAST": "EUR",
-    "GBP_PX_LAST": "GBP",
-    "INR_PX_LAST": "INR",
-    "JPY_PX_LAST": "JPY",
-    "MXN_PX_LAST": "MXN",
-    "NOK_PX_LAST": "NOK",
-    "RUB_PX_LAST": "RUB",
-    "SAR_PX_LAST": "SAR",
-    "SEK_PX_LAST": "SEK",
-    "SGD_PX_LAST": "SGD",
-    "USD_PX_LAST": "USD",
-    "ZAR_PX_LAST": "ZAR",
-}
-
-_FX_PAIR_PATTERN = re.compile(r"^([A-Z]{3})([A-Z]{3})_SPOT")
-_FI_COUNTRY_PATTERN = re.compile(r"^([A-Z]{2,3})\d")
+_LEGS: Tuple[str, str] = ("base", "quote")
 
 
 def parse_fx_legs(series_code: str) -> Optional[Tuple[str, str]]:
-    """Extract (base, quote) ISO currency codes from an FX series_code like "AUDJPY_SPOT_0004"."""
+    """Extract (base, quote) ISO currency codes from an FX series_code like "EURUSD_PX_LAST"."""
     match = _FX_PAIR_PATTERN.match(str(series_code))
     return (match.group(1), match.group(2)) if match else None
 
 
-def parse_fi_country(series_code: str) -> Optional[str]:
-    """Extract the country-code prefix from a Fixed Income series_code like "US2Y_YIELD_0021"."""
-    match = _FI_COUNTRY_PATTERN.match(str(series_code))
-    return match.group(1) if match else None
+#: role name -> the metadata filter (minus `currency`) that resolves it --
+#: see RoleResolver. Every driver leg is expressed as a filter query
+#: against the real catalog, never a hardcoded series_code list.
+ROLE_FILTERS: Dict[str, Dict[str, List[str]]] = {
+    "swap_2y": dict(sub_asset_class=["Interest Rate Swap"], tenor=["2Y"]),
+    "rate_3m": dict(sub_asset_class=["Money Market Rate"], tenor=["3M"]),
+    "yield_10y": dict(sub_asset_class=["Sovereign Yield"], tenor=["10Y"]),
+    "cds_5y": dict(sub_asset_class=["Sovereign CDS"], tenor=["5Y"]),
+    "local_equity": dict(sub_asset_class=["Equity Index"], market_segment=["Local"]),
+}
+
+#: universe -> (roles required for BOTH legs, roles required for the non-USD leg only).
+REQUIRED_ROLES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
+    "G10": (("swap_2y", "rate_3m", "yield_10y", "local_equity"), ()),
+    "EM": (("swap_2y", "local_equity"), ("cds_5y",)),
+    "CHN": (("swap_2y", "local_equity"), ("cds_5y",)),
+}
 
 
-def parse_fi_currency(series_code: str) -> Optional[str]:
-    """Resolve a Fixed Income series_code to a currency, sovereign yield or swap.
+class RoleResolver:
+    """Resolves (role, currency) -> series_code from one in-memory metadata snapshot.
 
-    Tries the explicit swap mnemonic table first (SWAP_SERIES_TO_CURRENCY),
-    then falls back to the country-prefix parse (parse_fi_country +
-    COUNTRY_TO_CURRENCY) that sovereign-yield series_codes follow.
+    Replaces ~106 per-(role, currency) queries (one get_metadata() call per
+    role/currency combination, across every universe) with a single
+    get_metadata() call, indexed here once.
     """
-    currency = SWAP_SERIES_TO_CURRENCY.get(str(series_code))
-    if currency:
-        return currency
-    country = parse_fi_country(series_code)
-    return COUNTRY_TO_CURRENCY.get(country) if country else None
+
+    def __init__(self, metadata: pd.DataFrame) -> None:
+        self._index: Dict[Tuple[str, str], pd.DataFrame] = {}
+        has_synthetic = "is_synthetic" in metadata.columns
+        for role, filters in ROLE_FILTERS.items():
+            if not set(filters) <= set(metadata.columns):
+                continue  # this role's filter columns aren't in the frame -- no matches
+            mask = pd.Series(True, index=metadata.index)
+            for column, allowed in filters.items():
+                mask &= metadata[column].isin(allowed)
+            subset = metadata.loc[mask]
+            if subset.empty:
+                continue
+            # Preserve the original resolve_role()'s tie-break exactly: real
+            # before synthetic (False < True), then series_code ascending --
+            # this is the ONLY thing is_synthetic still influences (see
+            # module docstring). CNH's local_equity depends on it: it
+            # matches both the real CNHLIVEMSCI_PX_LAST and the synthetic
+            # CNHMSCI_PX_LAST, and series_code alone would pick the real one
+            # only by the coincidence that "CNHL" sorts before "CNHM".
+            sort_by = ["is_synthetic", "series_code"] if has_synthetic else ["series_code"]
+            subset = subset.sort_values(sort_by)
+            for currency, group in subset.groupby("currency"):
+                self._index[(role, str(currency))] = group
+
+    @classmethod
+    def from_data_api(cls, data_api: Any) -> "RoleResolver":
+        """Build a resolver from one unfiltered get_metadata() call -- the whole catalog.
+
+        get_metadata() with no arguments is valid (filters defaults to None,
+        which resolves to no WHERE clause -- the full table).
+        """
+        return cls(data_api.get_metadata().frame)
+
+    def resolve(self, role: str, currency: str) -> Tuple[Optional[str], str]:
+        """Resolve one (role, currency) to a series_code -- an in-memory lookup, no query.
+
+        Returns (series_code, reason) -- series_code is None (with a "why
+        not" reason) if nothing matches.
+        """
+        group = self._index.get((role, currency))
+        if group is None or group.empty:
+            return None, f"No {role} series for {currency}."
+        series_code = str(group.iloc[0]["series_code"])
+        return series_code, f"{role} resolved to {series_code} for {currency}."
 
 
-def build_currency_to_fi_series(fixed_income_metadata: pd.DataFrame) -> Dict[str, List[str]]:
-    """Map currency -> every Fixed Income series_code covering it (via parse_fi_currency).
-
-    A currency can have several series (different tenors, or a sovereign
-    yield alongside a swap) -- callers pick whichever they need; this just
-    answers "is there anything at all".
-    """
-    by_currency: Dict[str, List[str]] = {}
-    for series_code in fixed_income_metadata["series_code"]:
-        currency = parse_fi_currency(series_code)
-        if currency:
-            by_currency.setdefault(currency, []).append(series_code)
-    return by_currency
-
-
-def parse_equity_currency(series_code: str) -> Optional[str]:
-    """Resolve an Equity series_code to a currency, via the explicit EQUITY_SERIES_TO_CURRENCY table."""
-    return EQUITY_SERIES_TO_CURRENCY.get(str(series_code))
-
-
-def build_currency_to_equity_series(equity_metadata: pd.DataFrame) -> Dict[str, List[str]]:
-    """Map currency -> every local-equity-index series_code covering it (via parse_equity_currency).
-
-    Mirrors build_currency_to_fi_series -- callers pass this catalog's
-    Equity metadata broadly (most rows won't match EQUITY_SERIES_TO_CURRENCY
-    and are silently skipped, same as build_currency_to_fi_series ignoring
-    non-Fixed-Income-shaped codes).
-    """
-    by_currency: Dict[str, List[str]] = {}
-    for series_code in equity_metadata["series_code"]:
-        currency = parse_equity_currency(series_code)
-        if currency:
-            by_currency.setdefault(currency, []).append(series_code)
-    return by_currency
+def _non_usd_leg(base: str, quote: str) -> Optional[str]:
+    """Whichever of base/quote isn't USD -- None if neither (or both) are USD."""
+    if base == "USD" and quote != "USD":
+        return quote
+    if quote == "USD" and base != "USD":
+        return base
+    return None
 
 
 @dataclass(frozen=True)
 class PairAvailability:
-    """Per-pair driver availability -- the data_availability report's per-row shape."""
+    """Per-pair driver-role availability -- the data_availability report's per-row shape.
+
+    resolved maps (leg, role) -> series_code for every role that
+    successfully resolved, leg being "base" or "quote". A driver needing
+    several roles/legs (e.g. G10's yield_curve_or_cds needs
+    (base, rate_3m), (base, yield_10y), (quote, rate_3m), (quote,
+    yield_10y)) reads every one of them out of this single dict -- see
+    steer/features.py's fetch_raw_driver_frame.
+    """
 
     series_code: str
     universe: str
     base_currency: Optional[str]
     quote_currency: Optional[str]
-    local_equity_available: bool
-    local_equity_reason: str
-    rate_data_available: bool
-    rate_data_reason: str
-    base_rate_series: Optional[str] = None
-    quote_rate_series: Optional[str] = None
-    base_equity_series: Optional[str] = None
-    quote_equity_series: Optional[str] = None
+    resolved: Dict[Tuple[str, str], str] = field(default_factory=dict)
+    missing_reasons: Dict[str, str] = field(default_factory=dict)
 
     @property
     def blocked(self) -> bool:
-        """True if this pair is missing a genuine per-country input for any driver."""
-        return not (self.local_equity_available and self.rate_data_available)
+        """True if any role required for this universe/pair failed to resolve."""
+        return bool(self.missing_reasons)
 
     @property
     def block_reasons(self) -> List[str]:
-        reasons = []
-        if not self.local_equity_available:
-            reasons.append(self.local_equity_reason)
-        if not self.rate_data_available:
-            reasons.append(self.rate_data_reason)
-        return reasons
+        return list(self.missing_reasons.values())
 
+    def get(self, leg: str, role: str) -> Optional[str]:
+        """The series_code resolved for (leg, role), or None if it wasn't required/available."""
+        return self.resolved.get((leg, role))
 
-def _coverage_reason(
-    *,
-    driver_label: str,
-    base: str,
-    quote: str,
-    base_series: List[str],
-    quote_series: List[str],
-) -> str:
-    """Shared "found coverage for both legs" / "missing for: X, Y" reason text.
+    @classmethod
+    def from_report_row(cls, row: "pd.Series[Any]") -> "PairAvailability":
+        """Rebuild a PairAvailability from one build_availability_report row -- no query.
 
-    Used identically for rate_data and local_equity -- both are "both legs
-    need a matching series" checks against a currency -> series_code map.
-    """
-    if base_series and quote_series:
-        return f"{driver_label} coverage found for both {base} and {quote}."
-    missing = [ccy for ccy, series in ((base, base_series), (quote, quote_series)) if not series]
-    return f"No {driver_label.lower()} series in this catalog for: {', '.join(missing)}."
+        Parses the flat `{leg}_{role}` columns back into `resolved` and
+        `block_reasons` back into `missing_reasons` (as a semicolon-split,
+        synthetically-keyed dict -- the report only persists the reason
+        *text*, not the original "{leg}:{role}" keys, so those keys aren't
+        recoverable verbatim; `blocked`/`resolved`/`block_reasons` all
+        still round-trip exactly, which is what callers actually use).
+        """
+        resolved: Dict[Tuple[str, str], str] = {}
+        for leg in _LEGS:
+            for role in ROLE_FILTERS:
+                column = f"{leg}_{role}"
+                value = row.get(column)
+                if value is not None and pd.notna(value):
+                    resolved[(leg, role)] = str(value)
+
+        reasons_text = row.get("block_reasons")
+        missing_reasons: Dict[str, str] = {}
+        if isinstance(reasons_text, str) and reasons_text.strip():
+            for index, reason in enumerate(reasons_text.split("; ")):
+                missing_reasons[f"reason_{index}"] = reason
+
+        def _optional_str(value: Any) -> Optional[str]:
+            return str(value) if value is not None and pd.notna(value) else None
+
+        return cls(
+            series_code=str(row["series_code"]),
+            universe=str(row["universe"]),
+            base_currency=_optional_str(row.get("base_currency")),
+            quote_currency=_optional_str(row.get("quote_currency")),
+            resolved=resolved,
+            missing_reasons=missing_reasons,
+        )
 
 
 def assess_pair_availability(
     series_code: str,
     universe: str,
-    *,
-    currency_to_fi_series: Dict[str, List[str]],
-    currency_to_equity_series: Dict[str, List[str]],
+    resolver: RoleResolver,
 ) -> PairAvailability:
-    """Assess one pair's driver availability against the real catalog.
+    """Assess one pair's driver-role availability against `resolver`'s in-memory snapshot.
 
-    local_equity is available only if both legs' currencies have a
-    per-currency equity index in currency_to_equity_series (see
-    EQUITY_SERIES_TO_CURRENCY) -- pass {} to report every pair as
-    local_equity-unavailable. rate_data (interest_rate_differential /
-    yield_curve_or_cds) is available only if both legs' currencies have
-    Fixed Income coverage.
+    Resolves every role REQUIRED_ROLES[universe] calls for -- both legs'
+    roles via resolver.resolve(role, base/quote currency), plus the
+    non-USD leg's extra roles (e.g. cds_5y) via resolver.resolve(role,
+    non_usd_leg) -- and reports the pair blocked if any of them come back
+    empty. Pure in-memory lookups: no metadata query happens here at all,
+    that already happened once when `resolver` was built.
     """
     legs = parse_fx_legs(series_code)
     base, quote = legs if legs else (None, None)
 
     if base is None or quote is None:
-        unparsed_reason = f"Could not parse currency legs from series_code {series_code!r}."
+        reason = f"Could not parse currency legs from series_code {series_code!r}."
         return PairAvailability(
             series_code=series_code,
             universe=universe,
             base_currency=None,
             quote_currency=None,
-            local_equity_available=False,
-            local_equity_reason=unparsed_reason,
-            rate_data_available=False,
-            rate_data_reason=unparsed_reason,
+            missing_reasons={"parse": reason},
         )
 
-    base_rate_series = currency_to_fi_series.get(base, [])
-    quote_rate_series = currency_to_fi_series.get(quote, [])
-    rate_data_available = bool(base_rate_series) and bool(quote_rate_series)
-    rate_data_reason = _coverage_reason(
-        driver_label="Sovereign-yield or interest-rate-swap",
-        base=base,
-        quote=quote,
-        base_series=base_rate_series,
-        quote_series=quote_rate_series,
-    )
+    if universe not in REQUIRED_ROLES:
+        reason = f"Unknown universe {universe!r} -- no REQUIRED_ROLES entry."
+        return PairAvailability(
+            series_code=series_code,
+            universe=universe,
+            base_currency=base,
+            quote_currency=quote,
+            missing_reasons={"universe": reason},
+        )
 
-    base_equity_series = currency_to_equity_series.get(base, [])
-    quote_equity_series = currency_to_equity_series.get(quote, [])
-    local_equity_available = bool(base_equity_series) and bool(quote_equity_series)
-    local_equity_reason = _coverage_reason(
-        driver_label="Local-equity-index",
-        base=base,
-        quote=quote,
-        base_series=base_equity_series,
-        quote_series=quote_equity_series,
-    )
+    both_leg_roles, non_usd_roles = REQUIRED_ROLES[universe]
+    resolved: Dict[Tuple[str, str], str] = {}
+    missing_reasons: Dict[str, str] = {}
+
+    if non_usd_roles and _non_usd_leg(base, quote) is None:
+        # EM/CHN pairs are USD-quoted by construction (see fx.py/the FX
+        # rows' des_notes) -- driver 2 there is the non-USD leg's 5Y CDS as
+        # a single-country level, which presupposes exactly one non-USD
+        # leg. A cross with two non-USD legs (e.g. TRYZAR) has no
+        # principled single CDS candidate and no defined driver-2
+        # treatment under the published spec -- block outright rather than
+        # resolving roles for a pair shape the methodology doesn't cover.
+        missing_reasons["non_usd_leg_required"] = (
+            "EM and CHN pairs are USD-quoted by construction. EM driver 2 is the non-USD leg's "
+            "5Y sovereign CDS as a single-country level; a cross with two non-USD legs has no "
+            "defined driver-2 treatment under the published spec."
+        )
+        return PairAvailability(
+            series_code=series_code,
+            universe=universe,
+            base_currency=base,
+            quote_currency=quote,
+            resolved=resolved,
+            missing_reasons=missing_reasons,
+        )
+
+    for leg, currency in (("base", base), ("quote", quote)):
+        for role in both_leg_roles:
+            code, reason = resolver.resolve(role, currency)
+            if code:
+                resolved[(leg, role)] = code
+            else:
+                missing_reasons[f"{leg}:{role}"] = reason
+
+    if non_usd_roles:
+        non_usd_currency = _non_usd_leg(base, quote)
+        assert non_usd_currency is not None  # guaranteed by the USD-leg check above
+        leg = "base" if non_usd_currency == base else "quote"
+        for role in non_usd_roles:
+            code, reason = resolver.resolve(role, non_usd_currency)
+            if code:
+                resolved[(leg, role)] = code
+            else:
+                missing_reasons[f"{leg}:{role}"] = reason
 
     return PairAvailability(
         series_code=series_code,
         universe=universe,
         base_currency=base,
         quote_currency=quote,
-        local_equity_available=local_equity_available,
-        local_equity_reason=local_equity_reason,
-        rate_data_available=rate_data_available,
-        rate_data_reason=rate_data_reason,
-        base_rate_series=base_rate_series[0] if base_rate_series else None,
-        quote_rate_series=quote_rate_series[0] if quote_rate_series else None,
-        base_equity_series=base_equity_series[0] if base_equity_series else None,
-        quote_equity_series=quote_equity_series[0] if quote_equity_series else None,
+        resolved=resolved,
+        missing_reasons=missing_reasons,
     )
+
+
+def _report_role_columns() -> List[str]:
+    """`{leg}_{role}` columns for every role REQUIRED_ROLES references, both legs.
+
+    Derived from ROLE_FILTERS/REQUIRED_ROLES (not hardcoded) so the
+    report's schema can never drift from what resolution actually
+    produces. A column irrelevant to a given pair (e.g. base_cds_5y --
+    every EM/CHN pair in this catalog has USD as the base, so cds_5y only
+    ever resolves for the non-USD *quote* leg in practice) is simply
+    always null for it, same as any universe that doesn't use a role at
+    all (e.g. G10 never populates any *_cds_5y column).
+    """
+    roles = [
+        role
+        for role in ROLE_FILTERS
+        if any(role in both or role in non_usd for both, non_usd in REQUIRED_ROLES.values())
+    ]
+    return [f"{leg}_{role}" for leg in _LEGS for role in roles]
 
 
 def build_availability_report(
     pairs_by_universe: Dict[str, pd.DataFrame],
-    fixed_income_metadata: pd.DataFrame,
-    equity_metadata: pd.DataFrame,
+    data_api: Any,
 ) -> pd.DataFrame:
     """Build the full data_availability report: one row per pair across every universe.
 
     pairs_by_universe maps universe name ("G10"/"EM"/"CHN") -> that
     universe's metadata frame (e.g. FXDevelopedMarkets().info).
-    """
-    currency_to_fi_series = build_currency_to_fi_series(fixed_income_metadata)
-    currency_to_equity_series = build_currency_to_equity_series(equity_metadata)
 
+    Builds exactly ONE RoleResolver (one get_metadata() call) and shares it
+    across every pair/universe in this call -- role/currency combos repeat
+    heavily (every pair has a USD leg), so resolving all of them from one
+    in-memory snapshot instead of a fresh query per (role, currency) is
+    what keeps this to a single database round trip regardless of pair
+    count. Every resolved (leg, role) is persisted as a flat
+    `{leg}_{role}` column (see _report_role_columns) so a downstream
+    consumer (steer_silver_prices) can reconstruct each pair's
+    PairAvailability via PairAvailability.from_report_row without
+    re-resolving anything.
+    """
+    resolver = RoleResolver.from_data_api(data_api)
+    role_columns = _report_role_columns()
     rows = []
     for universe, metadata in pairs_by_universe.items():
         for series_code in metadata["series_code"]:
-            availability = assess_pair_availability(
-                series_code,
-                universe,
-                currency_to_fi_series=currency_to_fi_series,
-                currency_to_equity_series=currency_to_equity_series,
-            )
-            rows.append(
-                {
-                    "series_code": availability.series_code,
-                    "universe": availability.universe,
-                    "base_currency": availability.base_currency,
-                    "quote_currency": availability.quote_currency,
-                    "local_equity_available": availability.local_equity_available,
-                    "rate_data_available": availability.rate_data_available,
-                    "blocked": availability.blocked,
-                    "block_reasons": "; ".join(availability.block_reasons),
-                }
-            )
-    return pd.DataFrame(rows)
+            availability = assess_pair_availability(series_code, universe, resolver)
+            row = {
+                "series_code": availability.series_code,
+                "universe": availability.universe,
+                "base_currency": availability.base_currency,
+                "quote_currency": availability.quote_currency,
+                "blocked": availability.blocked,
+                "block_reasons": "; ".join(availability.block_reasons),
+            }
+            for leg in _LEGS:
+                for role in ROLE_FILTERS:
+                    row[f"{leg}_{role}"] = availability.get(leg, role)
+            rows.append(row)
+    return pd.DataFrame(rows, columns=(
+        ["series_code", "universe", "base_currency", "quote_currency", "blocked", "block_reasons"]
+        + role_columns
+    ))

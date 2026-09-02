@@ -32,14 +32,15 @@ def _resolve_as_of(run_config: StrategyRunConfig, features: pd.DataFrame) -> pd.
 def steer_cointegration(
     context: AssetExecutionContext, config: StrategyRunConfig, steer_features: pd.DataFrame
 ):
-    """Engle-Granger cointegration test (statsmodels.tsa.stattools.coint) between each pair's rate and its fitted STEER value.
+    """Engle-Granger cointegration test (statsmodels.tsa.stattools.coint) between each pair's rate and its drivers.
 
-    See steer.estimation's module docstring for why this collapses the
-    5-driver regression to a fitted value first rather than passing all 5
-    drivers to coint() directly (coint() is bivariate). A pair with too
-    little history for the trailing window gets passed=False,
-    reason="insufficient_data" (not a crash) -- one pair's data gap
-    doesn't affect any other pair in the same universe partition.
+    See steer.estimation's module docstring -- coint() is passed the full
+    driver frame directly (5 columns for G10/EM, 7 for CHN) and fits/tests
+    the cointegrating regression itself, with critical values calibrated
+    for the actual regressor count. A pair with too little history for the
+    trailing window gets passed=False, reason="insufficient_data" (not a
+    crash) -- one pair's data gap doesn't affect any other pair in the same
+    universe partition.
     """
     from dagster_quickstart.steer.estimation import cointegration_test
 

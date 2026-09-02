@@ -6,6 +6,10 @@ from dagster_quickstart.assets import (
     load_meta_series_to_s3,
     steer_assets,
 )
+from dagster_quickstart.assets.ingestion.bloomberg_rewrite.job import (
+    bloomberg_values_daily_job,
+    bloomberg_values_daily_schedule,
+)
 from dagster_quickstart.assets.steer.job import steer_daily_job, steer_daily_schedule
 from dagster_quickstart.resources import (
     HawkResource,
@@ -35,6 +39,7 @@ all_asset_checks = [
 
 all_jobs = [
     steer_daily_job,
+    bloomberg_values_daily_job,
 ]
 
 # DuckLake-backed DataAPI (rewrite/data_api/) -- zero-config, reads
@@ -53,6 +58,14 @@ hawk_resource = HawkResource(
 # real account before turning on run_succeeded_email_sensor/
 # run_failed_email_sensor/steer_daily_digest_schedule (all start STOPPED --
 # see sensors/run_notifications.py, sensors/steer_notifications.py).
+#
+# Every schedule (including bloomberg_values_daily_schedule and
+# steer_daily_schedule) starts STOPPED too, same convention -- turn each on
+# from the Dagster UI once ready. bloomberg_values_daily_schedule in
+# particular needs to run (or be materialized by hand once) before
+# steer_daily_schedule can do anything useful -- STEER only ever reads
+# bronze values, it never fetches them (see
+# assets/ingestion/bloomberg_rewrite/job.py's module docstring).
 outlook_email_resource = OutlookEmailResource(
     email_from=config("OUTLOOK_EMAIL_FROM", default="dagster-notifications@example.com"),
     email_password=config("OUTLOOK_EMAIL_PASSWORD", default="demo-password-not-set"),
@@ -75,6 +88,7 @@ resources = {
 }
 
 all_schedules = [
+    bloomberg_values_daily_schedule,
     steer_daily_schedule,
     steer_daily_digest_schedule,
 ]

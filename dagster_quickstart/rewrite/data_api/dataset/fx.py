@@ -16,35 +16,51 @@ class FXSpot(DatasetBase):
     }
 
 
-class FXDevelopedMarkets(FXSpot):
-    """G10/developed-market currency pairs -- both legs a G10 currency.
+#: Base filter for the STEER universe FX classes below -- NOT FXSpot's
+#: (see FXSpot's docstring: that class targets the old demo catalog's
+#: sub_asset_class="Forex Spot" rows, of which the real 128-row STEER
+#: catalog has zero). "FX Spot" here is a distinct label used only by the
+#: rows added specifically to unblock STEER pair discovery/rate-fetching
+#: post-cutover -- one row per non-USD currency vs USD, standard Bloomberg
+#: convention tickers, is_synthetic=False (real, standard-convention
+#: tickers -- just not part of the source ticker sheet extract, which
+#: has no FX spot rows at all -- see
+#: steer/discovery.py's module docstring for the full story). Each STEER
+#: universe class defines this directly rather than inheriting it, so it
+#: never mixes with FXSpot/FXMajor/FXUSDBloc's old-catalog-shaped filter.
+#: asset_class alone is NOT enough within a universe -- CHN's market_development
+#: also covers OFFSHORE_SPREAD_PX_LAST/ONSHORE_SPREAD_PX_LAST (asset_class=
+#: Currency, sub_asset_class="FX Forward"), which are driver inputs, not
+#: pairs; sub_asset_class="FX Spot" is what actually narrows to real pairs.
+_STEER_FX_FILTERS = {
+    "asset_class": "Currency",
+    "sub_asset_class": "FX Spot",
+}
 
-    See meta_series.csv's market_development column (G10/EM/CHN/GLOBAL) --
-    added specifically to drive this split; asset_class=Currency has no
-    other field that varies per row in this catalog (market_segment/
-    sub_asset_class are both constant across every FX row).
-    """
+
+class FXDevelopedMarkets(DatasetBase):
+    """G10 currency pairs -- one pair per non-USD G10 currency, quoted against USD."""
 
     _FILTERS = {
-        **FXSpot._FILTERS,
+        **_STEER_FX_FILTERS,
         "market_development": ["G10"],
     }
 
 
-class FXEmergingMarkets(FXSpot):
-    """EM currency pairs -- at least one leg isn't a DM currency (and neither leg is CNY/CNH)."""
+class FXEmergingMarkets(DatasetBase):
+    """EM currency pairs -- one pair per non-USD EM currency, quoted against USD."""
 
     _FILTERS = {
-        **FXSpot._FILTERS,
+        **_STEER_FX_FILTERS,
         "market_development": ["EM"],
     }
 
 
-class FXChina(FXSpot):
-    """CNY/CNH-involving currency pairs."""
+class FXChina(DatasetBase):
+    """CNH/CNY currency pairs -- one pair per CHN currency, quoted against USD."""
 
     _FILTERS = {
-        **FXSpot._FILTERS,
+        **_STEER_FX_FILTERS,
         "market_development": ["CHN"],
     }
 

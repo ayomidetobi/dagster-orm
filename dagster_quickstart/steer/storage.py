@@ -41,6 +41,12 @@ GOLD_SCHEMA = "gold"
 
 STEER_ESTIMATES_TABLE = "steer_estimates"
 STEER_SIGNALS_TABLE = "steer_signals"
+#: SteerResult's 2 tables -- see steer/results.py's module docstring.
+#: steer_results is long-form (one row per series_code/as_of/date);
+#: steer_result_summary is one row per series_code/as_of (z_score,
+#: upper/lower, and every coefficient/standard_error/p_value, flattened).
+STEER_RESULTS_TABLE = "steer_results"
+STEER_RESULT_SUMMARY_TABLE = "steer_result_summary"
 
 
 class SteerCatalog:
@@ -74,14 +80,44 @@ class SteerCatalog:
             f"CREATE TABLE IF NOT EXISTS {schema}.{table} AS SELECT * FROM frame LIMIT 0"
         )
 
+    def _table_exists(self, schema: str, table: str) -> bool:
+        return bool(
+            self._connection.execute(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = ? AND table_name = ?",
+                [schema, table],
+            ).fetchone()[0]
+        )
+
     def write(self, schema: str, table: str, frame: pd.DataFrame) -> None:
-        """Append `frame` to `schema.table` (creating the table on first write)."""
+        """Append `frame` to `schema.table` (creating the table on first write).
+
+        Different callers write different column sets to the same table
+        name -- e.g. gold.steer_result_summary gets G10's 5-driver
+        coefficient columns and CHN's 7-driver ones, all keyed off whatever
+        StrategyConfig.drivers that pair's universe has. A plain positional
+        `INSERT ... SELECT *` would let whichever write created the table
+        fix its column set/order, silently misaligning or erroring on every
+        later write with a different one.
+        `... UNION ALL BY NAME ...` (name-based, not positional) instead:
+        the existing table's rows and the new frame's rows are unioned by
+        column name, so a column present in one side and absent in the
+        other is simply padded with NULL rather than misaligned -- and the
+        table widens automatically the first time a wider driver set (e.g.
+        CHN's) is written, whichever universe happened to write first.
+        """
         if frame.empty:
             logger.info("steer_catalog_write_skipped_empty", schema=schema, table=table)
             return
         self.ensure_schemas()
-        self.ensure_table(schema, table, frame)
-        self._connection.execute(f"INSERT INTO {schema}.{table} SELECT * FROM frame")
+        if not self._table_exists(schema, table):
+            self.ensure_table(schema, table, frame)
+            self._connection.execute(f"INSERT INTO {schema}.{table} SELECT * FROM frame")
+        else:
+            self._connection.execute(
+                f"CREATE OR REPLACE TABLE {schema}.{table} AS "
+                f"SELECT * FROM {schema}.{table} UNION ALL BY NAME SELECT * FROM frame"
+            )
         logger.info("steer_catalog_write", schema=schema, table=table, row_count=len(frame))
 
     def read(
@@ -90,25 +126,20 @@ class SteerCatalog:
         table: str,
         *,
         universe: Optional[str] = None,
-        currency_pairs: Optional[Iterable[str]] = None,
+        series_codes: Optional[Iterable[str]] = None,
     ) -> pd.DataFrame:
-        """Read `schema.table`, optionally filtered by universe/currency_pair. Empty frame if the table doesn't exist yet."""
-        exists = self._connection.execute(
-            "SELECT count(*) FROM information_schema.tables "
-            "WHERE table_schema = ? AND table_name = ?",
-            [schema, table],
-        ).fetchone()[0]
-        if not exists:
+        """Read `schema.table`, optionally filtered by universe/series_code. Empty frame if the table doesn't exist yet."""
+        if not self._table_exists(schema, table):
             return pd.DataFrame()
 
         clauses, params = [], []
         if universe is not None:
             clauses.append("universe = ?")
             params.append(universe)
-        if currency_pairs is not None:
-            pairs = list(currency_pairs)
-            clauses.append(f"currency_pair IN ({', '.join('?' for _ in pairs)})")
-            params.extend(pairs)
+        if series_codes is not None:
+            codes = list(series_codes)
+            clauses.append(f"series_code IN ({', '.join('?' for _ in codes)})")
+            params.extend(codes)
 
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         return self._connection.execute(f"SELECT * FROM {schema}.{table}{where}", params).fetchdf()

@@ -28,18 +28,10 @@ from dagster_quickstart.assets.steer.cointegration_asset import _resolve_as_of
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
 from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.schemas import STEER_ESTIMATES_SCHEMA
+from dagster_quickstart.steer.schemas import steer_estimates_schema
 from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE
 
 CHECK_NAME = "validate_steer_estimates"
-
-_COEF_DRIVERS = (
-    "interest_rate_differential",
-    "yield_curve_or_cds",
-    "local_equity",
-    "global_equity",
-    "commodity",
-)
 
 
 @asset(
@@ -125,7 +117,10 @@ def steer_estimate(
                 SERIES_CODE_COLUMN: series_code,
                 "is_logged": estimate.is_logged,
                 "const_coef": estimate.coefficients.get("const"),
-                **{f"{driver}_coef": estimate.coefficients.get(driver) for driver in _COEF_DRIVERS},
+                **{
+                    f"{driver}_coef": estimate.coefficients.get(driver)
+                    for driver in strategy_config.drivers
+                },
                 "fitted_value": estimate.fitted_value,
                 "actual_value": estimate.actual_value,
                 "z_score": estimate.z_score,
@@ -149,7 +144,7 @@ def steer_estimate(
         return
 
     try:
-        STEER_ESTIMATES_SCHEMA.validate(row_df, lazy=True)
+        steer_estimates_schema(strategy_config.drivers).validate(row_df, lazy=True)
     except pa.errors.SchemaErrors as exc:
         failures = exc.failure_cases.astype(str).to_dict("records")
         yield AssetCheckResult(

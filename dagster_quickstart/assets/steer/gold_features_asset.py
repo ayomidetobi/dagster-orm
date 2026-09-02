@@ -1,10 +1,10 @@
-"""Gold layer: build_steer_features -- the 5 STEER driver columns, model-ready, for every pair in this universe.
+"""Gold layer: build_steer_features -- this universe's driver columns, model-ready, for every pair.
 
-Validated with STEER_FEATURES_SCHEMA (pandera) per pair as an in-asset
-check -- non-null rate, numeric/finite drivers, plausible bounds -- so bad
-data for one pair fails that pair's rows loudly (excluded from the output,
-counted in the check) rather than silently reaching the OLS; other pairs
-in the same universe are unaffected.
+Validated with steer_features_schema(strategy_config.drivers) (pandera) per
+pair as an in-asset check -- non-null rate, numeric/finite drivers,
+plausible bounds -- so bad data for one pair fails that pair's rows loudly
+(excluded from the output, counted in the check) rather than silently
+reaching the OLS; other pairs in the same universe are unaffected.
 """
 
 import pandas as pd
@@ -21,7 +21,7 @@ from dagster import (
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
 from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
-from dagster_quickstart.steer.schemas import STEER_FEATURES_SCHEMA
+from dagster_quickstart.steer.schemas import steer_features_schema
 
 CHECK_NAME = "validate_steer_features"
 
@@ -56,6 +56,7 @@ def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataF
         return
 
     strategy_config = context.resources.steer_config.for_universe(context.partition_key)
+    features_schema = steer_features_schema(strategy_config.drivers)
 
     feature_frames = []
     failing_pairs = []
@@ -65,11 +66,12 @@ def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataF
         pair_raw = group.drop(columns=[SERIES_CODE_COLUMN])
         features = build_steer_features(
             pair_raw,
+            drivers=strategy_config.drivers,
             logged_rate_threshold=strategy_config.logged_rate_threshold,
             vol_window_days=strategy_config.logged_rate_vol_window_days,
         )
         try:
-            STEER_FEATURES_SCHEMA.validate(features, lazy=True)
+            features_schema.validate(features, lazy=True)
         except pa.errors.SchemaErrors as exc:
             failing_pairs.append(series_code)
             failure_details.extend(exc.failure_cases.head(5).astype(str).to_dict("records"))

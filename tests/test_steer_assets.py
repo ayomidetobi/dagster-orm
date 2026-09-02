@@ -9,23 +9,24 @@ QuerySet/MetadataService/ValueService stack the FX datasets
 get_values() in isolation. steer_catalog is the REAL SteerCatalog wrapping
 an in-memory duckdb connection.
 
-local_equity is genuinely sourceable for 14 currencies in the real catalog
-now (see steer/discovery.py's EQUITY_SERIES_TO_CURRENCY), but this
-fixture's METADATA deliberately doesn't include any of those explicit
-per-currency equity series (nor full rate coverage for both PAIRS' legs),
-so every pair here is still blocked -- exercising the per-universe loop
-and the blocking/skip path, which is real, verified behavior for a fixture
-this incomplete (also confirmed live against the actual catalog before
-local_equity coverage was added). assess_pair_availability()'s actual
-unblocking logic (both rate_data and local_equity present) is covered
-directly by test_steer_discovery.py instead; the regression/signal *math*
-is covered by test_steer_estimation.py/test_steer_signals.py's pure-
-function tests, since a blocked pair never reaches that code in practice.
+METADATA/PAIRS below deliberately have no role-filter coverage (see
+steer/discovery.py's ROLE_FILTERS) for either pair's legs, so every pair
+in that fixture stays blocked -- exercising the per-universe loop and the
+blocking/skip path, which is real, verified behavior. The role-resolution
+logic itself (assess_pair_availability -- which roles/legs are required
+per universe, non-USD-leg-only roles, etc.) is covered directly by
+test_steer_discovery.py's pure-function tests instead.
+test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair
+below is the opposite case: a fully-resolvable G10 pair, proving the new
+metadata-driven discovery + driver construction actually reaches a written
+gold.steer_estimates/gold.steer_signals row, not just that it degrades
+gracefully when data is missing.
 """
 
 from __future__ import annotations
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pytest
 from dagster import DagsterInstance, materialize
@@ -47,12 +48,14 @@ from dagster_quickstart.steer.storage import (
 )
 
 UNIVERSE = "G10"
-PAIRS = ["AUDJPY_SPOT_0004", "EURGBP_SPOT_0005"]
+PAIRS = ["AUDJPY_PX_LAST", "EURGBP_PX_LAST"]
 
+#: FX-pair rows have no role-filter columns filled in -- deliberately, so
+#: every pair here stays blocked (see test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked).
 METADATA = pd.DataFrame(
     {
         "series_code": PAIRS
-        + ["US2Y_YIELD_0021", "JP5Y_YIELD_0047", "IDX0005_INDEX", "XAU_PX_0032"],
+        + ["US2Y_YIELD_0021", "JP5Y_YIELD_0047", "MXWO_PX_LAST", "BRENT_PX_LAST"],
         "asset_class": [
             "Currency",
             "Currency",
@@ -61,8 +64,11 @@ METADATA = pd.DataFrame(
             "Equity",
             "Commodity",
         ],
-        "sub_asset_class": ["Forex Spot", "Forex Spot", None, None, None, None],
+        "sub_asset_class": ["FX Spot", "FX Spot", None, None, None, None],
         "market_development": ["G10", "G10", "G10", "G10", "GLOBAL", "GLOBAL"],
+        "currency": ["AUD", "EUR", "USD", "JPY", "USD", "USD"],
+        "tenor": [None, None, None, None, None, None],
+        "market_segment": [None, None, None, None, None, None],
     }
 )
 
@@ -130,8 +136,8 @@ def _values_frame() -> pd.DataFrame:
     for series_code in PAIRS + [
         "US2Y_YIELD_0021",
         "JP5Y_YIELD_0047",
-        "IDX0005_INDEX",
-        "XAU_PX_0032",
+        "MXWO_PX_LAST",
+        "BRENT_PX_LAST",
     ]:
         for date, value in zip(dates, [1.1, 1.2]):
             rows.append({"series_code": series_code, "timestamp": date, "value": value})
@@ -156,8 +162,6 @@ def _strategy_config() -> StrategyConfig:
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
         min_observations=60,
-        global_equity_series="IDX0005_INDEX",
-        commodity_series="XAU_PX_0032",
         expected_signs={
             "interest_rate_differential": 1,
             "yield_curve_or_cds": -1,
@@ -250,12 +254,12 @@ def test_data_availability_reports_every_pair_in_the_universe(resources):
     assert set(report["series_code"]) == set(PAIRS)
     assert (report["universe"] == UNIVERSE).all()
     assert report["blocked"].all()
-    assert report["local_equity_available"].eq(False).all()
+    assert report["block_reasons"].str.contains("local_equity").all()
 
 
 def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
     result = materialize(
-        [steer_silver_prices],
+        [steer_data_availability, steer_silver_prices],
         resources={
             "rewrite_data_api": resources["rewrite_data_api"],
             "steer_config": resources["steer_config"],
@@ -272,3 +276,167 @@ def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
     assert metadata["pair_count"].value == len(PAIRS)
     assert metadata["blocked_pair_count"].value == len(PAIRS)
     assert metadata["fetched_pair_count"].value == 0
+
+
+def _unblocked_g10_metadata() -> pd.DataFrame:
+    """One G10 pair (EURUSD) with every required role resolvable -- swap_2y/
+    rate_3m/yield_10y/local_equity for both EUR and USD -- so it clears
+    steer_data_availability and flows all the way through to a signal."""
+    rows = [
+        {"series_code": "EURUSD_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
+         "market_development": "G10", "currency": "EUR", "tenor": None, "market_segment": None},
+        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
+         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
+        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
+         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+    ]
+    for ccy in ("EUR", "USD"):
+        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
+                     "sub_asset_class": "Interest Rate Swap", "market_development": "G10",
+                     "currency": ccy, "tenor": "2Y", "market_segment": None})
+        rows.append({"series_code": f"{ccy}_3M", "asset_class": "Fixed Income",
+                     "sub_asset_class": "Money Market Rate", "market_development": "G10",
+                     "currency": ccy, "tenor": "3M", "market_segment": None})
+        rows.append({"series_code": f"{ccy}_10Y", "asset_class": "Fixed Income",
+                     "sub_asset_class": "Sovereign Yield", "market_development": "G10",
+                     "currency": ccy, "tenor": "10Y", "market_segment": None})
+        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
+                     "sub_asset_class": "Equity Index", "market_development": "G10",
+                     "currency": ccy, "tenor": None, "market_segment": "Local"})
+    return pd.DataFrame(rows)
+
+
+def _unblocked_g10_values() -> pd.DataFrame:
+    rng = np.random.default_rng(21)
+    n = 400
+    dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=n)
+
+    eur_swap = 2.0 + np.cumsum(rng.normal(0, 0.01, n))
+    usd_swap = 1.5 + np.cumsum(rng.normal(0, 0.01, n))
+    eur_3m = 2.1 + np.cumsum(rng.normal(0, 0.01, n))
+    usd_3m = 1.4 + np.cumsum(rng.normal(0, 0.01, n))
+    eur_10y = 3.0 + np.cumsum(rng.normal(0, 0.01, n))
+    usd_10y = 2.6 + np.cumsum(rng.normal(0, 0.01, n))
+    eur_eq = 800 + np.cumsum(rng.normal(0, 2, n))
+    usd_eq = 2500 + np.cumsum(rng.normal(0, 5, n))
+    mxwo = 100 + np.cumsum(rng.normal(0, 0.5, n))
+    brent = 80 + np.cumsum(rng.normal(0, 0.3, n))
+
+    ird = eur_swap - usd_swap
+    curve = (eur_3m - eur_10y) - (usd_3m - usd_10y)
+    local_eq = np.log(eur_eq) - np.log(usd_eq)
+    rate = 1.1 + 0.05 * ird - 0.02 * curve + 0.05 * local_eq + rng.normal(0, 0.005, n)
+
+    series = {
+        "EURUSD_PX_LAST": rate,
+        "EUR_SWAP": eur_swap,
+        "USD_SWAP": usd_swap,
+        "EUR_3M": eur_3m,
+        "USD_3M": usd_3m,
+        "EUR_10Y": eur_10y,
+        "USD_10Y": usd_10y,
+        "EUR_EQ": eur_eq,
+        "USD_EQ": usd_eq,
+        "MXWO_PX_LAST": mxwo,
+        "BRENT_PX_LAST": brent,
+    }
+    rows = []
+    for series_code, values in series.items():
+        for date, value in zip(dates, values):
+            rows.append({"series_code": series_code, "timestamp": date, "value": float(value)})
+    return pd.DataFrame(rows)
+
+
+def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair():
+    """The full opposite of the blocked-pair test: every required role
+    resolves for EURUSD, so the pair should flow all the way through to a
+    written gold.steer_estimates / gold.steer_signals row -- proving the
+    new metadata-driven discovery + driver construction actually works end
+    to end, not just that it degrades gracefully when data is missing."""
+    catalog = SteerCatalog(duckdb.connect(":memory:"))
+    catalog.ensure_schemas()
+    resources = {
+        "rewrite_data_api": FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values()),
+        "steer_config": FakeSteerConfigResource(_strategy_config()),
+        "steer_catalog": FakeSteerCatalogResource(catalog),
+    }
+
+    result = materialize(
+        [
+            steer_data_availability,
+            steer_silver_prices,
+            steer_features,
+            steer_cointegration,
+            steer_estimate,
+            steer_signal,
+        ],
+        resources=resources,
+        partition_key=UNIVERSE,
+        instance=DagsterInstance.ephemeral(),
+    )
+
+    assert result.success
+
+    availability_output = result.output_for_node("steer_data_availability", output_name="result")
+    assert availability_output["blocked"].eq(False).all()
+
+    silver_output = result.output_for_node("steer_silver_prices", output_name="result")
+    assert not silver_output.empty
+
+    estimate_output = result.output_for_node("steer_estimate", output_name="result")
+    assert not estimate_output.empty
+    assert estimate_output.iloc[0]["series_code"] == "EURUSD_PX_LAST"
+
+    signal_output = result.output_for_node("steer_signal", output_name="result")
+    assert not signal_output.empty
+    assert signal_output.iloc[0]["signal"] in {"BUY", "SELL", "NONE"}
+
+    estimates_table = catalog.read(GOLD_SCHEMA, STEER_ESTIMATES_TABLE)
+    signals_table = catalog.read(GOLD_SCHEMA, STEER_SIGNALS_TABLE)
+    assert not estimates_table.empty
+    assert not signals_table.empty
+
+
+def _wrap_with_call_counter(api, method_name: str) -> dict:
+    """Monkeypatch `api.<method_name>` to count calls; returns a dict with a live "count" key."""
+    original = getattr(api, method_name)
+    counter = {"count": 0}
+
+    def wrapper(*args, **kwargs):
+        counter["count"] += 1
+        return original(*args, **kwargs)
+
+    setattr(api, method_name, wrapper)
+    return counter
+
+
+def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(resources):
+    """Acceptance criterion: steer_silver_prices depends on steer_data_availability's output
+    (see silver_asset.py) and reconstructs every pair's PairAvailability from it via
+    PairAvailability.from_report_row -- no re-discovery, no re-resolution. Proven black-box:
+    adding steer_silver_prices to the materialize() selection must not change the
+    get_metadata() call count versus materializing steer_data_availability alone."""
+    availability_only_counter = _wrap_with_call_counter(
+        resources["rewrite_data_api"].api, "get_metadata"
+    )
+    materialize(
+        [steer_data_availability],
+        resources={"rewrite_data_api": resources["rewrite_data_api"]},
+        partition_key=UNIVERSE,
+        instance=DagsterInstance.ephemeral(),
+    )
+    availability_only_calls = availability_only_counter["count"]
+
+    both_resources = {
+        "rewrite_data_api": FakeRewriteDataAPIResource(METADATA, _values_frame()),
+        "steer_config": resources["steer_config"],
+    }
+    both_counter = _wrap_with_call_counter(both_resources["rewrite_data_api"].api, "get_metadata")
+    materialize(
+        [steer_data_availability, steer_silver_prices],
+        resources=both_resources,
+        partition_key=UNIVERSE,
+        instance=DagsterInstance.ephemeral(),
+    )
+
+    assert both_counter["count"] == availability_only_calls

@@ -20,7 +20,7 @@ class LoadMetaSeriesConfig(Config):
         preview_columns: List of column names for preview
     """
 
-    csv_path: str = "dagster_quickstart/data/meta_series.csv"
+    csv_path: str = "dagster_quickstart/data/meta_series_steer.csv"
     fresh: bool = True
     preview_limit: int = 10
     preview_columns: List[str] = DEFAULT_PREVIEW_COLUMNS

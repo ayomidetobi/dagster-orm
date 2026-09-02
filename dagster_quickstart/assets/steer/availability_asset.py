@@ -6,6 +6,15 @@ materialization. The check FAILS (WARN, not ERROR -- a data completeness
 gap, not a broken pipeline) whenever any pair is blocked, so the gap is
 visible in the Dagster UI rather than only in this asset's own metadata
 table.
+
+The report includes a flat `{leg}_{role}` column per resolved driver role
+(e.g. base_swap_2y, quote_local_equity -- see
+steer.discovery.build_availability_report), not just the blocked/reason
+summary -- steer_silver_prices (which depends on this asset's output)
+reconstructs each pair's PairAvailability straight from these columns via
+PairAvailability.from_report_row, instead of re-resolving every role from
+a fresh metadata query the way it used to. The two assets used to
+independently redo the same resolution work for the same partition.
 """
 
 import pandas as pd
@@ -61,9 +70,7 @@ def steer_data_availability(context: AssetExecutionContext):
         yield Output(pd.DataFrame(), metadata={"pair_count": 0})
         return
 
-    fixed_income_metadata = data_api.get_metadata(asset_class=["Fixed Income"]).frame
-    equity_metadata = data_api.get_metadata(asset_class=["Equity"]).frame
-    report = build_availability_report({universe: pairs}, fixed_income_metadata, equity_metadata)
+    report = build_availability_report({universe: pairs}, data_api)
 
     blocked_count = int(report["blocked"].sum())
     total_count = len(report)
