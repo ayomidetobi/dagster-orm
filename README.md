@@ -135,7 +135,7 @@ Partitioned by `universe` only -- `StaticPartitionsDefinition(["G10", "EM",
 "CHN"])`, a fixed literal list (`assets/steer/partitions.py`). `currency_pair`
 is **not** a Dagster partition dimension: each universe partition's run
 discovers and fetches the complete history for every pair in that universe
-in one go (`assets/steer/universe_datasets.py`'s `discover_pairs()`), and
+in one go (`steer/discovery.py`'s `discover_pairs()`), and
 those pairs live together as rows in the same output DataFrame/Parquet
 dataset, identified by a `series_code` column -- not by separate partitions.
 This keeps the partition set static and tiny, so no live datalake query is
@@ -147,7 +147,8 @@ Each real `series_code` (not a "clean pair name" -- this catalog can have
 several series for the same nominal pair, e.g. two AUDJPY series with
 different suffixes; each is tracked and reported on individually) present in
 a universe is resolved and assessed for driver availability within that
-partition's run (`assets/steer/_shared.py`'s `resolve_universe_pairs()`).
+partition's run (`steer/discovery.py`'s `build_availability_report()`, consumed by
+`steer_silver_prices` via `pairs_from_availability_report()`).
 
 ### Data availability
 

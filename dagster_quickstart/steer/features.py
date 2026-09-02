@@ -44,35 +44,35 @@ import pandas as pd
 import structlog
 
 from dagster_quickstart.steer.config import StrategyConfig
+from dagster_quickstart.steer.constants import (
+    CURRENCY_USD,
+    DRIVER_COMMODITY,
+    DRIVER_FLOWS,
+    DRIVER_GLOBAL_EQUITY,
+    DRIVER_INTEREST_RATE_DIFFERENTIAL,
+    DRIVER_LOCAL_EQUITY,
+    DRIVER_OFFSHORE_SPREAD,
+    DRIVER_YIELD_CURVE_OR_CDS,
+    FLOW_BUY_SELL_SERIES,
+    FLOW_TURNOVER_SERIES,
+    IS_LOGGED_COLUMN,
+    LEG_BASE,
+    LEG_QUOTE,
+    OFFSHORE_SPREAD_SERIES,
+    ONSHORE_SPREAD_SERIES,
+    RATE_COLUMN,
+    REALIZED_VOLATILITY_COLUMN,
+    ROLE_CDS_5Y,
+    ROLE_LOCAL_EQUITY,
+    ROLE_RATE_3M,
+    ROLE_SWAP_2Y,
+    ROLE_YIELD_10Y,
+    UNIVERSE_CHN,
+    UNIVERSE_G10,
+)
 from dagster_quickstart.steer.discovery import PairAvailability
 
 logger = structlog.get_logger(__name__)
-
-RATE_COLUMN = "rate"
-REALIZED_VOLATILITY_COLUMN = "realized_volatility"
-IS_LOGGED_COLUMN = "is_logged"
-
-#: CHN's offshore_spread/flows source series -- fixed series_codes applied
-#: identically to every CHN pair (there are only 2: USDCNH, USDCNY), the
-#: same "single series, config-provided, not discovered per pair" reasoning
-#: as GLOBAL_DRIVERS in steer/config.py. Kept in code rather than YAML so
-#: they can't drift; not per-universe config since they're CHN-specific by
-#: construction, not a curated choice a model owner would tune.
-OFFSHORE_SPREAD_SERIES = "OFFSHORE_SPREAD_PX_LAST"
-ONSHORE_SPREAD_SERIES = "ONSHORE_SPREAD_PX_LAST"
-#: The 4 series whose shared `valid_to` is the flows regime cutover (see
-#: resolve_flows_cutover) -- HKEX stopped reporting separate buy/sell flows
-#: on that date.
-FLOW_BUY_SELL_SERIES = (
-    "SHANGHAI_BUY_FLOWS_PX_LAST",
-    "SHENZHEN_BUY_FLOWS_PX_LAST",
-    "SHANGHAI_SELL_FLOWS_PX_LAST",
-    "SHENZHEN_SELL_FLOWS_PX_LAST",
-)
-FLOW_TURNOVER_SERIES = (
-    "SHANGHAI_FLOWS_TURNOVER_PX_LAST",
-    "SHENZHEN_FLOWS_TURNOVER_PX_LAST",
-)
 
 
 def compute_realized_volatility(rate: pd.Series, *, window_days: int) -> pd.Series:
@@ -202,10 +202,10 @@ def build_chn_offshore_spread(offshore: pd.Series, onshore: pd.Series) -> pd.Ser
 
 
 def _non_usd_leg(availability: PairAvailability) -> Optional[str]:
-    if availability.base_currency == "USD" and availability.quote_currency != "USD":
-        return "quote"
-    if availability.quote_currency == "USD" and availability.base_currency != "USD":
-        return "base"
+    if availability.base_currency == CURRENCY_USD and availability.quote_currency != CURRENCY_USD:
+        return LEG_QUOTE
+    if availability.quote_currency == CURRENCY_USD and availability.base_currency != CURRENCY_USD:
+        return LEG_BASE
     return None
 
 
@@ -222,42 +222,42 @@ def _build_series_by_column(
     universe = strategy_config.universe
     series_by_column: Dict[str, str] = {
         RATE_COLUMN: series_code,
-        "global_equity": strategy_config.global_equity_series,
-        "commodity": strategy_config.commodity_series,
+        DRIVER_GLOBAL_EQUITY: strategy_config.global_equity_series,
+        DRIVER_COMMODITY: strategy_config.commodity_series,
     }
 
-    base_swap = availability.get("base", "swap_2y")
-    quote_swap = availability.get("quote", "swap_2y")
+    base_swap = availability.get(LEG_BASE, ROLE_SWAP_2Y)
+    quote_swap = availability.get(LEG_QUOTE, ROLE_SWAP_2Y)
     if base_swap and quote_swap:
         series_by_column["_base_swap_2y"] = base_swap
         series_by_column["_quote_swap_2y"] = quote_swap
 
-    if universe == "G10":
-        base_3m = availability.get("base", "rate_3m")
-        quote_3m = availability.get("quote", "rate_3m")
-        base_10y = availability.get("base", "yield_10y")
-        quote_10y = availability.get("quote", "yield_10y")
+    if universe == UNIVERSE_G10:
+        base_3m = availability.get(LEG_BASE, ROLE_RATE_3M)
+        quote_3m = availability.get(LEG_QUOTE, ROLE_RATE_3M)
+        base_10y = availability.get(LEG_BASE, ROLE_YIELD_10Y)
+        quote_10y = availability.get(LEG_QUOTE, ROLE_YIELD_10Y)
         if base_3m and quote_3m and base_10y and quote_10y:
             series_by_column["_base_3m"] = base_3m
             series_by_column["_quote_3m"] = quote_3m
             series_by_column["_base_10y"] = base_10y
             series_by_column["_quote_10y"] = quote_10y
 
-        base_equity = availability.get("base", "local_equity")
-        quote_equity = availability.get("quote", "local_equity")
+        base_equity = availability.get(LEG_BASE, ROLE_LOCAL_EQUITY)
+        quote_equity = availability.get(LEG_QUOTE, ROLE_LOCAL_EQUITY)
         if base_equity and quote_equity:
             series_by_column["_base_equity"] = base_equity
             series_by_column["_quote_equity"] = quote_equity
     else:
         non_usd_leg = _non_usd_leg(availability)
-        cds = availability.get(non_usd_leg, "cds_5y") if non_usd_leg else None
+        cds = availability.get(non_usd_leg, ROLE_CDS_5Y) if non_usd_leg else None
         if cds:
             series_by_column["_non_usd_cds"] = cds
-        non_usd_equity = availability.get(non_usd_leg, "local_equity") if non_usd_leg else None
+        non_usd_equity = availability.get(non_usd_leg, ROLE_LOCAL_EQUITY) if non_usd_leg else None
         if non_usd_equity:
             series_by_column["_non_usd_equity"] = non_usd_equity
 
-    if universe == "CHN":
+    if universe == UNIVERSE_CHN:
         series_by_column["_offshore_spread"] = OFFSHORE_SPREAD_SERIES
         series_by_column["_onshore_spread"] = ONSHORE_SPREAD_SERIES
         for code in FLOW_BUY_SELL_SERIES + FLOW_TURNOVER_SERIES:
@@ -379,40 +379,44 @@ def fetch_raw_driver_frame(
 
     features = pd.DataFrame(index=renamed.index)
     features[RATE_COLUMN] = renamed.get(RATE_COLUMN)
-    features["global_equity"] = _safe_log(renamed["global_equity"]) if has_data("global_equity") else pd.NA
-    features["commodity"] = _safe_log(renamed["commodity"]) if has_data("commodity") else pd.NA
+    features[DRIVER_GLOBAL_EQUITY] = (
+        _safe_log(renamed[DRIVER_GLOBAL_EQUITY]) if has_data(DRIVER_GLOBAL_EQUITY) else pd.NA
+    )
+    features[DRIVER_COMMODITY] = (
+        _safe_log(renamed[DRIVER_COMMODITY]) if has_data(DRIVER_COMMODITY) else pd.NA
+    )
 
     if has_data("_base_swap_2y") and has_data("_quote_swap_2y"):
-        features["interest_rate_differential"] = renamed["_base_swap_2y"] - renamed["_quote_swap_2y"]
+        features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = renamed["_base_swap_2y"] - renamed["_quote_swap_2y"]
     else:
-        features["interest_rate_differential"] = pd.NA
+        features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = pd.NA
 
-    if universe == "G10":
+    if universe == UNIVERSE_G10:
         have_curve = all(has_data(c) for c in ("_base_3m", "_quote_3m", "_base_10y", "_quote_10y"))
         if have_curve:
             base_slope = renamed["_base_3m"] - renamed["_base_10y"]
             quote_slope = renamed["_quote_3m"] - renamed["_quote_10y"]
-            features["yield_curve_or_cds"] = base_slope - quote_slope
+            features[DRIVER_YIELD_CURVE_OR_CDS] = base_slope - quote_slope
         else:
-            features["yield_curve_or_cds"] = pd.NA
+            features[DRIVER_YIELD_CURVE_OR_CDS] = pd.NA
 
         if has_data("_base_equity") and has_data("_quote_equity"):
-            features["local_equity"] = _safe_log(renamed["_base_equity"]) - _safe_log(
+            features[DRIVER_LOCAL_EQUITY] = _safe_log(renamed["_base_equity"]) - _safe_log(
                 renamed["_quote_equity"]
             )
         else:
-            features["local_equity"] = pd.NA
+            features[DRIVER_LOCAL_EQUITY] = pd.NA
     else:
-        features["yield_curve_or_cds"] = (
+        features[DRIVER_YIELD_CURVE_OR_CDS] = (
             renamed["_non_usd_cds"] if has_data("_non_usd_cds") else pd.NA
         )
-        features["local_equity"] = (
+        features[DRIVER_LOCAL_EQUITY] = (
             _safe_log(renamed["_non_usd_equity"]) if has_data("_non_usd_equity") else pd.NA
         )
 
-    if universe == "CHN":
+    if universe == UNIVERSE_CHN:
         have_spread = has_data("_offshore_spread") and has_data("_onshore_spread")
-        features["offshore_spread"] = (
+        features[DRIVER_OFFSHORE_SPREAD] = (
             build_chn_offshore_spread(renamed["_offshore_spread"], renamed["_onshore_spread"])
             if have_spread
             else pd.NA
@@ -441,7 +445,7 @@ def fetch_raw_driver_frame(
                     ),
                 )
             codes = FLOW_BUY_SELL_SERIES + FLOW_TURNOVER_SERIES
-            features["flows"] = build_chn_flows(
+            features[DRIVER_FLOWS] = build_chn_flows(
                 shanghai_buy=renamed[f"_flow_{codes[0]}"],
                 shenzhen_buy=renamed[f"_flow_{codes[1]}"],
                 shanghai_sell=renamed[f"_flow_{codes[2]}"],
@@ -451,6 +455,6 @@ def fetch_raw_driver_frame(
                 cutover=cutover,
             )
         else:
-            features["flows"] = pd.NA
+            features[DRIVER_FLOWS] = pd.NA
 
     return features[[RATE_COLUMN] + list(strategy_config.drivers)]

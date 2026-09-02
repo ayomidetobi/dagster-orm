@@ -59,19 +59,44 @@ flat column in its report (build_availability_report); steer_silver_prices
 depends on that asset and reconstructs each pair's PairAvailability from
 the report row (PairAvailability.from_report_row) instead of re-resolving
 from scratch -- the two assets used to duplicate all of this work.
+
+discover_pairs()/UNIVERSE_TO_DATASET_CLASS (which universe maps to which
+FX dataset class, and the metadata query that returns its pairs) live here
+too, not in assets/steer/ -- "which pairs does a universe contain" is
+discovery logic, the same as "which roles does a pair need"; only the
+rewrite.data_api.dataset.fx classes it queries are Dagster-free themselves.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import pandas as pd
 
-_FX_PAIR_PATTERN = re.compile(r"^([A-Z]{3})([A-Z]{3})_")
+from dagster_quickstart.rewrite.data_api.dataset.base import DatasetBase
+from dagster_quickstart.rewrite.data_api.dataset.fx import (
+    FXChina,
+    FXDevelopedMarkets,
+    FXEmergingMarkets,
+)
+from dagster_quickstart.steer.constants import (
+    CURRENCY_USD,
+    LEG_BASE,
+    LEG_QUOTE,
+    LEGS as _LEGS,
+    ROLE_CDS_5Y,
+    ROLE_LOCAL_EQUITY,
+    ROLE_RATE_3M,
+    ROLE_SWAP_2Y,
+    ROLE_YIELD_10Y,
+    UNIVERSE_CHN,
+    UNIVERSE_EM,
+    UNIVERSE_G10,
+)
 
-_LEGS: Tuple[str, str] = ("base", "quote")
+_FX_PAIR_PATTERN = re.compile(r"^([A-Z]{3})([A-Z]{3})_")
 
 
 def parse_fx_legs(series_code: str) -> Optional[Tuple[str, str]]:
@@ -84,18 +109,18 @@ def parse_fx_legs(series_code: str) -> Optional[Tuple[str, str]]:
 #: see RoleResolver. Every driver leg is expressed as a filter query
 #: against the real catalog, never a hardcoded series_code list.
 ROLE_FILTERS: Dict[str, Dict[str, List[str]]] = {
-    "swap_2y": dict(sub_asset_class=["Interest Rate Swap"], tenor=["2Y"]),
-    "rate_3m": dict(sub_asset_class=["Money Market Rate"], tenor=["3M"]),
-    "yield_10y": dict(sub_asset_class=["Sovereign Yield"], tenor=["10Y"]),
-    "cds_5y": dict(sub_asset_class=["Sovereign CDS"], tenor=["5Y"]),
-    "local_equity": dict(sub_asset_class=["Equity Index"], market_segment=["Local"]),
+    ROLE_SWAP_2Y: dict(sub_asset_class=["Interest Rate Swap"], tenor=["2Y"]),
+    ROLE_RATE_3M: dict(sub_asset_class=["Money Market Rate"], tenor=["3M"]),
+    ROLE_YIELD_10Y: dict(sub_asset_class=["Sovereign Yield"], tenor=["10Y"]),
+    ROLE_CDS_5Y: dict(sub_asset_class=["Sovereign CDS"], tenor=["5Y"]),
+    ROLE_LOCAL_EQUITY: dict(sub_asset_class=["Equity Index"], market_segment=["Local"]),
 }
 
 #: universe -> (roles required for BOTH legs, roles required for the non-USD leg only).
 REQUIRED_ROLES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
-    "G10": (("swap_2y", "rate_3m", "yield_10y", "local_equity"), ()),
-    "EM": (("swap_2y", "local_equity"), ("cds_5y",)),
-    "CHN": (("swap_2y", "local_equity"), ("cds_5y",)),
+    UNIVERSE_G10: ((ROLE_SWAP_2Y, ROLE_RATE_3M, ROLE_YIELD_10Y, ROLE_LOCAL_EQUITY), ()),
+    UNIVERSE_EM: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
+    UNIVERSE_CHN: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
 }
 
 
@@ -155,9 +180,9 @@ class RoleResolver:
 
 def _non_usd_leg(base: str, quote: str) -> Optional[str]:
     """Whichever of base/quote isn't USD -- None if neither (or both) are USD."""
-    if base == "USD" and quote != "USD":
+    if base == CURRENCY_USD and quote != CURRENCY_USD:
         return quote
-    if quote == "USD" and base != "USD":
+    if quote == CURRENCY_USD and base != CURRENCY_USD:
         return base
     return None
 
@@ -295,7 +320,7 @@ def assess_pair_availability(
             missing_reasons=missing_reasons,
         )
 
-    for leg, currency in (("base", base), ("quote", quote)):
+    for leg, currency in ((LEG_BASE, base), (LEG_QUOTE, quote)):
         for role in both_leg_roles:
             code, reason = resolver.resolve(role, currency)
             if code:
@@ -306,7 +331,7 @@ def assess_pair_availability(
     if non_usd_roles:
         non_usd_currency = _non_usd_leg(base, quote)
         assert non_usd_currency is not None  # guaranteed by the USD-leg check above
-        leg = "base" if non_usd_currency == base else "quote"
+        leg = LEG_BASE if non_usd_currency == base else LEG_QUOTE
         for role in non_usd_roles:
             code, reason = resolver.resolve(role, non_usd_currency)
             if code:
@@ -385,3 +410,42 @@ def build_availability_report(
         ["series_code", "universe", "base_currency", "quote_currency", "blocked", "block_reasons"]
         + role_columns
     ))
+
+
+UNIVERSE_TO_DATASET_CLASS: Dict[str, Type[DatasetBase]] = {
+    UNIVERSE_G10: FXDevelopedMarkets,
+    UNIVERSE_EM: FXEmergingMarkets,
+    UNIVERSE_CHN: FXChina,
+}
+
+
+def discover_pairs(universe: str, data_api: Any, *, require_real: bool = False) -> pd.DataFrame:
+    """Metadata for every real currency_pair (series_code) in `universe`.
+
+    require_real=True excludes any pair row with is_synthetic=True. All 67
+    FX pair rows are is_synthetic=False (they're real, standard-convention
+    tickers -- see rewrite/data_api/dataset/fx.py), so this should never
+    actually narrow the pair list; it exists so a production caller that
+    filters *everything* by is_synthetic=False (the normal way to exclude
+    the 24 placeholder driver rows) doesn't also silently lose every pair.
+    """
+    DatasetBase.configure(data_api)
+    dataset_cls = UNIVERSE_TO_DATASET_CLASS[universe]
+    metadata = dataset_cls().info
+    if require_real and not metadata.empty and "is_synthetic" in metadata.columns:
+        metadata = metadata[metadata["is_synthetic"] == False]  # noqa: E712
+    return metadata
+
+
+def pairs_from_availability_report(report: pd.DataFrame) -> List[PairAvailability]:
+    """Every PairAvailability in `report` -- one universe's build_availability_report output.
+
+    Reconstructs each row via PairAvailability.from_report_row -- no
+    data_api, no metadata query. steer_silver_prices calls this on
+    steer_data_availability's output instead of re-discovering/
+    re-resolving pairs itself; the two assets used to independently redo
+    the same resolution work for the same partition.
+    """
+    if report.empty:
+        return []
+    return [PairAvailability.from_report_row(row) for _, row in report.iterrows()]

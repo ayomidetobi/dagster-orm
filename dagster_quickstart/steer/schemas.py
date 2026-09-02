@@ -13,11 +13,15 @@ from typing import Sequence
 import numpy as np
 import pandera as pa
 
-from dagster_quickstart.steer.config import DRIVER_NAMES
-from dagster_quickstart.steer.features import (
+from dagster_quickstart.steer.constants import (
+    DRIVER_NAMES,
     IS_LOGGED_COLUMN,
     RATE_COLUMN,
     REALIZED_VOLATILITY_COLUMN,
+    SIGNAL_BUY,
+    SIGNAL_NONE,
+    SIGNAL_SELL,
+    UNIVERSES,
 )
 
 #: Plausible bounds for an FX spot rate -- wide enough to cover every G10/EM
@@ -72,7 +76,7 @@ def steer_estimates_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFram
     return pa.DataFrameSchema(
         columns={
             "date": pa.Column(pa.DateTime, nullable=False),
-            "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(["G10", "EM", "CHN"])),
+            "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
             "series_code": pa.Column(str, nullable=False),
             "is_logged": pa.Column(bool, nullable=False),
             "const_coef": pa.Column(
@@ -101,9 +105,11 @@ def steer_estimates_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFram
 STEER_SIGNALS_SCHEMA = pa.DataFrameSchema(
     columns={
         "date": pa.Column(pa.DateTime, nullable=False),
-        "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(["G10", "EM", "CHN"])),
+        "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
         "series_code": pa.Column(str, nullable=False),
-        "signal": pa.Column(str, nullable=False, checks=pa.Check.isin(["BUY", "SELL", "NONE"])),
+        "signal": pa.Column(
+            str, nullable=False, checks=pa.Check.isin((SIGNAL_BUY, SIGNAL_SELL, SIGNAL_NONE))
+        ),
         "entry_z_score": pa.Column(float, nullable=False, checks=pa.Check.in_range(-100, 100)),
         "target": pa.Column(float, nullable=True, checks=pa.Check.in_range(_RATE_MIN, _RATE_MAX)),
         "stop_loss": pa.Column(

@@ -1,4 +1,4 @@
-"""Regression tests for assets.steer.universe_datasets.discover_pairs against the real catalog.
+"""Regression tests for steer.discovery.discover_pairs against the real catalog.
 
 Loads dagster_quickstart/data/meta_series_steer.csv directly (the actual
 shipped catalog, not a hand-built fixture) through the real QuerySet/
@@ -16,13 +16,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from dagster_quickstart.assets.steer.universe_datasets import discover_pairs
 from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.discovery import (
     RoleResolver,
     assess_pair_availability,
     build_availability_report,
+    discover_pairs,
 )
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "dagster_quickstart" / "data" / "meta_series_steer.csv"

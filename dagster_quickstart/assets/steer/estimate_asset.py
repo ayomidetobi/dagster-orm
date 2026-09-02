@@ -26,7 +26,7 @@ from dagster import (
 from dagster_quickstart.assets.steer.config import StrategyRunConfig
 from dagster_quickstart.assets.steer.cointegration_asset import _resolve_as_of
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
+from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.errors import InsufficientDataError
 from dagster_quickstart.steer.schemas import steer_estimates_schema
 from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE

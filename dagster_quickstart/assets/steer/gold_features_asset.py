@@ -20,7 +20,7 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
+from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.schemas import steer_features_schema
 
 CHECK_NAME = "validate_steer_features"

@@ -50,6 +50,11 @@ import pandas as pd
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller
 
+from dagster_quickstart.steer.constants import (
+    ADF_AUTOLAG_CRITERION,
+    ADF_CRITICAL_VALUE_LEVELS,
+    ADF_REGRESSION_TYPE,
+)
 from dagster_quickstart.steer.errors import InsufficientDataError
 
 
@@ -260,7 +265,9 @@ def engle_granger_cointegration_test(
     x_with_const = sm.add_constant(aligned["x"], has_constant="add")
     residuals = sm.OLS(aligned["y"], x_with_const).fit().resid
 
-    adf_result = adfuller(residuals, regression="c", autolag="BIC", result_object=True)
+    adf_result = adfuller(
+        residuals, regression=ADF_REGRESSION_TYPE, autolag=ADF_AUTOLAG_CRITERION, result_object=True
+    )
 
     return CointegrationResult(
         as_of=pd.Timestamp(as_of),
@@ -268,7 +275,7 @@ def engle_granger_cointegration_test(
         p_value=float(adf_result.pvalue),
         test_statistic=float(adf_result.statistic),
         critical_values=tuple(
-            float(adf_result.critical_values[level]) for level in ("1%", "5%", "10%")
+            float(adf_result.critical_values[level]) for level in ADF_CRITICAL_VALUE_LEVELS
         ),
         n_obs=len(aligned),
     )
@@ -307,7 +314,9 @@ def cointegration_test(
     x = sm.add_constant(windowed[list(drivers.columns)], has_constant="add")
     residuals = sm.OLS(windowed["y"], x).fit().resid
 
-    adf_result = adfuller(residuals, regression="c", autolag="BIC", result_object=True)
+    adf_result = adfuller(
+        residuals, regression=ADF_REGRESSION_TYPE, autolag=ADF_AUTOLAG_CRITERION, result_object=True
+    )
 
     return CointegrationResult(
         as_of=pd.Timestamp(as_of),
@@ -315,7 +324,7 @@ def cointegration_test(
         p_value=float(adf_result.pvalue),
         test_statistic=float(adf_result.statistic),
         critical_values=tuple(
-            float(adf_result.critical_values[level]) for level in ("1%", "5%", "10%")
+            float(adf_result.critical_values[level]) for level in ADF_CRITICAL_VALUE_LEVELS
         ),
         n_obs=len(windowed),
     )

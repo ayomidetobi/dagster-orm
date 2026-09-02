@@ -13,7 +13,7 @@ from dagster import AssetExecutionContext, MetadataValue, Output, asset
 
 from dagster_quickstart.assets.steer.config import StrategyRunConfig
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
+from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.errors import InsufficientDataError
 
 

@@ -34,18 +34,9 @@ from typing import Dict, Literal, Tuple
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "strategy_configs"
+from dagster_quickstart.steer.constants import DRIVER_NAMES
 
-#: STEER's 5 drivers, by canonical name -- used as the fixed column names
-#: throughout steer/ (features, estimates) and as the keys expected in
-#: each universe's `expected_signs`.
-DRIVER_NAMES = (
-    "interest_rate_differential",
-    "yield_curve_or_cds",
-    "local_equity",
-    "global_equity",
-    "commodity",
-)
+DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent / "strategy_configs"
 
 
 class GlobalDriverConfig(BaseModel):

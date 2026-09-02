@@ -440,3 +440,71 @@ def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(
     )
 
     assert both_counter["count"] == availability_only_calls
+
+
+def test_blocked_pair_log_lines_are_unchanged_in_wording_and_count(resources, capfd):
+    """Acceptance criterion: build_silver_frame returns skipped_reasons instead of logging
+    itself, and steer_silver_prices logs each one -- this proves the resulting log lines are
+    byte-for-byte what the asset used to emit inline, for both of this fixture's blocked pairs.
+
+    Captures at the OS file-descriptor level (capfd) rather than via a Python logging.Handler
+    (caplog, or a manually attached one) -- Dagster's own instance/run setup reconfigures the
+    "dagster" logger's handlers in a way neither reliably survives; capfd doesn't care what
+    wrote to stderr, only that something did.
+    """
+    materialize(
+        [steer_data_availability, steer_silver_prices],
+        resources=resources,
+        partition_key=UNIVERSE,
+        instance=DagsterInstance.ephemeral(),
+    )
+
+    captured_err = capfd.readouterr().err
+    skip_lines = [line for line in captured_err.splitlines() if "Skipping" in line]
+
+    assert len(skip_lines) == len(PAIRS)
+    for series_code in PAIRS:
+        expected = f"Skipping {series_code} -- blocked: "
+        assert any(expected in line for line in skip_lines), captured_err
+
+
+def test_silver_asset_output_matches_build_silver_frame_called_directly(resources):
+    """Acceptance criterion: the asset's Output frame and check metadata are byte-identical to
+    calling steer.pipeline.build_silver_frame directly on the same inputs -- steer_silver_prices
+    is proven to be a thin wrapper, not an independent implementation."""
+    from dagster_quickstart.steer.discovery import pairs_from_availability_report
+    from dagster_quickstart.steer.pipeline import build_silver_frame
+
+    result = materialize(
+        [steer_data_availability, steer_silver_prices],
+        resources=resources,
+        partition_key=UNIVERSE,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert result.success
+
+    availability_output = result.output_for_node("steer_data_availability", output_name="result")
+    asset_silver_output = result.output_for_node("steer_silver_prices", output_name="result")
+    materializations = [
+        event for event in result.all_events
+        if event.event_type_value == "ASSET_MATERIALIZATION"
+        and event.step_key == "steer_silver_prices"
+    ]
+    asset_metadata = materializations[-1].materialization.metadata
+
+    availabilities = pairs_from_availability_report(availability_output)
+    as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
+    direct_result = build_silver_frame(
+        resources["rewrite_data_api"].api,
+        UNIVERSE,
+        resources["steer_config"].for_universe(UNIVERSE),
+        availabilities,
+        as_of=as_of,
+    )
+
+    pd.testing.assert_frame_equal(asset_silver_output, direct_result.frame)
+    assert asset_metadata["pair_count"].value == direct_result.pair_count
+    assert asset_metadata["fetched_pair_count"].value == direct_result.fetched_pair_count
+    assert asset_metadata["blocked_pair_count"].value == len(direct_result.blocked_pairs)
+    assert asset_metadata["stale_pair_count"].value == len(direct_result.stale_pairs)
+    assert asset_metadata["row_count"].value == len(direct_result.frame)

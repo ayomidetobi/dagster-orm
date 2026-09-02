@@ -4,7 +4,7 @@ Job/partition design notes:
   - STEER_PARTITIONS is a single static dimension -- universe (G10/EM/CHN,
     see partitions.py's module docstring). currency_pair is NOT a Dagster
     partition; each universe's run fetches and processes every pair in
-    that universe as data (see assets/steer/universe_datasets.py).
+    that universe as data (see steer/discovery.py's discover_pairs()).
   - Because the partition set is static and small, the schedule needs no
     live datalake query and no partition-registration step (an earlier
     per-pair-partition design needed steer_pair_discovery_sensor for

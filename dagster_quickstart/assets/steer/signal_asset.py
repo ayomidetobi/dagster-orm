@@ -21,7 +21,7 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.assets.steer.silver_asset import SERIES_CODE_COLUMN
+from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate
 from dagster_quickstart.steer.schemas import STEER_SIGNALS_SCHEMA
 from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_SIGNALS_TABLE

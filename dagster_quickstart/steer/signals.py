@@ -22,6 +22,7 @@ from typing import Literal, Optional
 
 import pandas as pd
 
+from dagster_quickstart.steer.constants import SIGNAL_BUY, SIGNAL_NONE, SIGNAL_SELL
 from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate
 
 Signal = Literal["BUY", "SELL", "NONE"]
@@ -58,7 +59,7 @@ def generate_signal(
     if not cointegration.passed:
         return SteerSignal(
             as_of=estimate.as_of,
-            signal="NONE",
+            signal=SIGNAL_NONE,
             entry_z_score=estimate.z_score,
             target=None,
             stop_loss=None,
@@ -68,7 +69,7 @@ def generate_signal(
     if abs(estimate.z_score) < z_threshold:
         return SteerSignal(
             as_of=estimate.as_of,
-            signal="NONE",
+            signal=SIGNAL_NONE,
             entry_z_score=estimate.z_score,
             target=None,
             stop_loss=None,
@@ -76,7 +77,7 @@ def generate_signal(
         )
 
     target = estimate.fitted_value_level
-    direction: Signal = "SELL" if estimate.z_score > 0 else "BUY"
+    direction: Signal = SIGNAL_SELL if estimate.z_score > 0 else SIGNAL_BUY
     reward = abs(current_rate - target)
     risk = reward / stop_reward_ratio
     stop_loss = current_rate + risk if direction == "SELL" else current_rate - risk

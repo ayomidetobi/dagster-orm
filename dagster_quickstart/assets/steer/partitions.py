@@ -4,7 +4,7 @@ G10, EM, and CHN are independently fetched, so each is its own Dagster
 partition -- but currency_pair is NOT a partition dimension. Every pair in
 a universe (identified by series_code, stored together in the same Parquet
 dataset) is processed as data within that universe's single partition run
-(see assets/steer/universe_datasets.py's discover_pairs()), not as a
+(see steer/discovery.py's discover_pairs()), not as a
 separate Dagster partition -- one call per universe covers every pair's
 complete history.
 
