@@ -4,7 +4,7 @@ Job/partition design notes:
   - STEER_PARTITIONS is a single static dimension -- variant (G10/EM/CHN,
     see partitions.py's module docstring). currency_pair is NOT a Dagster
     partition; each variant's run fetches and processes every pair in
-    that variant as data (see steer/discovery.py's discover_pairs()).
+    that variant as data (see steer/source/discovery.py's discover_pairs()).
   - Because the partition set is static and small, the schedule needs no
     live datalake query and no partition-registration step (an earlier
     per-pair-partition design needed steer_pair_discovery_sensor for
@@ -18,7 +18,7 @@ Job/partition design notes:
     run only -- Dagster's per-partition run isolation means the other
     variants' runs are unaffected. Within a partition, one pair's data
     gap or cointegration failure never fails the whole run either -- see
-    each asset's own per-pair try/except and steer/signals.py's NONE
+    each asset's own per-pair try/except and analytics/estimation.py's NONE
     signal for a failed cointegration test.
 """
 

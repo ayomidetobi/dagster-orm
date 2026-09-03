@@ -1,17 +1,16 @@
-"""Silver layer: materialize this variant's steer.pipeline.build_silver_frame result.
+"""Silver layer: materialize this variant's steer.source.features.build_silver_frame result.
 
 One partition per variant (G10/EM/CHN, static -- see partitions.py).
 Depends on steer_data_availability (same partitions_def, so Dagster aligns
 the partition and the IO manager hands this asset the upstream frame
 directly -- no manual S3/Parquet read) instead of re-discovering pairs and
-re-resolving every driver role itself: the two assets used to
-independently redo the exact same (role, currency) resolution work for the
-same partition, which is what made this asset's runtime track
-steer_data_availability's runtime plus one get_values() call.
+re-resolving every driver role itself, so this asset's runtime never
+duplicates steer_data_availability's (role, currency) resolution work --
+this asset's own runtime is that one plus a single get_values() call.
 
 All domain logic (collecting series codes, loading DriverValues, resolving
 the CHN flows cutover, iterating pairs, skipping blocked/stale ones,
-conforming, tagging with series_code) lives in steer.pipeline.build_silver_frame
+conforming, tagging with series_code) lives in steer.source.features.build_silver_frame
 -- this asset just reads the partition key/resources, calls it, and maps
 the result onto AssetCheckResult/Output.
 
@@ -50,7 +49,7 @@ from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
 def steer_silver_prices(context: AssetExecutionContext, steer_data_availability: pd.DataFrame):
     """Fetch this variant's every pair's rate + drivers from DuckLake and conform them.
 
-    See steer.pipeline.build_silver_frame's docstring for what "blocked"/
+    See steer.source.features.build_silver_frame's docstring for what "blocked"/
     "stale" mean and why a pair is skipped rather than passed through
     partial.
     """

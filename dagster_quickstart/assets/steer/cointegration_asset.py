@@ -34,7 +34,7 @@ def steer_cointegration(
 ):
     """Engle-Granger cointegration test (statsmodels.tsa.stattools.coint) between each pair's rate and its drivers.
 
-    See steer.estimation's module docstring -- coint() is passed the full
+    See steer.analytics.estimation's module docstring -- coint() is passed the full
     driver frame directly (5 columns for G10/EM, 7 for CHN) and fits/tests
     the cointegrating regression itself, with critical values calibrated
     for the actual regressor count. A pair with too little history for the

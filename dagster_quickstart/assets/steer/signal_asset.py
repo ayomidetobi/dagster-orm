@@ -48,7 +48,7 @@ def steer_signal(
     steer_estimate: pd.DataFrame,
     steer_cointegration: pd.DataFrame,
 ):
-    """BUY/SELL/NONE for every pair, from steer_estimate + steer_cointegration -- see steer.signals.generate_signal."""
+    """BUY/SELL/NONE for every pair, from steer_estimate + steer_cointegration -- see steer.analytics.estimation.generate_signal."""
     from dagster_quickstart.steer.analytics.estimation import generate_signal
 
     variant = context.partition_key

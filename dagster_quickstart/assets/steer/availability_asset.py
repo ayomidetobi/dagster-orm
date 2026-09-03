@@ -9,12 +9,12 @@ table.
 
 The report includes a flat `{leg}_{role}` column per resolved driver role
 (e.g. base_swap_2y, quote_local_equity -- see
-steer.discovery.build_availability_report), not just the blocked/reason
+steer.source.discovery.build_availability_report), not just the blocked/reason
 summary -- steer_silver_prices (which depends on this asset's output)
 reconstructs each pair's PairAvailability straight from these columns via
 PairAvailability.from_report_row, instead of re-resolving every role from
-a fresh metadata query the way it used to. The two assets used to
-independently redo the same resolution work for the same partition.
+a fresh metadata query -- so the two assets never redo the same
+resolution work for the same partition.
 """
 
 import pandas as pd
@@ -49,7 +49,7 @@ CHECK_NAME = "no_blocked_pairs"
 def steer_data_availability(context: AssetExecutionContext):
     """Build the data_availability report for every pair in this variant.
 
-    See steer/discovery.py's module docstring for exactly what "blocked"
+    See steer/source/discovery.py's module docstring for exactly what "blocked"
     means and why local_equity/rate-differential aren't substituted with a
     global proxy when missing.
     """

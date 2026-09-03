@@ -12,23 +12,19 @@ build_steer_result(), just packaged for easy per-pair retrieval
 (SteerResult.save()/.load()), cross-pair comparison (cross_section()), and
 plotting (plot()).
 
-upper_bound/lower_bound = fitted +/- z_threshold * residual_std -- the
-SAME boundary generate_signal (steer/analytics/estimation.py) uses to decide whether a
-BUY/SELL fires (|z_score| >= z_threshold), matching the reference
-production model exactly (Figs 16/17 of the published methodology shade
-this exact band). This used to be
-statsmodels.tsa.stattools.summary_frame()'s confidence interval on the
-fitted MEAN, which measures parameter uncertainty, not residual
-dispersion -- on a ~250-observation window that interval is roughly 5x
-narrower than the real trigger band, so the shaded region on
-SteerResult.plot() had no relationship to where signals actually fire.
+upper_bound/lower_bound = fitted +/- z_threshold * residual_std -- the SAME boundary
+generate_signal (steer/analytics/estimation.py) uses to decide whether a BUY/SELL fires
+(|z_score| >= z_threshold), matching the reference production model exactly (Figs 16/17 of the
+published methodology shade this exact band). This is deliberately NOT a statistical confidence
+interval on the fitted mean (which measures parameter uncertainty, not residual dispersion, and
+on a ~250-observation window is roughly 5x narrower than this trigger band) -- SteerResult.plot()
+must shade the actual trading-trigger band, not something with no relationship to where signals
+fire.
 
-Drivers are held as a `drivers: dict[str, pd.Series]` (driver name ->
-series), not fixed dataclass fields -- a fixed 5-field shape (the old
-design) has no room for CHN's 2 extra drivers (offshore_spread, flows) and
-would silently need per-variant subclasses or None-padding. `design`
-derives the regression's X matrix (drivers + a constant) from this dict on
-demand.
+Drivers are held as a `drivers: dict[str, pd.Series]` (driver name -> series), not fixed
+dataclass fields, so CHN's 2 extra drivers (offshore_spread, flows) don't need a per-variant
+subclass or None-padding. `design` derives the regression's X matrix (drivers + a constant)
+from this dict on demand.
 
 Every time-series field (spot, every entry of `drivers`, response, fitted,
 residual, upper_bound, lower_bound) shares the identical DatetimeIndex --
@@ -36,20 +32,14 @@ the trailing regression window ending at `as_of` (see
 window_slice, steer/analytics/estimation.py) -- so they concatenate/plot directly with
 no reindexing.
 
-build_steer_result() takes an already-computed SteerEstimate (from
-sign_check_and_reestimate) rather than independently
-re-fitting and re-deriving z_score/dropped_variables itself -- the previous
-version re-fit with *every* driver and no sign check, so its z_score could
-silently disagree with the "real" SteerEstimate.z_score whenever a driver
-had been dropped there, and it carried no dropped_variables/cointegration
-information at all. Taking the estimate as input makes z_score/
-dropped_variables agree by construction; this module still fits its own
-OLS (over the identical window, on the identical kept-driver columns) to
-get the *full* windowed design/response/fitted/residual series plus
-per-coefficient p-values/standard errors and the fitted +/- z_threshold *
-residual_std trigger band that SteerEstimate doesn't expose (only its
-latest-day z_score) -- residual_std uses ddof=0, matching estimate_steer's
-z_score calculation exactly (see steer/analytics/estimation.py's module docstring).
+build_steer_result() takes an already-computed SteerEstimate (from sign_check_and_reestimate)
+rather than independently re-fitting and re-deriving z_score/dropped_variables itself, so the
+two can never silently disagree about which drivers were dropped or what the z_score is --
+this module still fits its own OLS (over the identical window, on the identical kept-driver
+columns) to get the *full* windowed design/response/fitted/residual series plus per-coefficient
+p-values/standard errors and the fitted +/- z_threshold * residual_std trigger band that
+SteerEstimate doesn't expose (only its latest-day z_score) -- residual_std uses ddof=0, matching
+estimate_steer's z_score calculation exactly (see steer/analytics/estimation.py's module docstring).
 
 markov_state is a reserved field, always None today -- no Markov
 regime-switching model exists anywhere in this codebase; it's a

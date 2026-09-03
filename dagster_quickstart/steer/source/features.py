@@ -1,38 +1,46 @@
-"""Gold-layer STEER feature construction: raw driver series -> a model-ready table.
+"""Data in for STEER: fetch a variant's pairs, conform them onto a shared calendar, and build
+the gold-layer feature table each pair is estimated on.
 
-Turns a wide frame of already-conformed raw series (see
-assets/steer/silver_asset.py for the silver-layer alignment step) into the
-per-pair STEER feature table: this variant's drivers (see
-StrategyConfig.drivers -- 5 for G10/EM, 7 for CHN) plus a rolling
-`is_logged` flag, one row per date.
+Three steps, in the order they run:
 
-Driver construction is deliberately NOT symmetric between G10 and EM/CHN --
-this follows the published STEER methodology, not a simplification:
+1. `conform_to_business_days` reindexes a pair's raw rate + driver series (bronze data, whatever
+   timestamps each vendor happened to report) onto one shared business-day calendar, short gaps
+   forward-filled.
+2. `build_steer_features` (with `fetch_raw_driver_frame`/`DriverValues` feeding it this variant's
+   raw rate + driver series) turns the conformed frame into the per-pair feature table: this
+   variant's drivers (StrategyConfig.drivers -- 5 for G10/EM, 7 for CHN) plus a rolling
+   `is_logged` flag, one row per date.
+3. `build_silver_frame` orchestrates both across every pair in a variant in one call: collect
+   every pair's needed series upfront (`required_series_codes`) and fetch them all in a single
+   `DriverValues.load()`, skip pairs that are blocked or stale, and concatenate the rest into
+   one `series_code`-tagged frame (`SilverResult`).
+
+Driver construction is deliberately NOT symmetric between G10 and EM/CHN -- this follows the
+published STEER methodology, not a simplification:
 
   - interest_rate_differential: base_swap_2y - quote_swap_2y, every variant.
   - yield_curve_or_cds: G10 is a genuine curve-slope differential,
     (base_3m - base_10y) - (quote_3m - quote_10y); EM/CHN is the non-USD
     leg's 5Y sovereign CDS *level* (not a difference -- EM/CHN pairs are
     always vs. USD, and USD has no CDS quote of its own in this catalog).
-    yield_curve_or_cds used to be a literal duplicate of
-    interest_rate_differential (same object assigned to both columns) --
-    that was perfect collinearity (statsmodels splits the coefficient
-    arbitrarily between the two, both standard errors inflate), not a
-    documented simplification, and is fixed here.
   - local_equity: G10 is log(base_msci) - log(quote_msci); EM/CHN is
     log(non_usd_msci) alone (single leg, same USD-quote reasoning as CDS).
   - global_equity / commodity: log(single global series), identical
     across every pair/variant (see steer/config.py's GLOBAL_DRIVERS).
 
-Every log/differential input is read out of a pair's PairAvailability
-(steer/discovery.py) -- resolved *by role*, never a hardcoded series_code.
-A driver missing any input it needs is filled with pd.NA for that pair,
-never substituted with a proxy (e.g. the global equity series standing in
-for a missing local_equity) -- see fetch_raw_driver_frame.
+Every log/differential input is read out of a pair's PairAvailability (steer/source/discovery.py)
+-- resolved *by role*, never a hardcoded series_code. A driver missing any input it needs is
+filled with pd.NA for that pair, never substituted with a proxy (e.g. the global equity series
+standing in for a missing local_equity) -- see fetch_raw_driver_frame.
 
-CHN also gets two extra drivers (offshore_spread, flows) -- see
-build_chn_offshore_spread/build_chn_flows below and steer/config.py's CHN
-YAML for why they're not in the 5 canonical DRIVER_NAMES.
+CHN also gets two extra drivers (offshore_spread, flows) -- see build_chn_offshore_spread/
+build_chn_flows below and steer/config.py's FX_CHN for why they're not in the 5 canonical
+DRIVER_NAMES.
+
+A pair whose bronze data isn't fresh as of the run date, or that's blocked at the discovery
+stage (missing genuine per-country data -- see steer/source/discovery.py), is skipped rather
+than passed through partial; skipping never raises, the caller decides what to do with an empty
+result (see assess_freshness, build_silver_frame).
 """
 
 from __future__ import annotations
@@ -420,13 +428,9 @@ def fetch_raw_driver_frame(
     def has_data(column: str) -> bool:
         """True if `column` exists AND has at least one real (non-NaN) value.
 
-        DriverValues.select() always creates a column for every requested
-        mapping entry -- unlike the old data_api.get_values() call, which
-        simply omitted a column that had zero value rows. A plain "column
-        in renamed" check would therefore always be True here regardless
-        of whether real data was actually returned; checking for at least
-        one non-null value restores the original "does this driver
-        actually have data" semantics.
+        DriverValues.select() always creates a column for every requested mapping entry, even
+        one with zero real rows (filled with pd.NA) -- so a plain "column in renamed" check
+        would always be True here regardless of whether real data was actually returned.
         """
         return column in renamed.columns and bool(renamed[column].notna().any())
 
@@ -545,14 +549,11 @@ def assess_freshness(
 class SilverResult:
     """Everything the silver asset needs to emit, computed without Dagster.
 
-    blocked_pairs/stale_pairs are the series_code (and, for stale, "CODE
-    (reason)") lists the asset's AssetCheckResult/Output metadata already
-    reports. skipped_reasons is series_code -> "blocked: <reasons>" for
-    every BLOCKED pair only (matching exactly what steer_silver_prices used
-    to log inline via context.log.info -- stale pairs were never logged as
-    individual lines, only counted in the check, so they're not in here).
-    chn_flows_cutover_error is set instead of logging a warning directly,
-    when this is a CHN variant and resolve_flows_cutover() failed.
+    blocked_pairs/stale_pairs are the series_code (and, for stale, "CODE (reason)") lists the
+    asset's AssetCheckResult/Output metadata reports. skipped_reasons is series_code ->
+    "blocked: <reasons>" for every BLOCKED pair only -- stale pairs are counted in stale_pairs
+    but not logged individually, so they're not in here. chn_flows_cutover_error is set instead
+    of logging a warning directly, when this is a CHN variant and resolve_flows_cutover() failed.
     """
 
     frame: pd.DataFrame

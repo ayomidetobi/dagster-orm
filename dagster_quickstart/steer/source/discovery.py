@@ -27,11 +27,11 @@ Required roles differ by variant (see REQUIRED_ROLES):
   - G10: swap_2y, rate_3m, yield_10y, local_equity, for BOTH legs.
     interest_rate_differential uses swap_2y (both legs); yield_curve_or_cds
     is the (3m - 10y) curve-slope differential, using rate_3m/yield_10y
-    (see steer/features.py) -- two different rate drivers, not the same
+    (see steer/source/features.py) -- two different rate drivers, not the same
     series reused twice.
   - EM/CHN: swap_2y and local_equity for BOTH legs; cds_5y for the
     non-USD leg ONLY (yield_curve_or_cds is that leg's CDS *level*, not a
-    difference -- see steer/features.py). EM/CHN currently has no
+    difference -- see steer/source/features.py). EM/CHN currently has no
     sovereign-yield coverage in this catalog, so there's no 3m/10y curve
     slope to build for them; cds_5y is the published methodology's driver
     2 for these variants instead.
@@ -58,7 +58,8 @@ resolution once per variant and persists every resolved (leg, role) as a
 flat column in its report (build_availability_report); steer_silver_prices
 depends on that asset and reconstructs each pair's PairAvailability from
 the report row (PairAvailability.from_report_row) instead of re-resolving
-from scratch -- the two assets used to duplicate all of this work.
+from scratch -- so the two assets never duplicate this resolution work for the same
+partition.
 
 discover_pairs()/VARIANT_TO_DATASET_CLASS (which variant maps to which
 FX dataset class, and the metadata query that returns its pairs) live here
@@ -144,13 +145,12 @@ class RoleResolver:
             subset = metadata.loc[mask]
             if subset.empty:
                 continue
-            # Preserve the original resolve_role()'s tie-break exactly: real
-            # before synthetic (False < True), then series_code ascending --
-            # this is the ONLY thing is_synthetic still influences (see
-            # module docstring). CNH's local_equity depends on it: it
-            # matches both the real CNHLIVEMSCI_PX_LAST and the synthetic
-            # CNHMSCI_PX_LAST, and series_code alone would pick the real one
-            # only by the coincidence that "CNHL" sorts before "CNHM".
+            # Tie-break when a role matches more than one row: real before synthetic (False <
+            # True), then series_code ascending -- this is the ONLY thing is_synthetic still
+            # influences (see module docstring). CNH's local_equity depends on it: it matches
+            # both the real CNHLIVEMSCI_PX_LAST and the synthetic CNHMSCI_PX_LAST, and
+            # series_code alone would pick the real one only by the coincidence that "CNHL"
+            # sorts before "CNHM".
             sort_by = ["is_synthetic", "series_code"] if has_synthetic else ["series_code"]
             subset = subset.sort_values(sort_by)
             for currency, group in subset.groupby("currency"):
@@ -196,7 +196,7 @@ class PairAvailability:
     several roles/legs (e.g. G10's yield_curve_or_cds needs
     (base, rate_3m), (base, yield_10y), (quote, rate_3m), (quote,
     yield_10y)) reads every one of them out of this single dict -- see
-    steer/features.py's fetch_raw_driver_frame.
+    steer/source/features.py's fetch_raw_driver_frame.
     """
 
     series_code: str
@@ -443,8 +443,8 @@ def pairs_from_availability_report(report: pd.DataFrame) -> List[PairAvailabilit
     Reconstructs each row via PairAvailability.from_report_row -- no
     data_api, no metadata query. steer_silver_prices calls this on
     steer_data_availability's output instead of re-discovering/
-    re-resolving pairs itself; the two assets used to independently redo
-    the same resolution work for the same partition.
+    re-resolving pairs itself, so the two assets never redo the same
+    resolution work for the same partition.
     """
     if report.empty:
         return []

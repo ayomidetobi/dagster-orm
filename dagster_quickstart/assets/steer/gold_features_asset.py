@@ -42,7 +42,7 @@ CHECK_NAME = "validate_steer_features"
 def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataFrame):
     """Build every pair's STEER feature table (5 drivers + realized_volatility + is_logged) from conformed silver prices.
 
-    Wraps steer.features.build_steer_features with this variant's
+    Wraps steer.source.features.build_steer_features with this variant's
     logged_rate_threshold/logged_rate_vol_window_days (from StrategyConfig
     -- never hardcoded here), once per pair present in steer_silver_prices.
     """
