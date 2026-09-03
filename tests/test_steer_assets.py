@@ -42,7 +42,7 @@ from dagster_quickstart.assets.steer.silver_asset import steer_silver_prices
 from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.config import StrategyConfig
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
 
 UNIVERSE = "G10"
 PAIRS = ["AUDJPY_PX_LAST", "EURGBP_PX_LAST"]
@@ -453,8 +453,8 @@ def test_silver_asset_output_matches_build_silver_frame_called_directly(resource
     """Acceptance criterion: the asset's Output frame and check metadata are byte-identical to
     calling steer.pipeline.build_silver_frame directly on the same inputs -- steer_silver_prices
     is proven to be a thin wrapper, not an independent implementation."""
-    from dagster_quickstart.steer.discovery import pairs_from_availability_report
-    from dagster_quickstart.steer.pipeline import build_silver_frame
+    from dagster_quickstart.steer.source.discovery import pairs_from_availability_report
+    from dagster_quickstart.steer.source.features import build_silver_frame
 
     result = materialize(
         [steer_data_availability, steer_silver_prices],

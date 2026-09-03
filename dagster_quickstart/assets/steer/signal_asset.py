@@ -21,10 +21,10 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
-from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate
-from dagster_quickstart.steer.schemas import STEER_SIGNALS_SCHEMA
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerEstimate
+from dagster_quickstart.steer.analytics.results import STEER_SIGNALS_SCHEMA
+from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 CHECK_NAME = "validate_steer_signals"
 
@@ -49,7 +49,7 @@ def steer_signal(
     steer_cointegration: pd.DataFrame,
 ):
     """BUY/SELL/NONE for every pair, from steer_estimate + steer_cointegration -- see steer.signals.generate_signal."""
-    from dagster_quickstart.steer.signals import generate_signal
+    from dagster_quickstart.steer.analytics.estimation import generate_signal
 
     universe = context.partition_key
 

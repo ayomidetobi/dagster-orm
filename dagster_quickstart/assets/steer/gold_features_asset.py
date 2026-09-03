@@ -20,8 +20,8 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
-from dagster_quickstart.steer.schemas import steer_features_schema
+from dagster_quickstart.steer.analytics.results import steer_features_schema
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 CHECK_NAME = "validate_steer_features"
 
@@ -46,7 +46,7 @@ def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataF
     logged_rate_threshold/logged_rate_vol_window_days (from StrategyConfig
     -- never hardcoded here), once per pair present in steer_silver_prices.
     """
-    from dagster_quickstart.steer.features import build_steer_features
+    from dagster_quickstart.steer.source.features import build_steer_features
 
     if steer_silver_prices.empty:
         yield AssetCheckResult(

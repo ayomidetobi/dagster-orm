@@ -1,18 +1,18 @@
-"""Steer/SteerResults: a model-object facade over the existing STEER pipeline.
+"""Steer/SteerPanel: a model-object facade over the existing STEER pipeline.
 
 Pure Python -- no Dagster -- callable from a script or notebook the same
 way as from an asset. `Steer.fit()` is a thin orchestration layer over
 functions that already exist and are already exercised by the asset graph
-(assets/steer/*.py): steer.discovery.discover_pairs/build_availability_report,
-steer.features.fetch_raw_driver_frame/build_steer_features,
-steer.estimation.sign_check_and_reestimate/cointegration_test,
-steer.signals.generate_signal, steer.results.build_steer_result. It does
+(assets/steer/*.py): steer.source.discovery.discover_pairs/build_availability_report,
+steer.source.features.fetch_raw_driver_frame/build_steer_features,
+steer.analytics.estimation.sign_check_and_reestimate/cointegration_test/generate_signal,
+steer.analytics.results.build_steer_result. It does
 not reimplement any of them -- same numbers as the asset pipeline, for the
 same inputs, by construction (see tests/test_steer_model.py's direct
 comparison against a materialized asset graph).
 
-SteerResult (steer/results.py) already is the right object for one pair at
-one as_of and is not modified here. SteerResults is the plural container
+SteerResult (steer/analytics/results.py) already is the right object for one pair at
+one as_of and is not modified here. SteerPanel is the plural container
 its own module docstring describes building manually
 (`pd.DataFrame([r.cross_section() for r in results])`) -- this module
 formalizes that into `get_cross_section()`, plus a few other views
@@ -20,7 +20,7 @@ formalizes that into `get_cross_section()`, plus a few other views
 SteerResult objects.
 
 Look-ahead safety: fit(lookback_days=N) re-fits EVERY one of the N dates
-independently via steer.estimation.window_slice (`timestamp <= as_of`),
+independently via window_slice (`timestamp <= as_of`, steer/analytics/estimation.py),
 never derives a "historical" z-score by re-scaling a single fit's
 residuals. See test_lookback_dates_are_look_ahead_safe.
 """
@@ -32,6 +32,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 import pandas as pd
 
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerSignal
+from dagster_quickstart.steer.analytics.results import SteerResult
 from dagster_quickstart.steer.config import StrategyConfig
 from dagster_quickstart.steer.constants import (
     COINTEGRATION_MODE_EACH,
@@ -39,9 +41,6 @@ from dagster_quickstart.steer.constants import (
     UNIVERSE_CHN,
 )
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.estimation import CointegrationResult
-from dagster_quickstart.steer.results import SteerResult
-from dagster_quickstart.steer.signals import SteerSignal
 
 CointegrationMode = Literal["latest", "each"]
 
@@ -62,19 +61,19 @@ def _insufficient_data_cointegration(as_of: pd.Timestamp) -> CointegrationResult
 
 
 @dataclass(frozen=True)
-class SteerResults:
+class SteerPanel:
     """Every SteerResult fitted by one Steer.fit() call -- {as_of: {series_code: SteerResult}}.
 
     signals_by_date holds the SteerSignal (BUY/SELL/NONE + reason) generated
     alongside each SteerResult -- SteerResult itself only keeps the
     resulting target/stop-loss *levels* (upper/lower), not the signal
     enum/reason text, so signals() needs this parallel dict. It's only
-    populated by fit() -- SteerResults.load() (from storage) can rebuild
+    populated by fit() -- SteerPanel.load() (from storage) can rebuild
     every SteerResult but not the signal text, since that isn't part of
     what SteerResult.save() persists; signals() raises a clear error on a
-    loaded-not-fitted SteerResults rather than silently returning nothing.
+    loaded-not-fitted SteerPanel rather than silently returning nothing.
 
-    blocked is series_code -> reason, for pairs steer.discovery reported
+    blocked is series_code -> reason, for pairs steer.source.discovery reported
     blocked at fit() time (never fetched, let alone fitted).
     """
 
@@ -92,7 +91,7 @@ class SteerResults:
     def _resolve_as_of(self, as_of: Union[int, str, pd.Timestamp, None]) -> pd.Timestamp:
         dates = self.as_of_dates
         if not dates:
-            raise LookupError(f"No fitted dates in this SteerResults ({self.universe}).")
+            raise LookupError(f"No fitted dates in this SteerPanel ({self.universe}).")
         if as_of is None:
             return dates[-1]
         if isinstance(as_of, int):
@@ -135,9 +134,9 @@ class SteerResults:
         resolved = self._resolve_as_of(as_of)
         if resolved not in self.signals_by_date:
             raise LookupError(
-                "No signal data for this SteerResults -- SteerResults.load() reconstructs "
+                "No signal data for this SteerPanel -- SteerPanel.load() reconstructs "
                 "SteerResult objects but not the signal enum/reason text (not part of what "
-                "SteerResult persists); signals() only works on a freshly fit() SteerResults."
+                "SteerResult persists); signals() only works on a freshly fit() SteerPanel."
             )
         rows = [
             {
@@ -212,7 +211,7 @@ class SteerResults:
         dates = self.as_of_dates
         if len(dates) <= 1:
             raise ValueError(
-                "plot_z_history needs more than one fitted date, but this SteerResults has "
+                "plot_z_history needs more than one fitted date, but this SteerPanel has "
                 f"{len(dates)} -- pass a larger lookback_days to Steer.fit() (it was effectively "
                 "1)."
             )
@@ -251,14 +250,14 @@ class SteerResults:
         data_api: Any,
         universe: str,
         as_of: Optional[pd.Timestamp] = None,
-    ) -> "SteerResults":
-        """Rebuild a SteerResults from storage -- one SteerResult.load() per series_code found.
+    ) -> "SteerPanel":
+        """Rebuild a SteerPanel from storage -- one SteerResult.load() per series_code found.
 
-        signals_by_date/blocked come back empty (see SteerResults' own
+        signals_by_date/blocked come back empty (see SteerPanel's own
         docstring for signals_by_date) -- only what SteerResult.save()
         actually persists round-trips.
         """
-        from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
+        from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
 
         summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=universe).frame
         if summary.empty:
@@ -313,7 +312,7 @@ class Steer:
         lookback_days: int = 1,
         cointegration: CointegrationMode = COINTEGRATION_MODE_LATEST,
         pairs: Optional[Sequence[str]] = None,
-    ) -> SteerResults:
+    ) -> SteerPanel:
         """Fit every (non-blocked) pair in this universe over the trailing `lookback_days`.
 
         as_of=None means the latest date available in the fetched data (not
@@ -321,19 +320,19 @@ class Steer:
         that has any data at all.
 
         lookback_days=N fits N business days ending at as_of, EACH on its
-        own rolling window via steer.estimation.window_slice (`timestamp
-        <= as_of`) -- never a single fit's residuals rescaled across dates,
-        which would be look-ahead (day t-5's z would depend on
+        own rolling window via window_slice (`timestamp
+        <= as_of`, steer/analytics/estimation.py) -- never a single fit's residuals rescaled
+        across dates, which would be look-ahead (day t-5's z would depend on
         coefficients estimated using data through day t).
 
-        pairs=None fits every pair steer.discovery doesn't report blocked;
+        pairs=None fits every pair steer.source.discovery doesn't report blocked;
         pass a subset of series_codes to fit fewer. A blocked pair is
-        skipped entirely (never fetched) -- see SteerResults.blocked for
-        why, in the same wording steer.pipeline.build_silver_frame uses.
+        skipped entirely (never fetched) -- see SteerPanel.blocked for
+        why, in the same wording steer.source.features.build_silver_frame uses.
 
         cointegration:
-          - "latest" (default): the Engle-Granger test (steer.estimation.
-            cointegration_test, itself an ADF call -- regression="c",
+          - "latest" (default): the Engle-Granger test (cointegration_test,
+            steer/analytics/estimation.py, itself an ADF call -- regression="c",
             autolag="BIC") runs ONCE per pair, at the final as_of in the
             lookback, and that verdict is reused for every earlier date's
             signal. Cheap: ADF dominates cost (~30x one OLS fit on a
@@ -342,35 +341,38 @@ class Steer:
             interactive use.
           - "each": the test reruns at every date. Required for anything
             backtest-like -- the cointegration gate is part of the signal
-            rule itself (steer.signals.generate_signal requires BOTH
+            rule itself (generate_signal requires BOTH
             |z| >= z_threshold AND cointegration passed), so freezing the
             verdict at "latest" changes which historical days would have
             traded, silently. Costs one ADF call per pair per date instead
             of one per pair total.
         """
+        from dagster_quickstart.steer.analytics.estimation import (
+            cointegration_test,
+            generate_signal,
+            sign_check_and_reestimate,
+        )
+        from dagster_quickstart.steer.analytics.results import build_steer_result
         from dagster_quickstart.steer.constants import IS_LOGGED_COLUMN, RATE_COLUMN
-        from dagster_quickstart.steer.discovery import (
+        from dagster_quickstart.steer.source.discovery import (
             build_availability_report,
             discover_pairs,
             pairs_from_availability_report,
         )
-        from dagster_quickstart.steer.estimation import cointegration_test, sign_check_and_reestimate
-        from dagster_quickstart.steer.features import (
+        from dagster_quickstart.steer.source.features import (
             DriverValues,
             build_steer_features,
+            conform_to_business_days,
             fetch_raw_driver_frame,
             required_series_codes,
             resolve_flows_cutover,
         )
-        from dagster_quickstart.steer.signals import generate_signal
-        from dagster_quickstart.steer.results import build_steer_result
-        from dagster_quickstart.steer.silver import conform_to_business_days
 
         if cointegration not in (COINTEGRATION_MODE_LATEST, COINTEGRATION_MODE_EACH):
             raise ValueError(f'cointegration must be "latest" or "each", got {cointegration!r}')
 
         config = self.strategy_config
-        empty = SteerResults(universe=self.universe, z_threshold=config.z_threshold)
+        empty = SteerPanel(universe=self.universe, z_threshold=config.z_threshold)
 
         pair_metadata = discover_pairs(self.universe, self._data_api)
         if pair_metadata.empty:
@@ -391,7 +393,7 @@ class Steer:
                 available.append(availability)
 
         if not available:
-            return SteerResults(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerPanel(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
 
         all_series_codes = required_series_codes(
             ((a.series_code, a) for a in available), config
@@ -428,7 +430,7 @@ class Steer:
             pair_features[availability.series_code] = features
 
         if not pair_features:
-            return SteerResults(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerPanel(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
 
         resolved_as_of = (
             pd.Timestamp(as_of)
@@ -530,7 +532,7 @@ class Steer:
                 results[fit_date] = date_results
                 signals_by_date[fit_date] = date_signals
 
-        return SteerResults(
+        return SteerPanel(
             universe=self.universe,
             z_threshold=config.z_threshold,
             results=results,

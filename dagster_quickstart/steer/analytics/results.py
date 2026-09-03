@@ -1,17 +1,19 @@
-"""SteerResult: one consolidated, retrievable artifact per currency pair.
+"""SteerResult: one consolidated, retrievable artifact per currency pair, and the pandera
+schemas for the three STEER table boundaries (features, estimates, signals) it and its
+upstream feature table are validated against.
 
 Bundles a pair's spot rate, this universe's driver series (whatever
 StrategyConfig.drivers holds for it -- 5 for G10/EM, 7 for CHN), the
 regression's design/response/fitted/residual, and its statistical
 diagnostics (coefficients, standard errors, p-values, z-score,
 upper_bound/lower_bound) into one object per pair -- everything already
-computed elsewhere in steer/ (features.py, estimation.py, signals.py) via
+computed elsewhere in steer/ (source/features.py, analytics/estimation.py) via
 build_steer_result(), just packaged for easy per-pair retrieval
 (SteerResult.save()/.load()), cross-pair comparison (cross_section()), and
 plotting (plot()).
 
 upper_bound/lower_bound = fitted +/- z_threshold * residual_std -- the
-SAME boundary steer.signals.generate_signal uses to decide whether a
+SAME boundary generate_signal (steer/analytics/estimation.py) uses to decide whether a
 BUY/SELL fires (|z_score| >= z_threshold), matching the reference
 production model exactly (Figs 16/17 of the published methodology shade
 this exact band). This used to be
@@ -31,11 +33,11 @@ demand.
 Every time-series field (spot, every entry of `drivers`, response, fitted,
 residual, upper_bound, lower_bound) shares the identical DatetimeIndex --
 the trailing regression window ending at `as_of` (see
-steer.estimation.window_slice) -- so they concatenate/plot directly with
+window_slice, steer/analytics/estimation.py) -- so they concatenate/plot directly with
 no reindexing.
 
 build_steer_result() takes an already-computed SteerEstimate (from
-steer.estimation.sign_check_and_reestimate) rather than independently
+sign_check_and_reestimate) rather than independently
 re-fitting and re-deriving z_score/dropped_variables itself -- the previous
 version re-fit with *every* driver and no sign check, so its z_score could
 silently disagree with the "real" SteerEstimate.z_score whenever a driver
@@ -47,41 +49,52 @@ get the *full* windowed design/response/fitted/residual series plus
 per-coefficient p-values/standard errors and the fitted +/- z_threshold *
 residual_std trigger band that SteerEstimate doesn't expose (only its
 latest-day z_score) -- residual_std uses ddof=0, matching estimate_steer's
-z_score calculation exactly (see steer.estimation's module docstring).
+z_score calculation exactly (see steer/analytics/estimation.py's module docstring).
 
 markov_state is a reserved field, always None today -- no Markov
 regime-switching model exists anywhere in this codebase; it's a
 placeholder for a future addition, not a fabricated value.
 
-Persisted via DataAPI.write_table()/.read_table() (rewrite/data_api) into 2 DuckLake gold
-tables -- gold.steer_results (long-form, one row per series_code/as_of/date, the time-series
-fields) and gold.steer_result_summary (one row per series_code/as_of, the scalar/cross-sectional
-fields) -- the same mechanism gold.steer_estimates/gold.steer_signals already use, and the same
-DuckLake connection the rest of a run's DataAPI calls share (no second attach). DuckLake itself
-is Parquet-backed on disk (S3), so this is real Parquet storage under the hood, not a bespoke
-file format. Both tables are append-only, like the rest of this catalog: a re-run for the same
-pair/as_of writes a new snapshot rather than overwriting -- load() returns the most recent one by
-default. Different universes writing different driver sets to the same table is exactly what
-write_table()'s column-widening handles -- see
-rewrite.data_api.repositories.generic_table_repository.GenericTableRepository.write()'s docstring.
+SteerResult.save()/.load() are thin delegates onto steer.orm.save_result()/.load_result() --
+see steer/orm.py's module docstring for why the import has to live inside the method body
+rather than at module level (this module sits below orm.py in steer/'s import direction, so a
+module-level import here would invert that). Persisted into 2 DuckLake gold tables --
+gold.steer_results (long-form, one row per series_code/as_of/date, the time-series fields) and
+gold.steer_result_summary (one row per series_code/as_of, the scalar/cross-sectional fields) --
+the same mechanism gold.steer_estimates/gold.steer_signals already use, and the same DuckLake
+connection the rest of a run's DataAPI calls share (no second attach). Both tables are
+append-only: a re-run for the same pair/as_of writes a new snapshot rather than overwriting --
+load() returns the most recent one by default. Different universes writing different driver
+sets to the same table is exactly what DataAPI.write_table()'s column-widening handles -- see
+that method's docstring (GenericTableRepository.write(), in the DuckLake data-access package).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import pandera as pa
 import statsmodels.api as sm
 
-from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate, window_slice
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, STEER_RESULTS_TABLE
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerEstimate, window_slice
+from dagster_quickstart.steer.constants import (
+    DRIVER_NAMES,
+    IS_LOGGED_COLUMN,
+    RATE_COLUMN,
+    REALIZED_VOLATILITY_COLUMN,
+    SIGNAL_BUY,
+    SIGNAL_NONE,
+    SIGNAL_SELL,
+    UNIVERSES,
+)
 
 #: to_frame()'s fixed (non-driver) time-series columns -- everything else
-#: in a loaded gold.steer_results row is a driver series (see load()).
+#: in a loaded gold.steer_results row is a driver series (see steer.orm.load_result()).
 #: fair_value is included here (not a dataclass field -- it's derived from
-#: fitted/is_logged via the fair_value property) purely so load()'s driver
+#: fitted/is_logged via the fair_value property) purely so load_result()'s driver
 #: inference doesn't mistake it for a driver column.
 _FIXED_TIMESERIES_COLUMNS = (
     "spot",
@@ -107,7 +120,7 @@ class SteerResult:
     production model's actual trading-trigger boundary (see module
     docstring) -- they differ only in shape: upper_bound/lower_bound are
     the full windowed *series* (the band drawn on a chart), while
-    upper/lower are a single scalar *level* (steer.signals.generate_signal's
+    upper/lower are a single scalar *level* (generate_signal's
     Signal.target/.stop_loss for the specific signal actually generated, if
     passed to build_steer_result). upper/lower are optional: a pair that
     hasn't had a signal generated yet (e.g. cointegration failed) still
@@ -246,7 +259,7 @@ class SteerResult:
         target/stop-loss (upper/lower) are colored by role -- target always
         green, stop-loss always red -- never by which one happens to be the
         numerically larger price. For a SELL signal the target sits BELOW
-        the current rate and the stop ABOVE it (steer.signals.generate_signal);
+        the current rate and the stop ABOVE it (generate_signal);
         that's the correct trade geometry, not a rendering bug -- coloring
         by numeric position instead of role would be the actual bug (it'd
         mislabel the stop as the target for every SELL).
@@ -279,115 +292,21 @@ class SteerResult:
         return ax
 
     def save(self, data_api: Any) -> None:
-        """Write this result via data_api.write_table() -- see module docstring.
+        """Thin delegate to steer.orm.save_result() -- see steer/orm.py's module docstring for
+        why the import has to be inside the method body rather than at module level."""
+        from dagster_quickstart.steer.orm import save_result
 
-        Writes to gold.steer_results (the time-series fields, via
-        to_frame()) and gold.steer_result_summary (the scalar fields, via
-        cross_section()) -- both keyed by series_code/universe/as_of.
-        """
-        timeseries = self.to_frame().copy()
-        timeseries.index.name = "date"
-        timeseries = timeseries.reset_index()
-        timeseries.insert(0, "as_of", self.as_of)
-        timeseries.insert(0, "universe", self.universe)
-        timeseries.insert(0, "series_code", self.series_code)
-        data_api.write_table(GOLD_SCHEMA, STEER_RESULTS_TABLE, timeseries)
-
-        summary = pd.DataFrame([self.cross_section()])
-        data_api.write_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, summary)
+        save_result(self, data_api)
 
     @classmethod
     def load(
         cls, data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None
     ) -> "SteerResult":
-        """Load one pair's SteerResult back via data_api.read_table() -- see save()/module docstring.
+        """Thin delegate to steer.orm.load_result() -- see save()'s docstring for why the
+        import is inside the method body."""
+        from dagster_quickstart.steer.orm import load_result
 
-        Both tables are append-only snapshots -- without `as_of`, the most
-        recent snapshot for this series_code is returned; pass `as_of` to
-        load a specific historical one. Raises LookupError if no snapshot
-        matches. Driver columns are inferred as "everything in
-        gold.steer_results that isn't spot/response/fitted/residual/
-        upper_bound/lower_bound/date/as_of/universe/series_code" -- there's
-        no fixed driver-name list to check against any more (see the
-        module docstring).
-        """
-        summary = data_api.read_table(
-            GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, series_code=series_code
-        ).frame
-        if summary.empty:
-            raise LookupError(f"No SteerResult found in DuckLake for {series_code!r}.")
-        summary["as_of"] = pd.to_datetime(summary["as_of"])
-        if as_of is not None:
-            summary = summary[summary["as_of"] == pd.Timestamp(as_of)]
-            if summary.empty:
-                raise LookupError(f"No SteerResult found for {series_code!r} as of {as_of}.")
-        row = summary.sort_values("as_of").iloc[-1]
-        row_as_of = row["as_of"]
-
-        timeseries = data_api.read_table(
-            GOLD_SCHEMA, STEER_RESULTS_TABLE, series_code=series_code
-        ).frame
-        timeseries["as_of"] = pd.to_datetime(timeseries["as_of"])
-        timeseries = timeseries[timeseries["as_of"] == row_as_of].copy()
-        timeseries["date"] = pd.to_datetime(timeseries["date"])
-        timeseries = timeseries.set_index("date").sort_index()
-
-        driver_names = [
-            column
-            for column in timeseries.columns
-            if column not in _FIXED_TIMESERIES_COLUMNS
-            and column not in ("as_of", "universe", "series_code")
-            # A column entirely NaN for this pair is padding from another
-            # universe's wider driver set sharing this physical table (see
-            # GenericTableRepository.write()'s column widening), not one of
-            # this pair's own drivers.
-            and not timeseries[column].isna().all()
-        ]
-        drivers = {name: timeseries[name] for name in driver_names}
-
-        def _prefixed(prefix: str) -> pd.Series:
-            # pd.notna(v) drops padding from another universe's wider
-            # driver set sharing this physical table (see the driver_names
-            # comment above) -- not a real coefficient/std-error/p-value
-            # for this pair.
-            return pd.Series(
-                {
-                    str(k)[len(prefix) :]: v
-                    for k, v in row.items()
-                    if str(k).startswith(prefix) and pd.notna(v)
-                }
-            )
-
-        def _optional_float(value: object) -> Optional[float]:
-            return float(value) if pd.notna(value) else None  # type: ignore[call-overload,arg-type]
-
-        dropped = row.get("dropped_variables")
-        dropped_variables = tuple(dropped.split(",")) if isinstance(dropped, str) and dropped else ()
-
-        return cls(
-            series_code=series_code,
-            universe=row["universe"],
-            as_of=row_as_of,
-            is_logged=bool(row["is_logged"]),
-            spot=timeseries["spot"],
-            drivers=drivers,
-            response=timeseries["response"],
-            fitted=timeseries["fitted"],
-            residual=timeseries["residual"],
-            upper_bound=timeseries["upper_bound"],
-            lower_bound=timeseries["lower_bound"],
-            coefficient=_prefixed("coefficient_"),
-            standard_error=_prefixed("standard_error_"),
-            p_values=_prefixed("p_value_"),
-            z_score=float(row["z_score"]),
-            dropped_variables=dropped_variables,
-            cointegration_passed=(
-                bool(row["cointegration_passed"]) if pd.notna(row.get("cointegration_passed")) else None
-            ),
-            upper=_optional_float(row.get("upper")),
-            lower=_optional_float(row.get("lower")),
-            markov_state=row["markov_state"] if pd.notna(row.get("markov_state")) else None,
-        )
+        return load_result(data_api, series_code, as_of=as_of)
 
 
 def build_steer_result(
@@ -407,7 +326,7 @@ def build_steer_result(
 
     `drivers` has this pair's universe's driver columns (StrategyConfig.drivers
     -- 5 for G10/EM, 7 for CHN); `estimate` is
-    steer.estimation.sign_check_and_reestimate's result for the identical
+    sign_check_and_reestimate's result for the identical
     rate/drivers/as_of/window_months -- see the module docstring for why
     this takes the estimate as input rather than independently re-fitting:
     z_score/dropped_variables now always agree with it by construction.
@@ -421,11 +340,11 @@ def build_steer_result(
     module docstring). `z_threshold` should come from this pair's
     StrategyConfig.z_threshold (default 1.5 matches StrategyConfig's own
     default) so the shaded band always matches whatever threshold
-    steer.signals.generate_signal actually used to decide BUY/SELL/NONE.
+    generate_signal actually used to decide BUY/SELL/NONE.
 
-    cointegration (steer.estimation.cointegration_test's result for this
+    cointegration (cointegration_test's result for this
     pair/as_of, if available) becomes cointegration_passed.
-    signal_target/signal_stop_loss (from steer.signals.generate_signal's
+    signal_target/signal_stop_loss (from generate_signal's
     Signal.target/.stop_loss, if a signal was already generated for this
     pair) become upper/lower; pass neither to leave them None.
     """
@@ -447,7 +366,7 @@ def build_steer_result(
     fitted = model.fittedvalues
     residual = model.resid
     # ddof=0 -- matches estimate_steer's residual_std/z_score calculation
-    # exactly (see steer.estimation's module docstring), so this band and
+    # exactly (see steer/analytics/estimation.py's module docstring), so this band and
     # SteerEstimate.z_score agree on what "one residual_std" means.
     residual_std = float(residual.std(ddof=0))
 
@@ -475,3 +394,101 @@ def build_steer_result(
         lower=signal_stop_loss,
         markov_state=None,
     )
+
+
+#: Plausible bounds for an FX spot rate -- wide enough to cover every G10/EM
+#: pair (from ~0.001 JPY-style quote conventions up to ~2000 for some EM
+#: pairs quoted in local-currency-per-USD) without being a no-op check.
+_RATE_MIN, _RATE_MAX = 1e-4, 1e5
+
+#: A coefficient/z-score/fitted-value this large means something upstream
+#: broke (bad units, a divide-by-near-zero) -- not a real market regime.
+_SANITY_BOUND = 1e6
+
+
+def _finite(series) -> bool:
+    return bool(np.isfinite(series.dropna()).all())
+
+
+def steer_features_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFrameSchema:
+    """Pandera schema for steer_features, for a specific universe's driver set (5 for G10/EM, 7 for CHN).
+
+    A module-level constant can't do this -- CHN's steer_features has 2
+    columns (offshore_spread, flows) a schema built from the fixed 5
+    DRIVER_NAMES would never validate (or would silently ignore, since
+    strict=False). Build one from StrategyConfig.drivers per universe
+    instead of importing a single shared schema.
+    """
+    return pa.DataFrameSchema(
+        columns={
+            RATE_COLUMN: pa.Column(
+                float, nullable=False, checks=[pa.Check.in_range(_RATE_MIN, _RATE_MAX)]
+            ),
+            **{
+                driver: pa.Column(
+                    float,
+                    nullable=True,
+                    checks=[pa.Check(_finite, error=f"{driver} contains a non-finite value")],
+                )
+                for driver in drivers
+            },
+            REALIZED_VOLATILITY_COLUMN: pa.Column(
+                float, nullable=True, checks=[pa.Check.ge(0), pa.Check.le(1.0)]
+            ),
+            IS_LOGGED_COLUMN: pa.Column(bool, nullable=False),
+        },
+        index=pa.Index(pa.DateTime, unique=True),
+        coerce=True,
+        strict=False,
+    )
+
+
+def steer_estimates_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFrameSchema:
+    """Pandera schema for gold.steer_estimates, for a specific universe's driver set -- see steer_features_schema."""
+    return pa.DataFrameSchema(
+        columns={
+            "date": pa.Column(pa.DateTime, nullable=False),
+            "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
+            "series_code": pa.Column(str, nullable=False),
+            "is_logged": pa.Column(bool, nullable=False),
+            "const_coef": pa.Column(
+                float, nullable=True, checks=pa.Check.in_range(-_SANITY_BOUND, _SANITY_BOUND)
+            ),
+            **{
+                f"{driver}_coef": pa.Column(
+                    float, nullable=True, checks=pa.Check.in_range(-_SANITY_BOUND, _SANITY_BOUND)
+                )
+                for driver in drivers
+            },
+            "fitted_value": pa.Column(float, nullable=False),
+            "actual_value": pa.Column(float, nullable=False),
+            "z_score": pa.Column(float, nullable=False, checks=pa.Check.in_range(-100, 100)),
+            "r_squared": pa.Column(float, nullable=False, checks=pa.Check.in_range(0.0, 1.0001)),
+            "n_obs": pa.Column(int, nullable=False, checks=pa.Check.gt(0)),
+            "cointegration_passed": pa.Column(bool, nullable=False),
+            "sign_dropped": pa.Column(bool, nullable=False),
+            "dropped_variables": pa.Column(str, nullable=True),
+        },
+        coerce=True,
+        strict=False,
+    )
+
+
+STEER_SIGNALS_SCHEMA = pa.DataFrameSchema(
+    columns={
+        "date": pa.Column(pa.DateTime, nullable=False),
+        "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
+        "series_code": pa.Column(str, nullable=False),
+        "signal": pa.Column(
+            str, nullable=False, checks=pa.Check.isin((SIGNAL_BUY, SIGNAL_SELL, SIGNAL_NONE))
+        ),
+        "entry_z_score": pa.Column(float, nullable=False, checks=pa.Check.in_range(-100, 100)),
+        "target": pa.Column(float, nullable=True, checks=pa.Check.in_range(_RATE_MIN, _RATE_MAX)),
+        "stop_loss": pa.Column(
+            float, nullable=True, checks=pa.Check.in_range(_RATE_MIN, _RATE_MAX)
+        ),
+        "reason": pa.Column(str, nullable=False),
+    },
+    coerce=True,
+    strict=False,
+)

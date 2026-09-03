@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.discovery import PairAvailability
-from dagster_quickstart.steer.features import (
+from dagster_quickstart.steer.source.discovery import PairAvailability
+from dagster_quickstart.steer.source.features import (
     DriverValues,
     build_chn_flows,
     build_chn_offshore_spread,
@@ -19,7 +19,7 @@ from dagster_quickstart.steer.features import (
     resolve_flows_cutover,
     should_use_logged_rate,
 )
-from dagster_quickstart.steer.silver import conform_to_business_days
+from dagster_quickstart.steer.source.features import conform_to_business_days
 
 _CHN_DRIVERS = DRIVER_NAMES + ("offshore_spread", "flows")
 

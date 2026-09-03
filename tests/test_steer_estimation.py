@@ -23,13 +23,13 @@ import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.estimation import (
+from dagster_quickstart.steer.analytics.estimation import (
     cointegration_test,
     engle_granger_cointegration_test,
     estimate_steer,
     sign_check_and_reestimate,
 )
-from dagster_quickstart.steer.results import build_steer_result
+from dagster_quickstart.steer.analytics.results import build_steer_result
 
 
 @pytest.fixture

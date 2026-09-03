@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
-from dagster_quickstart.steer.estimation import sign_check_and_reestimate
-from dagster_quickstart.steer.results import SteerResult, build_steer_result
+from dagster_quickstart.steer.analytics.estimation import sign_check_and_reestimate
+from dagster_quickstart.steer.analytics.results import SteerResult, build_steer_result
 
 
 class _EmptyMetadataStorage:
@@ -389,7 +389,7 @@ def test_upper_lower_set_from_signal_target_stop(cointegrated_system):
 
 
 def test_cointegration_passed_recorded_from_the_passed_in_result(cointegrated_system):
-    from dagster_quickstart.steer.estimation import CointegrationResult
+    from dagster_quickstart.steer.analytics.estimation import CointegrationResult
 
     cointegration = CointegrationResult(
         as_of=pd.Timestamp.now(),

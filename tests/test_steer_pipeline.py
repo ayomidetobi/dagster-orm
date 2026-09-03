@@ -12,8 +12,8 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.discovery import PairAvailability
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN, build_silver_frame
+from dagster_quickstart.steer.source.discovery import PairAvailability
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN, build_silver_frame
 
 
 class _StubDataAPI:

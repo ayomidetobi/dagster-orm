@@ -18,7 +18,7 @@ import pytest
 
 from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
-from dagster_quickstart.steer.discovery import (
+from dagster_quickstart.steer.source.discovery import (
     RoleResolver,
     assess_pair_availability,
     build_availability_report,

@@ -1,9 +1,9 @@
-"""Rolling-window OLS STEER estimation and Engle-Granger cointegration testing.
+"""Rolling-window OLS STEER estimation, Engle-Granger cointegration testing, and BUY/SELL/NONE
+signal generation. Pure functions only -- no Dagster, no DuckLake -- so this whole module is
+directly unit testable against synthetic series (see tests/test_steer_estimation.py,
+tests/test_steer_signals.py).
 
-Pure functions only -- no Dagster, no DuckLake -- so they're directly unit
-testable against synthetic series (see tests/test_steer_estimation.py).
-
-Look-ahead safety: every function here takes `as_of` and only ever touches
+Look-ahead safety: every estimation function here takes `as_of` and only ever touches
 rows with timestamp <= as_of (see `window_slice`); nothing past `as_of` is
 read, so calling this once per historical day and once "live" today
 produces the same result for that day.
@@ -38,12 +38,23 @@ engle_granger_cointegration_test() stays a separate, reusable bivariate
 two-series test (see tests/test_steer_estimation.py) -- cointegration_test()
 no longer routes through it, since routing a multivariate fit through a
 bivariate collapse was exactly the no-op step above.
+
+Signal sign convention (stated explicitly since it's a self-consistent choice, not
+a law of physics): a positive z-score means the actual rate is trading
+*above* its STEER fair value (rich) -- mean-reversion says SELL. A negative
+z-score means the rate is *below* fair value (cheap) -- BUY. This matches
+the residual convention in estimate_steer (z = (actual - fitted) / residual_std).
+
+Target/stop-loss convention: target is the fitted STEER value itself (the
+level the signal expects the rate to revert to). reward = |current -
+target|; risk = reward / stop_reward_ratio; stop_loss is `risk` further
+from current, in the direction that would prove the trade wrong.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Dict, Mapping, Tuple
+from typing import Dict, Literal, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -54,6 +65,9 @@ from dagster_quickstart.steer.constants import (
     ADF_AUTOLAG_CRITERION,
     ADF_CRITICAL_VALUE_LEVELS,
     ADF_REGRESSION_TYPE,
+    SIGNAL_BUY,
+    SIGNAL_NONE,
+    SIGNAL_SELL,
 )
 from dagster_quickstart.steer.errors import InsufficientDataError
 
@@ -122,7 +136,7 @@ def estimate_steer(
     """Rolling-window OLS of `rate` on `drivers`, evaluated as of `as_of`.
 
     is_logged decides whether the regression's dependent variable is
-    log(rate) or the raw rate level -- see steer.features.should_use_logged_rate
+    log(rate) or the raw rate level -- see steer.source.features.should_use_logged_rate
     for how that's decided per pair/day; this function just applies whatever
     it's told. Uses only the trailing `window_months` of history up to and
     including `as_of` (see window_slice) -- never anything after `as_of`.
@@ -150,7 +164,7 @@ def estimate_steer(
     residuals = model.resid
     # ddof=0 (population, not sample, std) -- matches the reference production
     # model; this feeds z_score directly, and the residual_std/ddof choice
-    # lands on the +/-1.5 threshold where signals fire (see steer.signals).
+    # lands on the +/-1.5 threshold where signals fire (see generate_signal below).
     residual_std = float(residuals.std(ddof=0))
 
     latest_actual = float(y.iloc[-1])
@@ -327,4 +341,71 @@ def cointegration_test(
             float(adf_result.critical_values[level]) for level in ADF_CRITICAL_VALUE_LEVELS
         ),
         n_obs=len(windowed),
+    )
+
+
+Signal = Literal["BUY", "SELL", "NONE"]
+
+
+@dataclass(frozen=True)
+class SteerSignal:
+    """One day's trading signal for one currency pair."""
+
+    as_of: pd.Timestamp
+    signal: Signal
+    entry_z_score: float
+    target: Optional[float]
+    stop_loss: Optional[float]
+    reason: str
+
+
+def generate_signal(
+    estimate: SteerEstimate,
+    cointegration: CointegrationResult,
+    *,
+    current_rate: float,
+    z_threshold: float,
+    stop_reward_ratio: float,
+) -> SteerSignal:
+    """BUY/SELL/NONE from an estimate + cointegration result.
+
+    NONE (no target/stop-loss) whenever cointegration fails OR |z-score| is
+    below z_threshold -- both conditions must hold for a real signal, per
+    the spec. `current_rate` is the live rate level (not log-transformed,
+    even when estimate.is_logged) -- this function does the log/level
+    conversion itself via estimate.fitted_value_level.
+    """
+    if not cointegration.passed:
+        return SteerSignal(
+            as_of=estimate.as_of,
+            signal=SIGNAL_NONE,
+            entry_z_score=estimate.z_score,
+            target=None,
+            stop_loss=None,
+            reason=f"cointegration failed (p={cointegration.p_value:.4f})",
+        )
+
+    if abs(estimate.z_score) < z_threshold:
+        return SteerSignal(
+            as_of=estimate.as_of,
+            signal=SIGNAL_NONE,
+            entry_z_score=estimate.z_score,
+            target=None,
+            stop_loss=None,
+            reason=f"|z|={abs(estimate.z_score):.2f} below threshold {z_threshold}",
+        )
+
+    target = estimate.fitted_value_level
+    direction: Signal = SIGNAL_SELL if estimate.z_score > 0 else SIGNAL_BUY
+    reward = abs(current_rate - target)
+    risk = reward / stop_reward_ratio
+    stop_loss = current_rate + risk if direction == "SELL" else current_rate - risk
+
+    return SteerSignal(
+        as_of=estimate.as_of,
+        signal=direction,
+        entry_z_score=estimate.z_score,
+        target=target,
+        stop_loss=stop_loss,
+        reason=f"|z|={abs(estimate.z_score):.2f} >= threshold {z_threshold}, cointegrated",
     )

@@ -26,10 +26,10 @@ from dagster import (
 from dagster_quickstart.assets.steer.config import StrategyRunConfig
 from dagster_quickstart.assets.steer.cointegration_asset import _resolve_as_of
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
+from dagster_quickstart.steer.analytics.results import steer_estimates_schema
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.schemas import steer_estimates_schema
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE
+from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_ESTIMATES_TABLE
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 CHECK_NAME = "validate_steer_estimates"
 
@@ -58,7 +58,7 @@ def steer_estimate(
     See the module docstring for why sign_check_and_reestimate's outcome
     is folded into this same row/asset rather than a separate one.
     """
-    from dagster_quickstart.steer.estimation import sign_check_and_reestimate
+    from dagster_quickstart.steer.analytics.estimation import sign_check_and_reestimate
 
     universe = context.partition_key
 

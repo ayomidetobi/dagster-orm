@@ -1,29 +1,24 @@
-#!/usr/bin/env python3
-"""Demo of the Steer/SteerResults model-object facade over the STEER pipeline.
+"""CLI entry point for the Steer/SteerPanel facade: `python -m dagster_quickstart.steer`.
 
-Zero-config: reads DATABASE_URL / S3_* from dagster_quickstart/.env (via
-python-decouple) and attaches the real Postgres+S3 DuckLake catalog, same
-as scripts/example_dataapi.py. Assumes the STEER metadata catalog has
-already been ingested (see assets/load_metaseries/asset.py).
+Zero-config: reads DATABASE_URL / S3_* from dagster_quickstart/.env (via python-decouple) and
+attaches the real Postgres+S3 DuckLake catalog, same as scripts/example_dataapi.py. Assumes the
+STEER metadata catalog has already been ingested (see assets/load_metaseries/asset.py).
 
 Usage:
-    python scripts/example_steer.py [--universe G10] [--lookback 5] [--outdir ./steer_plots]
+    python -m dagster_quickstart.steer [--universe G10] [--lookback 5] [--outdir ./steer_plots]
 """
+
+from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).parent.parent
-DAGSTER_QUICKSTART = REPO_ROOT / "dagster_quickstart"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(DAGSTER_QUICKSTART))
-
 import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend -- this script saves PNGs, never plt.show()
 
-from dagster_quickstart.steer.universes import UNIVERSES
+from dagster_quickstart.steer.config import UNIVERSES
 
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
@@ -49,7 +44,7 @@ def main() -> int:
 
     universe = UNIVERSES[args.universe]
     # universe.fit() builds its own zero-config DataAPI(live=False) under the hood (see
-    # steer/universes.py's default_data_api()) -- same DuckLake connection example_dataapi.py
+    # steer/config.py's default_data_api()) -- same DuckLake connection example_dataapi.py
     # wires up explicitly.
     results = universe.fit(lookback_days=args.lookback, cointegration="each")
 

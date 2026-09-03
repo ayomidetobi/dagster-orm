@@ -53,7 +53,7 @@ def steer_data_availability(context: AssetExecutionContext):
     means and why local_equity/rate-differential aren't substituted with a
     global proxy when missing.
     """
-    from dagster_quickstart.steer.discovery import build_availability_report, discover_pairs
+    from dagster_quickstart.steer.source.discovery import build_availability_report, discover_pairs
 
     universe = context.partition_key
     data_api = context.resources.rewrite_data_api.api

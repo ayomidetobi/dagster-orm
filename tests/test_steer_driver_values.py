@@ -15,8 +15,8 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.discovery import PairAvailability
-from dagster_quickstart.steer.features import (
+from dagster_quickstart.steer.source.discovery import PairAvailability
+from dagster_quickstart.steer.source.features import (
     DriverValues,
     fetch_raw_driver_frame,
     required_series_codes,

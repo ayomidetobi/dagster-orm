@@ -54,8 +54,8 @@ def steer_silver_prices(context: AssetExecutionContext, steer_data_availability:
     "stale" mean and why a pair is skipped rather than passed through
     partial.
     """
-    from dagster_quickstart.steer.discovery import pairs_from_availability_report
-    from dagster_quickstart.steer.pipeline import build_silver_frame
+    from dagster_quickstart.steer.source.discovery import pairs_from_availability_report
+    from dagster_quickstart.steer.source.features import build_silver_frame
 
     universe = context.partition_key
     data_api = context.resources.rewrite_data_api.api

@@ -1,4 +1,4 @@
-"""Tests for steer.universes: FXUniverse, FX_G10/FX_EM/FX_CHN, UNIVERSES, default_data_api().
+"""Tests for steer.config's FXUniverse, FX_G10/FX_EM/FX_CHN, UNIVERSES, default_data_api().
 
 Acceptance criterion 1 (FX_G10.fit() matches the explicit load_strategy_config +
 Steer.from_data_api path) is proven by wiring both through the identical FXUniverse instance
@@ -15,9 +15,8 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from dagster_quickstart.steer.config import DRIVER_NAMES
+from dagster_quickstart.steer.config import DRIVER_NAMES, FX_CHN, FX_EM, FX_G10, UNIVERSES
 from dagster_quickstart.steer.model import Steer
-from dagster_quickstart.steer.universes import FX_CHN, FX_EM, FX_G10, UNIVERSES
 from tests.test_steer_assets import (
     FakeRewriteDataAPIResource,
     _unblocked_g10_metadata,
@@ -84,15 +83,15 @@ def test_fit_matches_the_explicit_steer_from_data_api_path(
     assert fitted_via_universe.dropped_variables == fitted_via_explicit.dropped_variables
 
 
-def test_importing_universes_constructs_no_data_api(monkeypatch):
-    """Acceptance criterion 3: `import universes` must never open a Postgres/S3 connection."""
+def test_importing_config_constructs_no_data_api(monkeypatch):
+    """Acceptance criterion 3: `import steer.config` must never open a Postgres/S3 connection."""
 
     def _boom(self, *args, **kwargs):
         raise AssertionError("DataAPI must not be constructed at import time")
 
     monkeypatch.setattr("dagster_quickstart.rewrite.data_api.api.data_api.DataAPI.__init__", _boom)
 
-    sys.modules.pop("dagster_quickstart.steer.universes", None)
-    module = importlib.import_module("dagster_quickstart.steer.universes")
+    sys.modules.pop("dagster_quickstart.steer.config", None)
+    module = importlib.import_module("dagster_quickstart.steer.config")
 
     assert module.FX_G10.universe == "G10"

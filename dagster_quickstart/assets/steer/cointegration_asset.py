@@ -13,8 +13,8 @@ from dagster import AssetExecutionContext, MetadataValue, Output, asset
 
 from dagster_quickstart.assets.steer.config import StrategyRunConfig
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.errors import InsufficientDataError
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 
 def _resolve_as_of(run_config: StrategyRunConfig, features: pd.DataFrame) -> pd.Timestamp:
@@ -42,7 +42,7 @@ def steer_cointegration(
     crash) -- one pair's data gap doesn't affect any other pair in the same
     universe partition.
     """
-    from dagster_quickstart.steer.estimation import cointegration_test
+    from dagster_quickstart.steer.analytics.estimation import cointegration_test
 
     if steer_features.empty:
         yield Output(pd.DataFrame(), metadata={"pair_count": 0})

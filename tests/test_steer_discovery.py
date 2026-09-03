@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from dagster_quickstart.steer.discovery import (
+from dagster_quickstart.steer.source.discovery import (
     REQUIRED_ROLES,
     ROLE_FILTERS,
     PairAvailability,
