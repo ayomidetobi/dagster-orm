@@ -1,6 +1,6 @@
 # Rewrite Package
 
-This package is a side-by-side scaffold for the DuckLake rewrite.
+This package is the DuckLake-backed data API -- the `orm/` package it replaced has been removed.
 
 Goals:
 - keep the public API shape stable
@@ -18,4 +18,4 @@ Local setup:
 - call `rewrite.configure_logging()` during application startup
 - use `rewrite.create_container()` or `rewrite.create_data_api()` to build the rewrite stack
 
-The package is intentionally isolated from the current `orm/` implementation so we can migrate incrementally.
+Migration off `orm/` is complete; this package is the only data API in the codebase now.

@@ -10,6 +10,9 @@ from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI, RewriteSer
 from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
 from dagster_quickstart.rewrite.data_api.ingestion.ingestion_service import IngestionService
 from dagster_quickstart.rewrite.data_api.ingestion.writer import IngestionWriter
+from dagster_quickstart.rewrite.data_api.repositories.generic_table_repository import (
+    GenericTableRepository,
+)
 from dagster_quickstart.rewrite.data_api.repositories.metadata_repository import MetadataRepository
 from dagster_quickstart.rewrite.data_api.repositories.value_repository import ValueRepository
 from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
@@ -68,6 +71,11 @@ class RewriteContainer(containers.DeclarativeContainer):
         repository=value_business_repository,
     )
 
+    generic_table_repository = providers.Factory(
+        GenericTableRepository,
+        connection=duckdb_connection,
+    )
+
     vendor_service = providers.Factory(
         VendorService,
         clients=vendor_clients,
@@ -97,6 +105,7 @@ class RewriteContainer(containers.DeclarativeContainer):
         metadata=metadata_service,
         values=value_service,
         direct_fetch=direct_fetch_service,
+        tables=generic_table_repository,
         ingestion=file_ingestion_service,
     )
 

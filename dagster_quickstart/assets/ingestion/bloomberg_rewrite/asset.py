@@ -111,7 +111,7 @@ def ingest_bloomberg_values(context: AssetExecutionContext, config: BloombergVal
             "series_count": len(values_df.columns),
             "timestamp_count": len(values_df),
             "data_points_written": data_points_written,
-            "preview": MetadataValue.md(values_df.to_markdown()),
+            "preview": MetadataValue.md(values_df.head(10).to_markdown()),
             "series_codes_sample": MetadataValue.json(series_codes[:20]),
 
         }

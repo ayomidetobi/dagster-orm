@@ -1,7 +1,0 @@
-ops:
-  ingest_bloomberg_data_daily:
-    config:
-      mode: "daily"
-      force_refresh: false
-      start_date: null  # Yesterday (UTC) at run time
-      end_date: null  # Today (UTC) at run time

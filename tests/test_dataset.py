@@ -23,9 +23,9 @@ from dagster_quickstart.rewrite.data_api.services.value_service import ValueServ
 METADATA = pd.DataFrame(
     {
         "series_code": ["EURUSD", "GBPUSD", "USDJPY"],
-        "asset_class": ["FX", "FX", "FX"],
-        "product_type": ["Spot", "Spot", "Spot"],
-        "sub_asset_class": ["G10 Major", "G10 Major", "G10 Major"],
+        "asset_class": ["Currency", "Currency", "Currency"],
+        "sub_asset_class": ["Forex Spot", "Forex Spot", "Forex Spot"],
+        "market_development": ["G10", "G10", "G10"],
         "currency": ["EUR", "GBP", "JPY"],
     }
 )
@@ -82,7 +82,9 @@ class FakeValueStorage:
         frame = self._frame[self._frame["series_code"].isin(series_codes)]
         return frame.reset_index(drop=True)
 
-    def get_last_values(self, series_codes, *, ticker_source=None, latest_non_null=True, version=None, as_of=None):
+    def get_last_values(
+        self, series_codes, *, ticker_source=None, latest_non_null=True, version=None, as_of=None
+    ):
         frame = self._frame[self._frame["series_code"].isin(series_codes)]
         return frame.sort_values("timestamp").groupby("series_code", as_index=False).tail(1)
 
@@ -108,7 +110,9 @@ class FakeDirectFetch:
         self.calls: list[dict] = []
 
     def get_values(self, series_codes, ticker_source, **kwargs):
-        self.calls.append({"series_codes": list(series_codes), "ticker_source": ticker_source, **kwargs})
+        self.calls.append(
+            {"series_codes": list(series_codes), "ticker_source": ticker_source, **kwargs}
+        )
         return self.frame[self.frame["series_code"].isin(series_codes)].reset_index(drop=True)
 
 
@@ -116,7 +120,9 @@ class FakeDataAPI:
     """Just enough of DataAPI's surface for DatasetBase.build_queryset()."""
 
     def __init__(self, metadata_df=METADATA, values_df=VALUES, direct_fetch=None):
-        self.metadata_service = MetadataService(MetadataRepository(FakeMetadataStorage(metadata_df)))
+        self.metadata_service = MetadataService(
+            MetadataRepository(FakeMetadataStorage(metadata_df))
+        )
         self.value_service = ValueService(ValueRepository(FakeValueStorage(values_df)))
         self.direct_fetch = direct_fetch
 

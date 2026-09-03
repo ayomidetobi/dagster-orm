@@ -1,8 +1,0 @@
-ops:
-  ingest_bloomberg_data_backfill:
-    config:
-      mode: "backfill"
-      force_refresh: true
-      series_codes: []
-      start_date: "2025-12-01"
-      end_date: null  # Will default to current date
