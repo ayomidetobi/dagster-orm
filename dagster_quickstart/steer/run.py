@@ -18,6 +18,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend -- this script saves PNGs, never plt.show()
 
+sys.path.append(r"/Users/adekoyaayomide/Documents/dg-test/dagster-quickstart")
 from dagster_quickstart.steer.config import VARIANTS
 
 

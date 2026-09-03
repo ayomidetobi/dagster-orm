@@ -176,3 +176,4 @@ cython_debug/
 CLAUDE.md
 .claude/
 /dagster_quickstart/graphify-out/
+/steer_plots/
