@@ -28,8 +28,8 @@ from typing import Any
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns
-from rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns
+from dagster_quickstart.rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
 
 logger = structlog.get_logger(__name__)
 

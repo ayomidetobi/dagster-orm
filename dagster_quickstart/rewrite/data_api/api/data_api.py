@@ -10,17 +10,20 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from rewrite.data_api.api.metadata_result import MetadataResult
-from rewrite.data_api.api.queryset import QueryState, QuerySet
-from rewrite.data_api.api.requests import validate_value_query
-from rewrite.data_api.columns import ValueColumns, normalize_ticker_source
-from rewrite.data_api.shaping import melt_values, pivot_values
-from rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
-from rewrite.data_api.ingestion.file_loader import FileIngestionService
-from rewrite.data_api.services.direct_fetch_service import DirectFetchService
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.value_service import ValueService
-from rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.api.metadata_result import MetadataResult
+from dagster_quickstart.rewrite.data_api.api.queryset import QueryState, QuerySet
+from dagster_quickstart.rewrite.data_api.api.requests import validate_value_query
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns, normalize_ticker_source
+from dagster_quickstart.rewrite.data_api.shaping import melt_values, pivot_values
+from dagster_quickstart.rewrite.data_api.errors import IngestionUnavailableError, InvalidImportSourceError
+from dagster_quickstart.rewrite.data_api.ingestion.file_loader import FileIngestionService
+from dagster_quickstart.rewrite.data_api.repositories.generic_table_repository import (
+    GenericTableRepository,
+)
+from dagster_quickstart.rewrite.data_api.services.direct_fetch_service import DirectFetchService
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
 
 logger = structlog.get_logger(__name__)
 
@@ -32,6 +35,7 @@ class RewriteServices:
     metadata: MetadataService
     values: ValueService
     direct_fetch: DirectFetchService
+    tables: GenericTableRepository
     ingestion: FileIngestionService | None = None
 
 
@@ -59,7 +63,7 @@ class DataAPI:
         vendor_clients: Mapping[str, VendorClient] | None = None,
     ) -> None:
         if services is None:
-            from rewrite.data_api.bootstrap import build_default_services
+            from dagster_quickstart.rewrite.data_api.bootstrap import build_default_services
 
             services = build_default_services(vendor_clients=vendor_clients)
         self._services = services
@@ -256,6 +260,7 @@ class DataAPI:
         version: int | None = None,
         as_of: datetime | None = None,
         out_of_cache: bool | None = None,
+        parents_out_of_cache: bool = False,
     ) -> pd.DataFrame:
         """Return value rows for the requested series.
 
@@ -266,6 +271,12 @@ class DataAPI:
         with; pass it explicitly to override for a single call. When true,
         bypasses DuckLake entirely and fetches live from the vendor named by
         ticker_source (required in that case).
+
+        parents_out_of_cache only matters for a derived series requested
+        with out_of_cache=True: it controls where its PARENT series' values
+        come from -- False (default) reads them from the datalake
+        (DuckLake), True fetches them live from the vendor too. Has no
+        effect on non-derived series or on out_of_cache=False calls.
 
         The returned frame remembers its ticker_source (in `.attrs`), so
         write_values(get_values(...)) tags rows with the right vendor
@@ -298,6 +309,7 @@ class DataAPI:
                 end=request.end,
                 order_by=request.order_by,
                 limit=request.limit,
+                parents_out_of_cache=parents_out_of_cache,
             )
         else:
             frame = self._services.values.read_values(
@@ -365,3 +377,79 @@ class DataAPI:
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:
         """Check whether value rows exist for the requested series."""
         return self._services.values.value_exists(series_codes)
+
+    def get_values_storage_path(self) -> str | None:
+        """Return the common S3/local path DuckLake is currently using for the values table.
+
+        Queried live via ducklake_list_files() -- always reflects reality
+        (partitioning, bucket, prefix) rather than an assumed convention.
+        None if nothing has been written yet.
+        """
+        return self._services.values.get_storage_path()
+
+    def read_table(
+        self,
+        schema: str,
+        table: str,
+        *,
+        strict: bool = False,
+        **filters: Sequence[str] | str,
+    ) -> MetadataResult:
+        """Read an arbitrary DuckLake table, optionally filtered by column values.
+
+        For tables outside the metadata/values schema -- STEER's silver/gold tables, for
+        instance (see steer/results.py, steer/model.py). Returns a MetadataResult, so results
+        chain, narrow further in-memory, and expose filter_options()/union() the same way
+        get_metadata() does:
+
+            results = data_api.read_table("gold", "steer_result_summary", universe="G10")
+            results.get_metadata(series_code="EURNOK_PX_LAST").filter_options("as_of")
+
+        strict controls how an unrecognized filter value is handled, same as get_metadata()
+        (False drops it with a logged warning, True raises InvalidFilterValueError) --
+        "valid options" here means the values actually present in the table.
+
+        Returns an empty MetadataResult if the table doesn't exist yet, rather than raising.
+        get_values()/get_last_values() aren't meaningful on this result -- there's no
+        series_code/value-column convention for an arbitrary table -- so calling either raises
+        a clear NotImplementedError naming this table, instead of failing deeper and less
+        clearly inside MetadataResult.
+        """
+        frame = self._services.tables.read_all(schema, table)
+        result = MetadataResult(
+            frame,
+            fetch_values=_unsupported_on_table(schema, table, "get_values"),
+            fetch_last_values=_unsupported_on_table(schema, table, "get_last_values"),
+        )
+        if filters and not frame.empty:
+            result = result.get_metadata(strict=strict, **filters)
+        return result
+
+    def write_table(self, schema: str, table: str, frame: pd.DataFrame) -> None:
+        """Append `frame` to an arbitrary DuckLake table, creating it on first write.
+
+        Append-only, like the rest of this catalog. If `frame` has columns the existing table
+        lacks, the table is widened with ALTER TABLE ADD COLUMN first, then the rows are
+        appended -- so a wider driver set (e.g. CHN's 7 coefficient columns vs G10's 5) doesn't
+        misalign, and no existing row is ever rewritten (see
+        rewrite.data_api.repositories.generic_table_repository.GenericTableRepository.write()).
+        """
+        self._services.tables.write(schema, table, frame)
+
+
+def _unsupported_on_table(schema: str, table: str, method: str):
+    """A fetch_values/fetch_last_values stand-in for read_table()'s MetadataResult.
+
+    Raises a clear error naming the method and table if actually called, rather than leaving
+    fetch_values=None (which would fail later with an unhelpful TypeError deep inside
+    MetadataResult.get_values()/get_last_values()).
+    """
+
+    def _raise(*_args: object, **_kwargs: object) -> pd.DataFrame:
+        raise NotImplementedError(
+            f"{method}() is not supported on the result of read_table({schema!r}, {table!r}) -- "
+            "there is no series_code/value-column convention for an arbitrary table. Read "
+            "whatever you need directly from the result's .frame instead."
+        )
+
+    return _raise

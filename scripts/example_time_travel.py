@@ -24,7 +24,7 @@ sys.path.insert(0, str(DAGSTER_QUICKSTART))
 
 import pandas as pd
 
-from rewrite.data_api.api.data_api import DataAPI
+from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
 
 SERIES_CODE = "TIME_TRAVEL_DEMO"
 
@@ -81,5 +81,23 @@ if latest[SERIES_CODE].iloc[-1] == 200.0 and historical[SERIES_CODE].iloc[-1] ==
     print("Confirmed: latest query = 200.0 (corrected), as_of query = 100.0 (historical).")
 else:
     print("UNEXPECTED: time travel did not return the expected historical value.")
+
+print_separator("Step 5: as_of takes a full timestamp, not just a date")
+# as_of is a plain datetime -- hour/minute/second/microsecond all matter, not
+# just the date. A hand-typed moment works exactly like datetime.now() did
+# above: build it with whatever precision you actually mean. Note that
+# datetime(2020, 1, 1) with no time-of-day means midnight (00:00:00) that
+# day, not "sometime on 2020-01-01" -- pass the hour/minute (as below)
+# whenever the distinction matters, e.g. picking a point between two
+# same-day snapshots.
+precise_as_of = datetime(2020, 1, 1, 15, 45, tzinfo=timezone.utc)
+print(f"Querying as_of={precise_as_of.isoformat()} (2020-01-01, 15:45 -- long before this demo ran)")
+try:
+    data_api.get_values([SERIES_CODE], as_of=precise_as_of)
+except Exception as exc:
+    print(
+        "DuckLake raised (rather than returning an empty frame) because no "
+        f"snapshot exists yet that far back: {exc}"
+    )
 
 print_separator("Done")

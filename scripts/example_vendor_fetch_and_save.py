@@ -15,7 +15,6 @@ Usage:
     python scripts/example_vendor_fetch_and_save.py
 """
 
-from locale import currency
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,8 +24,7 @@ DAGSTER_QUICKSTART = REPO_ROOT / "dagster_quickstart"
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(DAGSTER_QUICKSTART))
 
-from rewrite.data_api.api.data_api import DataAPI
-from rewrite.data_api.columns import ValueColumns, normalize_ticker_source
+from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
 
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:

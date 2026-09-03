@@ -10,8 +10,8 @@ from typing import Iterator
 import duckdb
 import pandas as pd
 
-from resources.duckdb_datacacher import SQL, render_ducklake_sql
-from resources.duckdb_datacacher import quote_identifier as _quote_identifier
+from dagster_quickstart.resources.duckdb_datacacher import SQL, render_ducklake_sql, sql_literal
+from dagster_quickstart.resources.duckdb_datacacher import quote_identifier as _quote_identifier
 
 
 logger = structlog.get_logger(__name__)
@@ -144,6 +144,23 @@ class BaseDuckLakeRepository:
             self._connection.execute(query)
         else:
             self._connection.execute(query, parameters)
+
+    def list_data_files(self, table_name: str) -> pd.DataFrame:
+        """
+        Return every physical data file currently backing `table_name`.
+
+        Queried live via ducklake_list_files() -- the actual S3 (or local)
+        URIs DuckLake is using right now for this table -- rather than
+        assumed from a static path convention, so it stays correct even if
+        the table's storage location/partitioning changes.
+        """
+        try:
+            return self.execute(
+                f"SELECT * FROM ducklake_list_files(current_catalog(), {sql_literal(table_name)})"
+            )
+        except Exception:
+            self._logger.debug("ducklake_list_files_unavailable", table=table_name)
+            return pd.DataFrame(columns=["data_file"])
 
     def qualify_table(self, table_name: str) -> str:
         """

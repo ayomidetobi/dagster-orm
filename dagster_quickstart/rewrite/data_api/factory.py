@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from rewrite.data_api.api.data_api import DataAPI
-from rewrite.data_api.container import RewriteContainer, build_rewrite_container
-from rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
+from dagster_quickstart.rewrite.data_api.container import RewriteContainer, build_rewrite_container
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
 
 
 def create_data_api(

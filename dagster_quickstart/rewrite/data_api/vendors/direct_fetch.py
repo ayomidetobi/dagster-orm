@@ -8,13 +8,18 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns, TickerSource, ValueColumns
-from rewrite.data_api.errors import InvalidOrderByError, MissingMetadataColumnError
-from rewrite.data_api.services.metadata_service import MetadataService
-from rewrite.data_api.services.vendor_service import VendorService
-from rewrite.data_api.shaping import melt_values
-from rewrite.data_api.vendors.derived_calc import compute_derived_series, parse_parent_series_codes
-from rewrite.data_api.vendors.ticker_columns import (
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, TickerSource, ValueColumns
+from dagster_quickstart.rewrite.data_api.errors import (
+    InvalidOrderByError,
+    MissingMetadataColumnError,
+    ValueServiceRequiredError,
+)
+from dagster_quickstart.rewrite.data_api.services.metadata_service import MetadataService
+from dagster_quickstart.rewrite.data_api.services.value_service import ValueService
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorService
+from dagster_quickstart.rewrite.data_api.shaping import melt_values
+from dagster_quickstart.rewrite.data_api.vendors.derived_calc import compute_derived_series, parse_parent_series_codes
+from dagster_quickstart.rewrite.data_api.vendors.ticker_columns import (
     build_series_to_ticker_map,
     resolve_ticker_field_columns,
 )
@@ -140,8 +145,18 @@ def get_derived_direct_values(
     *,
     start: datetime | None = None,
     end: datetime | None = None,
+    value_service: ValueService | None = None,
+    parents_out_of_cache: bool = False,
 ) -> pd.DataFrame:
-    """Compute derived series by live-fetching their parents and applying calc_type."""
+    """Compute derived series from their parent series' values.
+
+    Parent values are read from the datalake (DuckLake) by default --
+    parents_out_of_cache=False -- since a derived value is usually computed
+    on demand while its inputs are already cached from an earlier
+    fetch-and-save. Pass parents_out_of_cache=True to instead fetch the
+    parents live from the vendor too. Reading from the datalake (the
+    default) requires value_service.
+    """
 
     if not series_codes:
         return _empty_value_frame()
@@ -166,11 +181,25 @@ def get_derived_direct_values(
         ticker_source=ticker_source,
         derived_count=len(series_codes),
         parent_count=len(parent_codes),
+        parents_out_of_cache=parents_out_of_cache,
     )
 
-    parent_values = get_direct_values(
-        metadata_service, vendor_service, parent_codes, ticker_source, start=start, end=end
-    )
+    if parents_out_of_cache:
+        parent_values = get_direct_values(
+            metadata_service, vendor_service, parent_codes, ticker_source, start=start, end=end
+        )
+    else:
+        if value_service is None:
+            raise ValueServiceRequiredError(
+                "Computing a derived series' parents from the datalake "
+                "(parents_out_of_cache=False) requires a ValueService; pass "
+                "parents_out_of_cache=True to fetch them live from the "
+                "vendor instead."
+            )
+        parent_values = value_service.read_values(
+            parent_codes, ticker_source=ticker_source, start=start, end=end
+        )
+
     if parent_values.empty:
         return _empty_value_frame()
 

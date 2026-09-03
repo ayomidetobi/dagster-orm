@@ -93,3 +93,10 @@ class IngestionUnavailableError(RewriteError):
     """Raised when import_metadata(path=...) is called on a DataAPI built
     without file-ingestion support (no cacher/FileIngestionService configured).
     """
+
+
+class ValueServiceRequiredError(RewriteError):
+    """Raised computing a derived series' parents from the datalake (the
+    default, parents_out_of_cache=False) when no ValueService is configured
+    to read them from.
+    """

@@ -8,9 +8,9 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns
-from rewrite.data_api.repositories.metadata_repository import MetadataRepository
-from rewrite.data_api.validation import validate_metadata_frame
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns
+from dagster_quickstart.rewrite.data_api.repositories.metadata_repository import MetadataRepository
+from dagster_quickstart.rewrite.data_api.validation import strip_whitespace, validate_metadata_frame
 
 logger = structlog.get_logger(__name__)
 
@@ -124,7 +124,7 @@ class MetadataService:
         MetadataRepository.save_metadata().
         """
         logger.info("metadata_service_import", row_count=len(frame), fresh=fresh)
-        validated = self._validate(frame)
+        validated = self._validate(strip_whitespace(frame))
         self._repository.save_metadata(validated, fresh=fresh)
         return validated
 

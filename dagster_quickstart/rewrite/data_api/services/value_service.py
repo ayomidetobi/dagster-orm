@@ -8,9 +8,9 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ValueColumns
-from rewrite.data_api.repositories.value_repository import ValueRepository
-from rewrite.data_api.validation import validate_value_frame
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
+from dagster_quickstart.rewrite.data_api.repositories.value_repository import ValueRepository
+from dagster_quickstart.rewrite.data_api.validation import coerce_numeric_value, validate_value_frame
 
 logger = structlog.get_logger(__name__)
 
@@ -72,10 +72,21 @@ class ValueService:
         return validate_value_frame(frame)
 
     def write_values(self, frame: pd.DataFrame) -> None:
-        """Write a normalized value frame to storage."""
+        """Write a normalized value frame to storage.
+
+        Non-numeric values (a real vendor's "NOT FOUND"/"N/A"/etc. for a
+        missing data point) are coerced to NaN before validation -- see
+        coerce_numeric_value -- so one bad point doesn't crash the whole
+        batch write with a DuckDB ConversionException.
+        """
         logger.info("value_service_write", row_count=len(frame))
-        self._repository.save_values(validate_value_frame(frame))
+        validated = validate_value_frame(coerce_numeric_value(frame))
+        self._repository.save_values(validated)
 
     def value_exists(self, series_codes: Sequence[str]) -> Mapping[str, bool]:
         """Check whether value rows exist for the requested series."""
         return self._repository.value_exists(series_codes)
+
+    def get_storage_path(self) -> str | None:
+        """Return the common physical storage path backing the values table, if any."""
+        return self._repository.get_storage_path()

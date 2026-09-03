@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import MetadataColumns, TickerSource
-from rewrite.data_api.errors import UnsupportedTickerSourceError
+from dagster_quickstart.rewrite.data_api.columns import MetadataColumns, TickerSource
+from dagster_quickstart.rewrite.data_api.errors import UnsupportedTickerSourceError
 
 logger = structlog.get_logger(__name__)
 

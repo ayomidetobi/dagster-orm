@@ -7,8 +7,8 @@ from datetime import datetime
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from rewrite.data_api.columns import ValueColumns, normalize_ticker_source
-from rewrite.data_api.errors import (
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns, normalize_ticker_source
+from dagster_quickstart.rewrite.data_api.errors import (
     InvalidQueryError,
     SnapshotConflictError,
     TickerSourceRequiredError,

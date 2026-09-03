@@ -14,20 +14,20 @@ from urllib.parse import parse_qs, urlparse
 import structlog
 from decouple import config as env_config
 
-from resources.duckdb_datacacher import create_duckdb_connection
-from rewrite.data_api.columns import TickerSource
-from rewrite.data_api.container import build_rewrite_container
-from rewrite.data_api.models.config import DuckLakeCatalogConfig, PostgresConfig, S3SecretConfig
-from rewrite.data_api.repositories.ducklake_meta_repository import (
+from dagster_quickstart.resources.duckdb_datacacher import create_duckdb_connection
+from dagster_quickstart.rewrite.data_api.columns import TickerSource
+from dagster_quickstart.rewrite.data_api.container import build_rewrite_container
+from dagster_quickstart.rewrite.data_api.models.config import DuckLakeCatalogConfig, PostgresConfig, S3SecretConfig
+from dagster_quickstart.rewrite.data_api.repositories.ducklake_meta_repository import (
     DuckLakeMetadataStorageRepository,
 )
-from rewrite.data_api.repositories.ducklake_value_repository import (
+from dagster_quickstart.rewrite.data_api.repositories.ducklake_value_repository import (
     DuckLakeValueStorageRepository,
 )
-from rewrite.data_api.services.vendor_service import VendorClient
-from rewrite.data_api.vendors.bloomberg import BloombergClient
-from rewrite.data_api.vendors.hawk import HawkClient
-from rewrite.data_api.vendors.mds import MDSClient
+from dagster_quickstart.rewrite.data_api.services.vendor_service import VendorClient
+from dagster_quickstart.rewrite.data_api.vendors.bloomberg import BloombergClient
+from dagster_quickstart.rewrite.data_api.vendors.hawk import HawkClient
+from dagster_quickstart.rewrite.data_api.vendors.mds import MDSClient
 
 logger = structlog.get_logger(__name__)
 
@@ -60,14 +60,14 @@ def _parse_database_url(url: str) -> PostgresConfig:
     )
 
 
-def build_default_container(
-    *,
-    vendor_clients: Mapping[str, VendorClient] | None = None,
-):
-    """Build a RewriteContainer attached to the real Postgres+S3 DuckLake catalog.
+def build_default_catalog_config() -> DuckLakeCatalogConfig:
+    """Build the DuckLakeCatalogConfig for the real Postgres+S3 catalog from the environment.
 
     Reads DATABASE_URL, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION
-    from the environment/.env via python-decouple.
+    from the environment/.env via python-decouple. Shared by
+    build_default_connection() (below) and anything else that needs to
+    attach to this exact catalog without going through the full DataAPI
+    stack.
     """
 
     bucket = env_config("S3_BUCKET")
@@ -76,7 +76,7 @@ def build_default_container(
     region = env_config("S3_REGION")
     postgres_config = _parse_database_url(env_config("DATABASE_URL"))
 
-    catalog_config = DuckLakeCatalogConfig(
+    return DuckLakeCatalogConfig(
         postgres=postgres_config,
         s3_secret=S3SecretConfig(key_id=access_key, secret=secret_key, region=region),
         catalog_alias=DEFAULT_CATALOG_ALIAS,
@@ -84,8 +84,43 @@ def build_default_container(
         schema_name=DEFAULT_SCHEMA_NAME,
     )
 
-    logger.info("data_api_bootstrap_connecting", host=postgres_config.host, bucket=bucket)
-    connection = create_duckdb_connection(ducklake_catalog=catalog_config, enable_ducklake=True)
+
+def build_default_connection():
+    """Attach a fresh DuckDB connection to the real Postgres+S3 DuckLake catalog. No repository/schema setup.
+
+    Just the ATTACH -- unlike build_default_container(), this never touches
+    DuckLakeValueStorageRepository.initialize_schema() (schema-altering DDL
+    on the `values` table). Two connections both running that DDL at once
+    is a real DuckLake transaction conflict (optimistic concurrency control
+    on the Postgres-backed catalog) -- callers that don't need the
+    metadata/value repositories at all should use this instead of
+    build_default_container() to avoid running that DDL redundantly and
+    racing DataAPI's own initialization.
+    """
+
+    catalog_config = build_default_catalog_config()
+    logger.info(
+        "data_api_bootstrap_connecting", host=catalog_config.postgres.host, bucket=catalog_config.data_path
+    )
+    return create_duckdb_connection(ducklake_catalog=catalog_config, enable_ducklake=True)
+
+
+def build_default_container(
+    *,
+    vendor_clients: Mapping[str, VendorClient] | None = None,
+):
+    """Build a RewriteContainer attached to the real Postgres+S3 DuckLake catalog.
+
+    See build_default_connection()/build_default_catalog_config() for the
+    connection-only path. This one also wires up the metadata/value
+    repositories and runs DuckLakeValueStorageRepository.initialize_schema()
+    (schema-altering DDL) -- appropriate for a real DataAPI, but two of
+    these initializing concurrently against the same catalog is itself a
+    real conflict risk; Dagster resources that build a DataAPI should be
+    the only ones doing so per run.
+    """
+
+    connection = build_default_connection()
 
     metadata_repository = DuckLakeMetadataStorageRepository(connection)
     value_repository = DuckLakeValueStorageRepository(connection)

@@ -11,13 +11,13 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "DataAPI": "rewrite.data_api.api.data_api",
-    "QuerySet": "rewrite.data_api.api.queryset",
-    "RewriteContainer": "rewrite.data_api.container",
-    "build_rewrite_container": "rewrite.data_api.container",
-    "create_container": "rewrite.data_api.factory",
-    "create_data_api": "rewrite.data_api.factory",
-    "configure_logging": "rewrite.data_api.logging",
+    "DataAPI": "dagster_quickstart.rewrite.data_api.api.data_api",
+    "QuerySet": "dagster_quickstart.rewrite.data_api.api.queryset",
+    "RewriteContainer": "dagster_quickstart.rewrite.data_api.container",
+    "build_rewrite_container": "dagster_quickstart.rewrite.data_api.container",
+    "create_container": "dagster_quickstart.rewrite.data_api.factory",
+    "create_data_api": "dagster_quickstart.rewrite.data_api.factory",
+    "configure_logging": "dagster_quickstart.rewrite.data_api.logging",
 }
 
 
@@ -28,7 +28,7 @@ def __getattr__(name: str) -> object:
     while this package's repositories import back from
     resources/duckdb_datacacher.py. Eagerly importing everything here would
     make that a circular import; resolving on first attribute access breaks
-    the cycle without changing the public `from rewrite import DataAPI` shape.
+    the cycle without changing the public `from dagster_quickstart.rewrite import DataAPI` shape.
     """
     module_name = _EXPORTS.get(name)
     if module_name is None:

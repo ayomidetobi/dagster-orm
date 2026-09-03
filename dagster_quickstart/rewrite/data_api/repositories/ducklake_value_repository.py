@@ -9,13 +9,18 @@ import duckdb
 import pandas as pd
 import structlog
 
-from resources.duckdb_datacacher import SQL
-from rewrite.data_api.columns import ControlTables, TickerSource, ValueColumns
-from rewrite.data_api.repositories.base_ducklake_repository import BaseDuckLakeRepository
-from rewrite.data_api.repositories.storage_repository import ValueStorageRepository
-from rewrite.data_api.query.ducklake_query import (
+from dagster_quickstart.resources.duckdb_datacacher import SQL
+from dagster_quickstart.rewrite.data_api.columns import ControlTables, TickerSource, ValueColumns
+from dagster_quickstart.rewrite.data_api.repositories.base_ducklake_repository import (
+    BaseDuckLakeRepository,
+)
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import (
+    ValueStorageRepository,
+)
+from dagster_quickstart.rewrite.data_api.query.ducklake_query import (
     DuckLakeValueQueryBuilder,
 )
+from dagster_quickstart.rewrite.data_api.storage_info import common_storage_path
 
 logger = structlog.get_logger(__name__)
 
@@ -173,6 +178,15 @@ class DuckLakeValueStorageRepository(
 
         return frame
 
+    def get_storage_path(self) -> str | None:
+        """Return the common S3/local storage path DuckLake is currently using for this table.
+
+        Queried live via ducklake_list_files() -- None if nothing has been
+        written yet.
+        """
+
+        return common_storage_path(self.list_data_files(self._table))
+
     def delete_values(
         self,
         filters: Mapping[str, object],
@@ -193,6 +207,17 @@ class DuckLakeValueStorageRepository(
 
         Partitioned by ticker_source and year(timestamp) -- see
         DuckLakeValueQueryBuilder.build_set_partitioned_by().
+
+        Every RewriteDataAPIResource (one per resource-requiring step, under
+        Dagster's multiprocess executor) calls this independently, so two
+        steps in the same run that both need rewrite_data_api and have no
+        dependency on each other commonly run this concurrently. The
+        ALTER TABLE below is itself idempotent (see
+        build_set_partitioned_by()'s own docstring: "safe to re-apply"), so
+        a DuckLake transaction conflict here specifically means another
+        process's equally-redundant call just committed the same change --
+        logged and ignored rather than failing this resource's whole
+        initialization over a no-op collision.
         """
 
         logger.info("ducklake_value_initialize_schema", table=self._table)
@@ -205,4 +230,10 @@ class DuckLakeValueStorageRepository(
                 table=SQL.identifier(self._table),
             )
         )
-        self.execute_no_result(self._builder.build_set_partitioned_by())
+        try:
+            self.execute_no_result(self._builder.build_set_partitioned_by())
+        except duckdb.TransactionException:
+            logger.info(
+                "ducklake_value_partition_ddl_conflict_ignored",
+                table=self._table,
+            )

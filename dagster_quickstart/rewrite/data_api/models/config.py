@@ -3,12 +3,12 @@
 These Pydantic models now live in resources/duckdb_cacher/config.py --
 moved there since they're consumed by the DuckDB/DuckLake connection layer,
 not anything specific to the rewrite package. Re-exported here unchanged so
-existing `from rewrite.data_api.models.config import ...` imports keep working.
+existing `from dagster_quickstart.rewrite.data_api.models.config import ...` imports keep working.
 """
 
 from __future__ import annotations
 
-from resources.duckdb_cacher.config import (
+from dagster_quickstart.resources.duckdb_cacher.config import (
     DuckLakeCatalogConfig,
     DuckLakeConfig,
     PostgresConfig,

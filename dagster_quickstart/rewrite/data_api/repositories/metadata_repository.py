@@ -8,8 +8,8 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
-from rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
+from dagster_quickstart.rewrite.data_api.errors import InvalidFilterFieldError, InvalidFilterValueError
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import MetadataStorageRepository
 
 logger = structlog.get_logger(__name__)
 

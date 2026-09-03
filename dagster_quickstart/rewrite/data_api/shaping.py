@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from rewrite.data_api.columns import ValueColumns
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
 
 VALUE_COLUMNS = [ValueColumns.SERIES_CODE, ValueColumns.TIMESTAMP, ValueColumns.VALUE]
 

@@ -6,6 +6,22 @@ build-backend = "setuptools.build_meta"
 module_name = "dagster_quickstart.definitions"
 code_location_name = "dagster_quickstart"
 
+[tool.mypy]
+# Scoped to the STEER pipeline (dagster_quickstart/steer/,
+# dagster_quickstart/assets/steer/) rather than the whole repo -- the rest
+# of the codebase (orm/, legacy assets/) predates any type-checking
+# discipline and isn't mypy-clean; fixing that is a separate, much larger
+# effort outside this pipeline's scope. Extend `files` here as other parts
+# of the codebase are made mypy-clean.
+files = ["dagster_quickstart/steer", "dagster_quickstart/assets/steer"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true
+# Don't also typecheck rewrite/data_api/etc. just because steer/ imports
+# from them -- keeps errors scoped to files this config actually covers.
+follow_imports = "silent"
+
 [tool.ruff]
 
 target-version = "py38"

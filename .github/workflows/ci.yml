@@ -1,0 +1,43 @@
+name: CI
+
+# Minimal scaffold -- no CI existed before (see the STEER pipeline PR that
+# added this). Runs ruff, mypy, and pytest; none of the current test suite
+# needs real DuckLake/Postgres/S3 credentials (fakes + an in-memory DuckDB
+# fixture -- see tests/test_steer_assets.py), so no secrets are configured
+# here. Add them (and a real-catalog integration job) if that changes.
+#
+# Ruff's `--select E9,F` (real bugs -- syntax errors, undefined names,
+# unused imports) runs repo-wide and is genuinely clean today. The full
+# ruleset in pyproject.toml's [tool.ruff.lint] is NOT enforced here --
+# it's inherited from a much larger codebase's conventions (523 pre-existing
+# violations across this repo, none related to this pipeline) and cleaning
+# that up is a separate effort. mypy is scoped to dagster_quickstart/steer/
+# and dagster_quickstart/assets/steer/ only, via pyproject.toml's
+# [tool.mypy] files= -- same reasoning, see that section's comment.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff (real errors only -- see workflow header comment)
+        run: ruff check --select E9,F .
+
+      - name: mypy (scoped to the STEER pipeline -- see pyproject.toml)
+        run: mypy
+
+      - name: pytest
+        run: pytest tests/ -q

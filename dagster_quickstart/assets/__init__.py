@@ -1,38 +1,11 @@
-"""Assets package for loading control tables to S3 as Parquet files.
+"""Assets package -- see dagster_quickstart/rewrite/data_api/ for the DuckLake-backed DataAPI these assets are built on."""
 
-Uses ORM layer (DataAPI) for all operations - no raw SQL in asset code.
-All temp table management, queries, and S3 operations go through the ORM.
-"""
-
-from dagster_quickstart.assets.derived import DERIVED_CALC_PARTITIONS, calculate_derived_series
-from dagster_quickstart.assets.ingestion.bloomberg import (
-    ingest_bloomberg_data_backfill,
-    ingest_bloomberg_data_daily,
-)
-from dagster_quickstart.assets.ingestion.hawk import (
-    ingest_hawk_data_backfill,
-    ingest_hawk_data_daily,
-)
-from dagster_quickstart.assets.load_lookup import load_lookup_tables_to_s3
-from dagster_quickstart.assets.load_metaseries import (
-    load_meta_series_to_s3,
-    validate_metadata_against_lookup,
-)
-from dagster_quickstart.assets.load_series_dependencies import (
-    load_series_dependencies_to_s3,
-    validate_parent_series_count,
-)
+from dagster_quickstart.assets.ingestion.bloomberg_rewrite import ingest_bloomberg_values
+from dagster_quickstart.assets.load_metaseries import load_meta_series_to_s3
+from dagster_quickstart.assets.steer import steer_assets
 
 __all__ = [
-    "calculate_derived_series",
-    "DERIVED_CALC_PARTITIONS",
-    "load_lookup_tables_to_s3",
     "load_meta_series_to_s3",
-    "load_series_dependencies_to_s3",
-    "ingest_bloomberg_data_daily",
-    "ingest_bloomberg_data_backfill",
-    "ingest_hawk_data_daily",
-    "ingest_hawk_data_backfill",
-    "validate_metadata_against_lookup",
-    "validate_parent_series_count",
+    "ingest_bloomberg_values",
+    "steer_assets",
 ]

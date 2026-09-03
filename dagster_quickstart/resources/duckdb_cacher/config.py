@@ -1,6 +1,6 @@
 """Pydantic configuration models for DuckDB/DuckLake connections.
 
-Moved here from rewrite/data_api/models/config.py -- these models are
+Moved here from dagster_quickstart.rewrite/data_api/models/config.py -- these models are
 consumed by ducklake_datacacher.py (DuckLakeCatalogConfig, DuckLakeConfig,
 S3SecretConfig) and have no dependency on the rewrite package themselves,
 so they live alongside the connection code that actually uses them.

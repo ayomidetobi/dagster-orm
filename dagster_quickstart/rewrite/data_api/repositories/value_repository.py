@@ -8,9 +8,9 @@ from datetime import datetime
 import pandas as pd
 import structlog
 
-from rewrite.data_api.columns import ValueColumns
-from rewrite.data_api.errors import FrameValidationError, SeriesCodesRequiredError
-from rewrite.data_api.repositories.storage_repository import ValueStorageRepository
+from dagster_quickstart.rewrite.data_api.columns import ValueColumns
+from dagster_quickstart.rewrite.data_api.errors import FrameValidationError, SeriesCodesRequiredError
+from dagster_quickstart.rewrite.data_api.repositories.storage_repository import ValueStorageRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -120,6 +120,11 @@ class ValueRepository:
 
         logger.info("value_repository_delete", filter_fields=sorted(filters.keys()))
         self._storage.delete_values(filters)
+
+    def get_storage_path(self) -> str | None:
+        """Return the common physical storage path backing the values table, if any."""
+
+        return self._storage.get_storage_path()
 
     @staticmethod
     def _validate_series_codes(
