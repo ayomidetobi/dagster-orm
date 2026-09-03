@@ -2,14 +2,14 @@
 
 Turns a wide frame of already-conformed raw series (see
 assets/steer/silver_asset.py for the silver-layer alignment step) into the
-per-pair STEER feature table: this universe's drivers (see
+per-pair STEER feature table: this variant's drivers (see
 StrategyConfig.drivers -- 5 for G10/EM, 7 for CHN) plus a rolling
 `is_logged` flag, one row per date.
 
 Driver construction is deliberately NOT symmetric between G10 and EM/CHN --
 this follows the published STEER methodology, not a simplification:
 
-  - interest_rate_differential: base_swap_2y - quote_swap_2y, every universe.
+  - interest_rate_differential: base_swap_2y - quote_swap_2y, every variant.
   - yield_curve_or_cds: G10 is a genuine curve-slope differential,
     (base_3m - base_10y) - (quote_3m - quote_10y); EM/CHN is the non-USD
     leg's 5Y sovereign CDS *level* (not a difference -- EM/CHN pairs are
@@ -22,7 +22,7 @@ this follows the published STEER methodology, not a simplification:
   - local_equity: G10 is log(base_msci) - log(quote_msci); EM/CHN is
     log(non_usd_msci) alone (single leg, same USD-quote reasoning as CDS).
   - global_equity / commodity: log(single global series), identical
-    across every pair/universe (see steer/config.py's GLOBAL_DRIVERS).
+    across every pair/variant (see steer/config.py's GLOBAL_DRIVERS).
 
 Every log/differential input is read out of a pair's PairAvailability
 (steer/discovery.py) -- resolved *by role*, never a hardcoded series_code.
@@ -68,8 +68,8 @@ from dagster_quickstart.steer.constants import (
     ROLE_SWAP_2Y,
     ROLE_YIELD_10Y,
     SERIES_CODE_COLUMN,
-    UNIVERSE_CHN,
-    UNIVERSE_G10,
+    VARIANT_CHN,
+    VARIANT_G10,
 )
 from dagster_quickstart.steer.source.discovery import PairAvailability
 
@@ -168,7 +168,7 @@ def build_steer_features(
 
     `raw` must be indexed by date and have one column per `drivers` plus
     RATE_COLUMN -- already resolved from series_codes and aligned/conformed
-    (see assets/steer/silver_asset.py). `drivers` is this pair's universe's
+    (see assets/steer/silver_asset.py). `drivers` is this pair's variant's
     driver set (StrategyConfig.drivers -- 5 for G10/EM, 7 for CHN), not a
     fixed module constant, so CHN's extra offshore_spread/flows columns
     survive instead of being silently dropped. Adds realized_volatility and
@@ -272,7 +272,7 @@ def _build_series_by_column(
     flows series). Extracted out of fetch_raw_driver_frame so required_series_codes() can
     collect every pair's needed series upfront without duplicating this logic.
     """
-    universe = strategy_config.universe
+    variant = strategy_config.variant
     series_by_column: Dict[str, str] = {
         RATE_COLUMN: series_code,
         DRIVER_GLOBAL_EQUITY: strategy_config.global_equity_series,
@@ -285,7 +285,7 @@ def _build_series_by_column(
         series_by_column["_base_swap_2y"] = base_swap
         series_by_column["_quote_swap_2y"] = quote_swap
 
-    if universe == UNIVERSE_G10:
+    if variant == VARIANT_G10:
         base_3m = availability.get(LEG_BASE, ROLE_RATE_3M)
         quote_3m = availability.get(LEG_QUOTE, ROLE_RATE_3M)
         base_10y = availability.get(LEG_BASE, ROLE_YIELD_10Y)
@@ -310,7 +310,7 @@ def _build_series_by_column(
         if non_usd_equity:
             series_by_column["_non_usd_equity"] = non_usd_equity
 
-    if universe == UNIVERSE_CHN:
+    if variant == VARIANT_CHN:
         series_by_column["_offshore_spread"] = OFFSHORE_SPREAD_SERIES
         series_by_column["_onshore_spread"] = ONSHORE_SPREAD_SERIES
         for code in FLOW_BUY_SELL_SERIES + FLOW_TURNOVER_SERIES:
@@ -324,7 +324,7 @@ def required_series_codes(
     strategy_config: "StrategyConfig",
 ) -> set:
     """Every series_code fetch_raw_driver_frame would need across all of `pairs`
-    (series_code, availability) -- for DriverValues.load(), so one universe's whole run
+    (series_code, availability) -- for DriverValues.load(), so one variant's whole run
     issues a single get_values() call instead of one per pair. USD's role series and the
     global_equity/commodity series naturally collapse to one entry each here even though
     they're referenced by every pair, since this is a set.
@@ -388,7 +388,7 @@ def fetch_raw_driver_frame(
     end: Any = None,
     chn_flows_cutover: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Build one pair's rate + universe drivers (strategy_config.drivers columns) from an already-loaded DriverValues.
+    """Build one pair's rate + variant drivers (strategy_config.drivers columns) from an already-loaded DriverValues.
 
     `driver_values` is a DriverValues already loaded for this whole run (see
     DriverValues.load) -- this function never queries DuckLake itself.
@@ -404,7 +404,7 @@ def fetch_raw_driver_frame(
     per run (resolve_flows_cutover above) and pass it in, rather
     than this function doing its own get_metadata() call per pair.
     """
-    universe = strategy_config.universe
+    variant = strategy_config.variant
     series_by_column = _build_series_by_column(series_code, strategy_config, availability)
 
     wide = driver_values.select(series_by_column)
@@ -444,7 +444,7 @@ def fetch_raw_driver_frame(
     else:
         features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = pd.NA
 
-    if universe == UNIVERSE_G10:
+    if variant == VARIANT_G10:
         have_curve = all(has_data(c) for c in ("_base_3m", "_quote_3m", "_base_10y", "_quote_10y"))
         if have_curve:
             base_slope = renamed["_base_3m"] - renamed["_base_10y"]
@@ -467,7 +467,7 @@ def fetch_raw_driver_frame(
             _safe_log(renamed["_non_usd_equity"]) if has_data("_non_usd_equity") else pd.NA
         )
 
-    if universe == UNIVERSE_CHN:
+    if variant == VARIANT_CHN:
         have_spread = has_data("_offshore_spread") and has_data("_onshore_spread")
         features[DRIVER_OFFSHORE_SPREAD] = (
             build_chn_offshore_spread(renamed["_offshore_spread"], renamed["_onshore_spread"])
@@ -552,7 +552,7 @@ class SilverResult:
     to log inline via context.log.info -- stale pairs were never logged as
     individual lines, only counted in the check, so they're not in here).
     chn_flows_cutover_error is set instead of logging a warning directly,
-    when this is a CHN universe and resolve_flows_cutover() failed.
+    when this is a CHN variant and resolve_flows_cutover() failed.
     """
 
     frame: pd.DataFrame
@@ -566,7 +566,7 @@ class SilverResult:
 
 def build_silver_frame(
     data_api: Any,
-    universe: str,
+    variant: str,
     strategy_config: "StrategyConfig",
     availabilities: Sequence[PairAvailability],
     *,
@@ -574,7 +574,7 @@ def build_silver_frame(
 ) -> SilverResult:
     """Fetch every pair's rate + drivers and conform them onto a business-day calendar.
 
-    `availabilities` is one universe's PairAvailability per pair (e.g. from
+    `availabilities` is one variant's PairAvailability per pair (e.g. from
     steer.source.discovery.pairs_from_availability_report). A pair with
     availability.blocked (missing genuine per-country data for local_equity
     or the rate-based drivers -- see steer/source/discovery.py's module docstring)
@@ -582,7 +582,7 @@ def build_silver_frame(
     fresh as of `as_of` (see assess_freshness) is skipped too. Skipping one
     pair never raises -- the caller decides what to do with an empty result.
 
-    Values are fetched ONCE for the whole universe, not once per pair (see
+    Values are fetched ONCE for the whole variant, not once per pair (see
     DriverValues above) -- required_series_codes() collects every
     pair's needed series upfront (including blocked pairs -- cheap, and
     simpler than tracking which ones to skip) and DriverValues.load()
@@ -597,7 +597,7 @@ def build_silver_frame(
 
     chn_flows_cutover = None
     chn_flows_cutover_error = None
-    if universe == UNIVERSE_CHN:
+    if variant == VARIANT_CHN:
         try:
             chn_flows_cutover = resolve_flows_cutover(data_api)
         except ValueError as exc:

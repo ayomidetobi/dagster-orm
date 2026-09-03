@@ -93,22 +93,22 @@ def real_catalog_data_api():
     DatasetBase._api = None
 
 
-@pytest.mark.parametrize("universe,expected_count", [("G10", 45), ("EM", 21), ("CHN", 1)])
+@pytest.mark.parametrize("variant,expected_count", [("G10", 45), ("EM", 21), ("CHN", 1)])
 def test_discover_pairs_finds_every_pair_in_the_real_catalog(
-    real_catalog_data_api, universe, expected_count
+    real_catalog_data_api, variant, expected_count
 ):
-    pairs = discover_pairs(universe, real_catalog_data_api)
+    pairs = discover_pairs(variant, real_catalog_data_api)
 
     assert len(pairs) == expected_count
 
 
-@pytest.mark.parametrize("universe", ["G10", "EM", "CHN"])
-def test_require_real_still_returns_every_pair(real_catalog_data_api, universe):
+@pytest.mark.parametrize("variant", ["G10", "EM", "CHN"])
+def test_require_real_still_returns_every_pair(real_catalog_data_api, variant):
     """The regression this guards against: pairs marked is_synthetic=True
     would vanish under require_real=True, and a production run that filters
     is_synthetic=False (the normal way to exclude the 24 placeholder driver
     rows) would discover zero pairs and estimate nothing."""
-    pairs = discover_pairs(universe, real_catalog_data_api, require_real=True)
+    pairs = discover_pairs(variant, real_catalog_data_api, require_real=True)
 
     assert not pairs.empty
 
@@ -145,20 +145,20 @@ def test_no_fx_pair_row_is_synthetic():
     assert not fx["is_synthetic"].any()
 
 
-@pytest.mark.parametrize("universe", ["G10", "EM", "CHN"])
-def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_data_api, universe):
+@pytest.mark.parametrize("variant", ["G10", "EM", "CHN"])
+def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_data_api, variant):
     """Driver 2 (yield_curve_or_cds) is the part most at risk of a coverage
     gap: G10 needs rate_3m+yield_10y for both legs, EM/CHN need cds_5y for
     the non-USD leg. This proves every currency actually pulled into a pair
     -- all 10 G10, all 21 EM, CNH -- has full role coverage in the catalog,
     not just that the roles exist somewhere."""
-    pairs = discover_pairs(universe, real_catalog_data_api)
+    pairs = discover_pairs(variant, real_catalog_data_api)
     resolver = RoleResolver.from_data_api(real_catalog_data_api)
 
     blocked = [
-        (series_code, assess_pair_availability(series_code, universe, resolver).block_reasons)
+        (series_code, assess_pair_availability(series_code, variant, resolver).block_reasons)
         for series_code in pairs["series_code"]
-        if assess_pair_availability(series_code, universe, resolver).blocked
+        if assess_pair_availability(series_code, variant, resolver).blocked
     ]
 
     assert blocked == []
@@ -183,10 +183,10 @@ def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolutio
     """Acceptance criterion: role resolution across every G10 (45), EM (21) and CHN (1) pair
     -- ~106 distinct (role, currency) combinations -- costs exactly one get_metadata() call
     (RoleResolver.from_data_api), not one per combination. Pair discovery itself (one
-    get_metadata() call per universe, to find the pairs at all) happens before the counter
+    get_metadata() call per variant, to find the pairs at all) happens before the counter
     starts, since that's a separate concern from role resolution."""
-    pairs_by_universe = {
-        universe: discover_pairs(universe, real_catalog_data_api) for universe in ("G10", "EM", "CHN")
+    pairs_by_variant = {
+        variant: discover_pairs(variant, real_catalog_data_api) for variant in ("G10", "EM", "CHN")
     }
 
     original_get_metadata = real_catalog_data_api.get_metadata
@@ -198,7 +198,7 @@ def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolutio
 
     real_catalog_data_api.get_metadata = counting_get_metadata
 
-    report = build_availability_report(pairs_by_universe, real_catalog_data_api)
+    report = build_availability_report(pairs_by_variant, real_catalog_data_api)
 
     assert call_count["n"] == 1
     assert len(report) == 45 + 21 + 1

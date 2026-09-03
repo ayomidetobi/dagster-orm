@@ -71,7 +71,7 @@ outlook_email_resource = OutlookEmailResource(
     email_to=config("OUTLOOK_EMAIL_TO", default="oncall@example.com", cast=Csv()),
 )
 
-# FX_G10/FX_EM/FX_CHN code-defined universes -- see steer/universes.py.
+# FX_G10/FX_EM/FX_CHN code-defined variants -- see steer/variants.py.
 steer_config_resource = SteerConfigResource()
 
 resources = {

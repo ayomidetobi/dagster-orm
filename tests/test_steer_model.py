@@ -44,7 +44,7 @@ def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, st
             steer_signal,
         ],
         resources=resources,
-        partition_key=strategy_config.universe,
+        partition_key=strategy_config.variant,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
@@ -53,7 +53,7 @@ def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, st
 
 def _g10_strategy_config() -> StrategyConfig:
     return StrategyConfig(
-        universe="G10",
+        variant="G10",
         window_months=12,
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
@@ -125,7 +125,7 @@ def _em_values() -> pd.DataFrame:
 
 def _em_strategy_config() -> StrategyConfig:
     return StrategyConfig(
-        universe="EM",
+        variant="EM",
         window_months=6,
         stop_reward_ratio=1.0,
         logged_rate_threshold=0.0025,
@@ -235,7 +235,7 @@ def _chn_values() -> pd.DataFrame:
 def _chn_strategy_config() -> StrategyConfig:
     drivers = DRIVER_NAMES + ("offshore_spread", "flows")
     return StrategyConfig(
-        universe="CHN",
+        variant="CHN",
         window_months=6,
         stop_reward_ratio=1.0,
         logged_rate_threshold=0.0025,
@@ -246,7 +246,7 @@ def _chn_strategy_config() -> StrategyConfig:
 
 
 @pytest.mark.parametrize(
-    "universe,build_metadata,build_values,build_config,series_code",
+    "variant,build_metadata,build_values,build_config,series_code",
     [
         ("G10", _unblocked_g10_metadata, _unblocked_g10_values, _g10_strategy_config, "EURUSD_PX_LAST"),
         ("EM", _em_metadata, _em_values, _em_strategy_config, "USDZAR_PX_LAST"),
@@ -254,7 +254,7 @@ def _chn_strategy_config() -> StrategyConfig:
     ],
 )
 def test_steer_fit_matches_the_asset_pipeline_exactly(
-    universe, build_metadata, build_values, build_config, series_code
+    variant, build_metadata, build_values, build_config, series_code
 ):
     metadata = build_metadata()
     values = build_values()
@@ -266,7 +266,7 @@ def test_steer_fit_matches_the_asset_pipeline_exactly(
     signal_row = result.output_for_node("steer_signal", output_name="result").iloc[0]
     cointegration_row = result.output_for_node("steer_cointegration", output_name="result").iloc[0]
 
-    steer = Steer.from_data_api(data_api, universe=universe, strategy_config=strategy_config)
+    steer = Steer.from_data_api(data_api, variant=variant, strategy_config=strategy_config)
     steer_results = steer.fit(lookback_days=1, cointegration="each")
 
     fitted = steer_results[series_code]
@@ -304,7 +304,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
     strategy_config = _g10_strategy_config()
 
     resource = FakeRewriteDataAPIResource(metadata, values)
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=strategy_config)
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=strategy_config)
 
     full_dates = sorted(values["timestamp"].unique())
     cutoff = pd.Timestamp(full_dates[-30])  # a date well before the end of the fetched history
@@ -314,7 +314,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
     truncated_values = values[values["timestamp"] <= cutoff]
     truncated_resource = FakeRewriteDataAPIResource(metadata, truncated_values)
     truncated_steer = Steer.from_data_api(
-        truncated_resource.api, universe="G10", strategy_config=strategy_config
+        truncated_resource.api, variant="G10", strategy_config=strategy_config
     )
     truncated = truncated_steer.fit(as_of=cutoff, lookback_days=1, cointegration="each")
 
@@ -329,7 +329,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
 def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
     """Acceptance criterion 3."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=5, cointegration="latest")
 
@@ -344,7 +344,7 @@ def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
 def test_get_cross_section_matches_steer_result_cross_section():
     """Acceptance criterion 4."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
     cross_section = results.get_cross_section(-1)
@@ -365,7 +365,7 @@ def test_get_cross_section_matches_steer_result_cross_section():
 def test_plot_z_history_raises_a_clear_error_when_lookback_is_one():
     """Acceptance criterion 5."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
 
@@ -390,7 +390,7 @@ def test_blocked_pairs_are_skipped_and_recorded():
         ignore_index=True,
     )
     resource = FakeRewriteDataAPIResource(metadata, _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
 

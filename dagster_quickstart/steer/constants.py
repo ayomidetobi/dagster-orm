@@ -2,7 +2,7 @@
 
 Centralizes every identifier that used to be spelled out as a repeated literal string
 across config.py/discovery.py/features.py/estimation.py/signals.py/schemas.py/storage.py
-(universe names, FX leg names, driver-role names, driver names, signal values,
+(variant names, FX leg names, driver-role names, driver names, signal values,
 cointegration modes, ADF parameters, CHN's fixed source series, and DuckLake schema/table
 names) so a typo in one spot can't silently diverge from its use elsewhere.
 
@@ -27,11 +27,11 @@ from __future__ import annotations
 
 from typing import Literal, Tuple
 
-# --- Universes --------------------------------------------------------------------------
-UNIVERSE_G10: Literal["G10"] = "G10"
-UNIVERSE_EM: Literal["EM"] = "EM"
-UNIVERSE_CHN: Literal["CHN"] = "CHN"
-UNIVERSES: Tuple[str, ...] = (UNIVERSE_G10, UNIVERSE_EM, UNIVERSE_CHN)
+# --- Variants --------------------------------------------------------------------------
+VARIANT_G10: Literal["G10"] = "G10"
+VARIANT_EM: Literal["EM"] = "EM"
+VARIANT_CHN: Literal["CHN"] = "CHN"
+VARIANTS: Tuple[str, ...] = (VARIANT_G10, VARIANT_EM, VARIANT_CHN)
 
 #: The anchor currency of every EM/CHN pair (always USD-quoted by construction -- see
 #: steer/discovery.py's module docstring) and of most G10 crosses.
@@ -62,7 +62,7 @@ DRIVER_COMMODITY: Literal["commodity"] = "commodity"
 DRIVER_OFFSHORE_SPREAD: Literal["offshore_spread"] = "offshore_spread"
 DRIVER_FLOWS: Literal["flows"] = "flows"
 
-#: STEER's 5 canonical drivers, in the fixed order every universe's expected_signs/gold
+#: STEER's 5 canonical drivers, in the fixed order every variant's expected_signs/gold
 #: tables use -- see steer/config.py's StrategyConfig.drivers.
 DRIVER_NAMES: Tuple[str, ...] = (
     DRIVER_INTEREST_RATE_DIFFERENTIAL,

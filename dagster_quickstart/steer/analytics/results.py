@@ -2,7 +2,7 @@
 schemas for the three STEER table boundaries (features, estimates, signals) it and its
 upstream feature table are validated against.
 
-Bundles a pair's spot rate, this universe's driver series (whatever
+Bundles a pair's spot rate, this variant's driver series (whatever
 StrategyConfig.drivers holds for it -- 5 for G10/EM, 7 for CHN), the
 regression's design/response/fitted/residual, and its statistical
 diagnostics (coefficients, standard errors, p-values, z-score,
@@ -26,7 +26,7 @@ SteerResult.plot() had no relationship to where signals actually fire.
 Drivers are held as a `drivers: dict[str, pd.Series]` (driver name ->
 series), not fixed dataclass fields -- a fixed 5-field shape (the old
 design) has no room for CHN's 2 extra drivers (offshore_spread, flows) and
-would silently need per-universe subclasses or None-padding. `design`
+would silently need per-variant subclasses or None-padding. `design`
 derives the regression's X matrix (drivers + a constant) from this dict on
 demand.
 
@@ -64,7 +64,7 @@ gold.steer_result_summary (one row per series_code/as_of, the scalar/cross-secti
 the same mechanism gold.steer_estimates/gold.steer_signals already use, and the same DuckLake
 connection the rest of a run's DataAPI calls share (no second attach). Both tables are
 append-only: a re-run for the same pair/as_of writes a new snapshot rather than overwriting --
-load() returns the most recent one by default. Different universes writing different driver
+load() returns the most recent one by default. Different variants writing different driver
 sets to the same table is exactly what DataAPI.write_table()'s column-widening handles -- see
 that method's docstring (GenericTableRepository.write(), in the DuckLake data-access package).
 """
@@ -88,7 +88,7 @@ from dagster_quickstart.steer.constants import (
     SIGNAL_BUY,
     SIGNAL_NONE,
     SIGNAL_SELL,
-    UNIVERSES,
+    VARIANTS,
 )
 
 #: to_frame()'s fixed (non-driver) time-series columns -- everything else
@@ -128,12 +128,12 @@ class SteerResult:
     """
 
     series_code: str
-    universe: str
+    variant: str
     as_of: pd.Timestamp
     is_logged: bool
 
     spot: pd.Series
-    #: driver name -> series (this universe's StrategyConfig.drivers set).
+    #: driver name -> series (this variant's StrategyConfig.drivers set).
     drivers: Dict[str, pd.Series]
 
     response: pd.Series
@@ -227,7 +227,7 @@ class SteerResult:
         """
         row: dict = {
             "series_code": self.series_code,
-            "universe": self.universe,
+            "variant": self.variant,
             "as_of": self.as_of,
             "is_logged": self.is_logged,
             "z_score": self.z_score,
@@ -287,7 +287,7 @@ class SteerResult:
             ax.axhline(self.upper, color="tab:green", linestyle="--", label="target")
         if self.lower is not None:
             ax.axhline(self.lower, color="tab:red", linestyle="--", label="stop")
-        ax.set_title(f"{self.series_code} ({self.universe}) -- z={self.z_score:.2f}")
+        ax.set_title(f"{self.series_code} ({self.variant}) -- z={self.z_score:.2f}")
         ax.legend()
         return ax
 
@@ -311,7 +311,7 @@ class SteerResult:
 
 def build_steer_result(
     series_code: str,
-    universe: str,
+    variant: str,
     rate: pd.Series,
     drivers: pd.DataFrame,
     *,
@@ -324,7 +324,7 @@ def build_steer_result(
 ) -> SteerResult:
     """Build one pair's SteerResult from its raw rate + driver frame and an already-computed SteerEstimate.
 
-    `drivers` has this pair's universe's driver columns (StrategyConfig.drivers
+    `drivers` has this pair's variant's driver columns (StrategyConfig.drivers
     -- 5 for G10/EM, 7 for CHN); `estimate` is
     sign_check_and_reestimate's result for the identical
     rate/drivers/as_of/window_months -- see the module docstring for why
@@ -374,7 +374,7 @@ def build_steer_result(
 
     return SteerResult(
         series_code=series_code,
-        universe=universe,
+        variant=variant,
         as_of=pd.Timestamp(as_of),
         is_logged=is_logged,
         spot=rate_f.reindex(windowed.index),
@@ -411,12 +411,12 @@ def _finite(series) -> bool:
 
 
 def steer_features_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFrameSchema:
-    """Pandera schema for steer_features, for a specific universe's driver set (5 for G10/EM, 7 for CHN).
+    """Pandera schema for steer_features, for a specific variant's driver set (5 for G10/EM, 7 for CHN).
 
     A module-level constant can't do this -- CHN's steer_features has 2
     columns (offshore_spread, flows) a schema built from the fixed 5
     DRIVER_NAMES would never validate (or would silently ignore, since
-    strict=False). Build one from StrategyConfig.drivers per universe
+    strict=False). Build one from StrategyConfig.drivers per variant
     instead of importing a single shared schema.
     """
     return pa.DataFrameSchema(
@@ -444,11 +444,13 @@ def steer_features_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFrame
 
 
 def steer_estimates_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFrameSchema:
-    """Pandera schema for gold.steer_estimates, for a specific universe's driver set -- see steer_features_schema."""
+    """Pandera schema for gold.steer_estimates, for a specific variant's driver set -- see steer_features_schema."""
     return pa.DataFrameSchema(
         columns={
             "date": pa.Column(pa.DateTime, nullable=False),
-            "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
+            # Column is "universe", not "variant" -- the persisted gold.steer_estimates column
+            # name; see steer/orm.py's module docstring.
+            "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(VARIANTS)),
             "series_code": pa.Column(str, nullable=False),
             "is_logged": pa.Column(bool, nullable=False),
             "const_coef": pa.Column(
@@ -477,7 +479,9 @@ def steer_estimates_schema(drivers: Sequence[str] = DRIVER_NAMES) -> pa.DataFram
 STEER_SIGNALS_SCHEMA = pa.DataFrameSchema(
     columns={
         "date": pa.Column(pa.DateTime, nullable=False),
-        "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(UNIVERSES)),
+        # Column is "universe", not "variant" -- the persisted gold.steer_signals column name;
+        # see steer/orm.py's module docstring.
+        "universe": pa.Column(str, nullable=False, checks=pa.Check.isin(VARIANTS)),
         "series_code": pa.Column(str, nullable=False),
         "signal": pa.Column(
             str, nullable=False, checks=pa.Check.isin((SIGNAL_BUY, SIGNAL_SELL, SIGNAL_NONE))

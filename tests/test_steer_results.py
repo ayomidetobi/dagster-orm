@@ -10,6 +10,11 @@ import pytest
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.analytics.estimation import sign_check_and_reestimate
 from dagster_quickstart.steer.analytics.results import SteerResult, build_steer_result
+from dagster_quickstart.steer.orm import (
+    GOLD_SCHEMA,
+    STEER_RESULT_SUMMARY_TABLE,
+    STEER_RESULTS_TABLE,
+)
 
 
 class _EmptyMetadataStorage:
@@ -439,7 +444,7 @@ def test_cross_section_is_one_flat_row_with_named_coefficients(cointegrated_syst
     row = result.cross_section()
 
     assert row["series_code"] == "AUDJPY_SPOT_0004"
-    assert row["universe"] == "G10"
+    assert row["variant"] == "G10"
     assert row["upper"] == 1.5
     assert row["coefficient_interest_rate_differential"] == pytest.approx(0.5, abs=0.05)
     assert "standard_error_interest_rate_differential" in row
@@ -465,7 +470,7 @@ def test_save_and_load_round_trips_every_field(cointegrated_system, data_api):
     loaded = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
 
     assert loaded.series_code == result.series_code
-    assert loaded.universe == result.universe
+    assert loaded.variant == result.variant
     assert loaded.is_logged == result.is_logged
     assert loaded.upper == result.upper
     assert loaded.lower == result.lower
@@ -598,3 +603,21 @@ def test_g10_and_chn_summaries_coexist_with_different_driver_columns(data_api, c
         "interest_rate_differential", "yield_curve_or_cds", "local_equity", "global_equity", "commodity",
     }
     assert "offshore_spread" in chn_loaded.drivers
+
+
+def test_save_never_produces_a_variant_column_only_universe(cointegrated_system, data_api):
+    """Acceptance criterion 6: the persisted column is (deliberately) still "universe", not
+    "variant" -- see steer/orm.py's module docstring. Guards against exactly the regression
+    this rename risked: a stray "variant" key surviving into a write_table() call would widen
+    gold.steer_results/gold.steer_result_summary with a second, half-populated column instead
+    of reusing the existing one, and every pre-rename snapshot would silently stop loading."""
+    result = _build(cointegrated_system)
+    result.save(data_api)
+
+    timeseries = data_api.read_table(GOLD_SCHEMA, STEER_RESULTS_TABLE).frame
+    summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE).frame
+
+    assert "universe" in timeseries.columns
+    assert "variant" not in timeseries.columns
+    assert "universe" in summary.columns
+    assert "variant" not in summary.columns

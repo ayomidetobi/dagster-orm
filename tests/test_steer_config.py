@@ -10,7 +10,7 @@ from dagster_quickstart.steer.config import DRIVER_NAMES, GLOBAL_DRIVERS, Strate
 _CHN_DRIVERS = DRIVER_NAMES + ("offshore_spread", "flows")
 
 _VALID_KWARGS = dict(
-    universe="G10",
+    variant="G10",
     window_months=12,
     stop_reward_ratio=2.0,
     logged_rate_threshold=0.01,
@@ -27,7 +27,7 @@ _VALID_KWARGS = dict(
 def test_valid_config_round_trips():
     config = StrategyConfig(**_VALID_KWARGS)
 
-    assert config.universe == "G10"
+    assert config.variant == "G10"
     assert config.z_threshold == 1.5  # default
     assert config.global_equity_series == GLOBAL_DRIVERS.global_equity_series
 
@@ -52,25 +52,25 @@ def test_global_equity_series_is_the_shared_instance_not_a_field():
         StrategyConfig(**kwargs)
 
 
-def test_every_universe_gets_the_identical_global_drivers():
-    g10 = StrategyConfig(**{**_VALID_KWARGS, "universe": "G10"})
-    em = StrategyConfig(**{**_VALID_KWARGS, "universe": "EM"})
+def test_every_variant_gets_the_identical_global_drivers():
+    g10 = StrategyConfig(**{**_VALID_KWARGS, "variant": "G10"})
+    em = StrategyConfig(**{**_VALID_KWARGS, "variant": "EM"})
 
     assert g10.global_equity_series == em.global_equity_series == GLOBAL_DRIVERS.global_equity_series
     assert g10.commodity_series == em.commodity_series == GLOBAL_DRIVERS.commodity_series
 
 
-def test_unknown_universe_rejected():
-    kwargs = dict(_VALID_KWARGS, universe="APAC")
+def test_unknown_variant_rejected():
+    kwargs = dict(_VALID_KWARGS, variant="APAC")
 
     with pytest.raises(ValidationError):
         StrategyConfig(**kwargs)
 
 
-def test_chn_is_a_valid_universe():
-    config = StrategyConfig(**{**_VALID_KWARGS, "universe": "CHN"})
+def test_chn_is_a_valid_variant():
+    config = StrategyConfig(**{**_VALID_KWARGS, "variant": "CHN"})
 
-    assert config.universe == "CHN"
+    assert config.variant == "CHN"
 
 
 def test_extra_field_rejected():
@@ -89,7 +89,7 @@ def test_drivers_defaults_to_the_five_canonical_names():
 def test_chn_config_validates_with_seven_drivers():
     kwargs = dict(
         _VALID_KWARGS,
-        universe="CHN",
+        variant="CHN",
         drivers=_CHN_DRIVERS,
         expected_signs={
             **_VALID_KWARGS["expected_signs"],
@@ -106,7 +106,7 @@ def test_chn_config_validates_with_seven_drivers():
 def test_chn_drivers_reject_g10s_five_driver_expected_signs():
     """A 7-driver config's expected_signs must cover offshore_spread/flows too --
     G10's 5-key dict is missing them."""
-    kwargs = dict(_VALID_KWARGS, universe="CHN", drivers=_CHN_DRIVERS)
+    kwargs = dict(_VALID_KWARGS, variant="CHN", drivers=_CHN_DRIVERS)
 
     with pytest.raises(ValidationError, match="missing driver"):
         StrategyConfig(**kwargs)

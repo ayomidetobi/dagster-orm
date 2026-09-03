@@ -1,6 +1,6 @@
-"""Silver layer: materialize this universe's steer.pipeline.build_silver_frame result.
+"""Silver layer: materialize this variant's steer.pipeline.build_silver_frame result.
 
-One partition per universe (G10/EM/CHN, static -- see partitions.py).
+One partition per variant (G10/EM/CHN, static -- see partitions.py).
 Depends on steer_data_availability (same partitions_def, so Dagster aligns
 the partition and the IO manager hands this asset the upstream frame
 directly -- no manual S3/Parquet read) instead of re-discovering pairs and
@@ -42,13 +42,13 @@ from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
         AssetCheckSpec(
             name=FRESHNESS_CHECK_NAME,
             asset="steer_silver_prices",
-            description="Fails (WARN) if any pair in this universe isn't fresh as of the run date.",
+            description="Fails (WARN) if any pair in this variant isn't fresh as of the run date.",
         )
     ],
     group_name="steer",
 )
 def steer_silver_prices(context: AssetExecutionContext, steer_data_availability: pd.DataFrame):
-    """Fetch this universe's every pair's rate + drivers from DuckLake and conform them.
+    """Fetch this variant's every pair's rate + drivers from DuckLake and conform them.
 
     See steer.pipeline.build_silver_frame's docstring for what "blocked"/
     "stale" mean and why a pair is skipped rather than passed through
@@ -57,14 +57,14 @@ def steer_silver_prices(context: AssetExecutionContext, steer_data_availability:
     from dagster_quickstart.steer.source.discovery import pairs_from_availability_report
     from dagster_quickstart.steer.source.features import build_silver_frame
 
-    universe = context.partition_key
+    variant = context.partition_key
     data_api = context.resources.rewrite_data_api.api
-    strategy_config = context.resources.steer_config.for_universe(universe)
+    strategy_config = context.resources.steer_config.for_variant(variant)
 
     availabilities = pairs_from_availability_report(steer_data_availability)
     as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
 
-    result = build_silver_frame(data_api, universe, strategy_config, availabilities, as_of=as_of)
+    result = build_silver_frame(data_api, variant, strategy_config, availabilities, as_of=as_of)
 
     if result.chn_flows_cutover_error:
         context.log.warning(f"Could not resolve CHN flows cutover: {result.chn_flows_cutover_error}")
@@ -89,7 +89,7 @@ def steer_silver_prices(context: AssetExecutionContext, steer_data_availability:
     yield Output(
         result.frame,
         metadata={
-            "universe": universe,
+            "variant": variant,
             "pair_count": result.pair_count,
             "fetched_pair_count": result.fetched_pair_count,
             "blocked_pair_count": len(result.blocked_pairs),
@@ -97,6 +97,6 @@ def steer_silver_prices(context: AssetExecutionContext, steer_data_availability:
             "row_count": len(result.frame),
             "preview": MetadataValue.md(result.frame.tail(10).to_markdown())
             if not result.frame.empty
-            else MetadataValue.md("(no data available for this universe)"),
+            else MetadataValue.md("(no data available for this variant)"),
         },
     )

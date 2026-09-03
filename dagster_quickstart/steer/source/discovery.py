@@ -15,15 +15,15 @@ and RoleResolver below. RoleResolver fetches the whole metadata table
 *once* (get_metadata() with no filters) and indexes it in memory by
 (role, currency), rather than issuing one get_metadata() call per
 (role, currency) pair -- with ~195 catalog rows and ~106 distinct
-(role, currency) combinations across every universe, that was ~106 real
+(role, currency) combinations across every variant, that was ~106 real
 database round trips per run for a table small enough to just hold in
 memory. A role is looked up by currency alone (no market_development
 filter): USD's own rate/equity rows are tagged market_development="G10"
 in this catalog even though USD is the anchor leg of every EM/CHN pair
-too, so filtering role lookups by universe would silently fail to find
+too, so filtering role lookups by variant would silently fail to find
 them.
 
-Required roles differ by universe (see REQUIRED_ROLES):
+Required roles differ by variant (see REQUIRED_ROLES):
   - G10: swap_2y, rate_3m, yield_10y, local_equity, for BOTH legs.
     interest_rate_differential uses swap_2y (both legs); yield_curve_or_cds
     is the (3m - 10y) curve-slope differential, using rate_3m/yield_10y
@@ -34,7 +34,7 @@ Required roles differ by universe (see REQUIRED_ROLES):
     difference -- see steer/features.py). EM/CHN currently has no
     sovereign-yield coverage in this catalog, so there's no 3m/10y curve
     slope to build for them; cds_5y is the published methodology's driver
-    2 for these universes instead.
+    2 for these variants instead.
 
 CHN's cds_5y role resolves to CNHCDS_PX_LAST, a SYNTHETIC PLACEHOLDER (see
 its des_notes in meta_series_steer.csv) added on the assumption that CHN
@@ -54,15 +54,15 @@ missing per-country input, and never let a pair with missing genuine data
 reach estimation.
 
 steer_data_availability (assets/steer/availability_asset.py) does this
-resolution once per universe and persists every resolved (leg, role) as a
+resolution once per variant and persists every resolved (leg, role) as a
 flat column in its report (build_availability_report); steer_silver_prices
 depends on that asset and reconstructs each pair's PairAvailability from
 the report row (PairAvailability.from_report_row) instead of re-resolving
 from scratch -- the two assets used to duplicate all of this work.
 
-discover_pairs()/UNIVERSE_TO_DATASET_CLASS (which universe maps to which
+discover_pairs()/VARIANT_TO_DATASET_CLASS (which variant maps to which
 FX dataset class, and the metadata query that returns its pairs) live here
-too, not in assets/steer/ -- "which pairs does a universe contain" is
+too, not in assets/steer/ -- "which pairs does a variant contain" is
 discovery logic, the same as "which roles does a pair need"; only the
 rewrite.data_api.dataset.fx classes it queries are Dagster-free themselves.
 """
@@ -91,9 +91,9 @@ from dagster_quickstart.steer.constants import (
     ROLE_RATE_3M,
     ROLE_SWAP_2Y,
     ROLE_YIELD_10Y,
-    UNIVERSE_CHN,
-    UNIVERSE_EM,
-    UNIVERSE_G10,
+    VARIANT_CHN,
+    VARIANT_EM,
+    VARIANT_G10,
 )
 
 _FX_PAIR_PATTERN = re.compile(r"^([A-Z]{3})([A-Z]{3})_")
@@ -116,11 +116,11 @@ ROLE_FILTERS: Dict[str, Dict[str, List[str]]] = {
     ROLE_LOCAL_EQUITY: dict(sub_asset_class=["Equity Index"], market_segment=["Local"]),
 }
 
-#: universe -> (roles required for BOTH legs, roles required for the non-USD leg only).
+#: variant -> (roles required for BOTH legs, roles required for the non-USD leg only).
 REQUIRED_ROLES: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
-    UNIVERSE_G10: ((ROLE_SWAP_2Y, ROLE_RATE_3M, ROLE_YIELD_10Y, ROLE_LOCAL_EQUITY), ()),
-    UNIVERSE_EM: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
-    UNIVERSE_CHN: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
+    VARIANT_G10: ((ROLE_SWAP_2Y, ROLE_RATE_3M, ROLE_YIELD_10Y, ROLE_LOCAL_EQUITY), ()),
+    VARIANT_EM: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
+    VARIANT_CHN: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
 }
 
 
@@ -128,7 +128,7 @@ class RoleResolver:
     """Resolves (role, currency) -> series_code from one in-memory metadata snapshot.
 
     Replaces ~106 per-(role, currency) queries (one get_metadata() call per
-    role/currency combination, across every universe) with a single
+    role/currency combination, across every variant) with a single
     get_metadata() call, indexed here once.
     """
 
@@ -200,7 +200,7 @@ class PairAvailability:
     """
 
     series_code: str
-    universe: str
+    variant: str
     base_currency: Optional[str]
     quote_currency: Optional[str]
     resolved: Dict[Tuple[str, str], str] = field(default_factory=dict)
@@ -208,7 +208,7 @@ class PairAvailability:
 
     @property
     def blocked(self) -> bool:
-        """True if any role required for this universe/pair failed to resolve."""
+        """True if any role required for this variant/pair failed to resolve."""
         return bool(self.missing_reasons)
 
     @property
@@ -249,7 +249,7 @@ class PairAvailability:
 
         return cls(
             series_code=str(row["series_code"]),
-            universe=str(row["universe"]),
+            variant=str(row["variant"]),
             base_currency=_optional_str(row.get("base_currency")),
             quote_currency=_optional_str(row.get("quote_currency")),
             resolved=resolved,
@@ -259,12 +259,12 @@ class PairAvailability:
 
 def assess_pair_availability(
     series_code: str,
-    universe: str,
+    variant: str,
     resolver: RoleResolver,
 ) -> PairAvailability:
     """Assess one pair's driver-role availability against `resolver`'s in-memory snapshot.
 
-    Resolves every role REQUIRED_ROLES[universe] calls for -- both legs'
+    Resolves every role REQUIRED_ROLES[variant] calls for -- both legs'
     roles via resolver.resolve(role, base/quote currency), plus the
     non-USD leg's extra roles (e.g. cds_5y) via resolver.resolve(role,
     non_usd_leg) -- and reports the pair blocked if any of them come back
@@ -278,23 +278,23 @@ def assess_pair_availability(
         reason = f"Could not parse currency legs from series_code {series_code!r}."
         return PairAvailability(
             series_code=series_code,
-            universe=universe,
+            variant=variant,
             base_currency=None,
             quote_currency=None,
             missing_reasons={"parse": reason},
         )
 
-    if universe not in REQUIRED_ROLES:
-        reason = f"Unknown universe {universe!r} -- no REQUIRED_ROLES entry."
+    if variant not in REQUIRED_ROLES:
+        reason = f"Unknown variant {variant!r} -- no REQUIRED_ROLES entry."
         return PairAvailability(
             series_code=series_code,
-            universe=universe,
+            variant=variant,
             base_currency=base,
             quote_currency=quote,
-            missing_reasons={"universe": reason},
+            missing_reasons={"variant": reason},
         )
 
-    both_leg_roles, non_usd_roles = REQUIRED_ROLES[universe]
+    both_leg_roles, non_usd_roles = REQUIRED_ROLES[variant]
     resolved: Dict[Tuple[str, str], str] = {}
     missing_reasons: Dict[str, str] = {}
 
@@ -313,7 +313,7 @@ def assess_pair_availability(
         )
         return PairAvailability(
             series_code=series_code,
-            universe=universe,
+            variant=variant,
             base_currency=base,
             quote_currency=quote,
             resolved=resolved,
@@ -341,7 +341,7 @@ def assess_pair_availability(
 
     return PairAvailability(
         series_code=series_code,
-        universe=universe,
+        variant=variant,
         base_currency=base,
         quote_currency=quote,
         resolved=resolved,
@@ -357,7 +357,7 @@ def _report_role_columns() -> List[str]:
     produces. A column irrelevant to a given pair (e.g. base_cds_5y --
     every EM/CHN pair in this catalog has USD as the base, so cds_5y only
     ever resolves for the non-USD *quote* leg in practice) is simply
-    always null for it, same as any universe that doesn't use a role at
+    always null for it, same as any variant that doesn't use a role at
     all (e.g. G10 never populates any *_cds_5y column).
     """
     roles = [
@@ -369,16 +369,16 @@ def _report_role_columns() -> List[str]:
 
 
 def build_availability_report(
-    pairs_by_universe: Dict[str, pd.DataFrame],
+    pairs_by_variant: Dict[str, pd.DataFrame],
     data_api: Any,
 ) -> pd.DataFrame:
-    """Build the full data_availability report: one row per pair across every universe.
+    """Build the full data_availability report: one row per pair across every variant.
 
-    pairs_by_universe maps universe name ("G10"/"EM"/"CHN") -> that
-    universe's metadata frame (e.g. FXDevelopedMarkets().info).
+    pairs_by_variant maps variant name ("G10"/"EM"/"CHN") -> that
+    variant's metadata frame (e.g. FXDevelopedMarkets().info).
 
     Builds exactly ONE RoleResolver (one get_metadata() call) and shares it
-    across every pair/universe in this call -- role/currency combos repeat
+    across every pair/variant in this call -- role/currency combos repeat
     heavily (every pair has a USD leg), so resolving all of them from one
     in-memory snapshot instead of a fresh query per (role, currency) is
     what keeps this to a single database round trip regardless of pair
@@ -391,12 +391,12 @@ def build_availability_report(
     resolver = RoleResolver.from_data_api(data_api)
     role_columns = _report_role_columns()
     rows = []
-    for universe, metadata in pairs_by_universe.items():
+    for variant, metadata in pairs_by_variant.items():
         for series_code in metadata["series_code"]:
-            availability = assess_pair_availability(series_code, universe, resolver)
+            availability = assess_pair_availability(series_code, variant, resolver)
             row = {
                 "series_code": availability.series_code,
-                "universe": availability.universe,
+                "variant": availability.variant,
                 "base_currency": availability.base_currency,
                 "quote_currency": availability.quote_currency,
                 "blocked": availability.blocked,
@@ -407,20 +407,20 @@ def build_availability_report(
                     row[f"{leg}_{role}"] = availability.get(leg, role)
             rows.append(row)
     return pd.DataFrame(rows, columns=(
-        ["series_code", "universe", "base_currency", "quote_currency", "blocked", "block_reasons"]
+        ["series_code", "variant", "base_currency", "quote_currency", "blocked", "block_reasons"]
         + role_columns
     ))
 
 
-UNIVERSE_TO_DATASET_CLASS: Dict[str, Type[DatasetBase]] = {
-    UNIVERSE_G10: FXDevelopedMarkets,
-    UNIVERSE_EM: FXEmergingMarkets,
-    UNIVERSE_CHN: FXChina,
+VARIANT_TO_DATASET_CLASS: Dict[str, Type[DatasetBase]] = {
+    VARIANT_G10: FXDevelopedMarkets,
+    VARIANT_EM: FXEmergingMarkets,
+    VARIANT_CHN: FXChina,
 }
 
 
-def discover_pairs(universe: str, data_api: Any, *, require_real: bool = False) -> pd.DataFrame:
-    """Metadata for every real currency_pair (series_code) in `universe`.
+def discover_pairs(variant: str, data_api: Any, *, require_real: bool = False) -> pd.DataFrame:
+    """Metadata for every real currency_pair (series_code) in `variant`.
 
     require_real=True excludes any pair row with is_synthetic=True. All 67
     FX pair rows are is_synthetic=False (they're real, standard-convention
@@ -430,7 +430,7 @@ def discover_pairs(universe: str, data_api: Any, *, require_real: bool = False) 
     the 24 placeholder driver rows) doesn't also silently lose every pair.
     """
     DatasetBase.configure(data_api)
-    dataset_cls = UNIVERSE_TO_DATASET_CLASS[universe]
+    dataset_cls = VARIANT_TO_DATASET_CLASS[variant]
     metadata = dataset_cls().info
     if require_real and not metadata.empty and "is_synthetic" in metadata.columns:
         metadata = metadata[metadata["is_synthetic"] == False]  # noqa: E712
@@ -438,7 +438,7 @@ def discover_pairs(universe: str, data_api: Any, *, require_real: bool = False) 
 
 
 def pairs_from_availability_report(report: pd.DataFrame) -> List[PairAvailability]:
-    """Every PairAvailability in `report` -- one universe's build_availability_report output.
+    """Every PairAvailability in `report` -- one variant's build_availability_report output.
 
     Reconstructs each row via PairAvailability.from_report_row -- no
     data_api, no metadata query. steer_silver_prices calls this on

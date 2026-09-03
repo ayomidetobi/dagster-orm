@@ -232,7 +232,7 @@ def test_build_availability_report_includes_role_columns():
 
 
 @pytest.mark.parametrize(
-    "universe,series_code,resolver_rows",
+    "variant,series_code,resolver_rows",
     [
         (
             "G10",
@@ -265,21 +265,21 @@ def test_build_availability_report_includes_role_columns():
         ),
     ],
 )
-def test_from_report_row_round_trips_resolved_and_blocked(universe, series_code, resolver_rows):
+def test_from_report_row_round_trips_resolved_and_blocked(variant, series_code, resolver_rows):
     resolver = RoleResolver(pd.DataFrame(resolver_rows))
-    original = assess_pair_availability(series_code, universe, resolver)
+    original = assess_pair_availability(series_code, variant, resolver)
 
     class _Api:
         def get_metadata(self):
             return type("R", (), {"frame": pd.DataFrame(resolver_rows)})()
 
-    report = build_availability_report({universe: pd.DataFrame({"series_code": [series_code]})}, _Api())
+    report = build_availability_report({variant: pd.DataFrame({"series_code": [series_code]})}, _Api())
     row = report.iloc[0]
 
     rebuilt = PairAvailability.from_report_row(row)
 
     assert rebuilt.series_code == original.series_code
-    assert rebuilt.universe == original.universe
+    assert rebuilt.variant == original.variant
     assert rebuilt.base_currency == original.base_currency
     assert rebuilt.quote_currency == original.quote_currency
     assert rebuilt.resolved == original.resolved

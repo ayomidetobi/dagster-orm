@@ -36,9 +36,9 @@ class _StubDataAPI:
         return type("Result", (), {"frame": frame.reset_index(drop=True)})()
 
 
-def _strategy_config(universe: str, drivers=DRIVER_NAMES) -> StrategyConfig:
+def _strategy_config(variant: str, drivers=DRIVER_NAMES) -> StrategyConfig:
     return StrategyConfig(
-        universe=universe,
+        variant=variant,
         window_months=12,
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
@@ -50,7 +50,7 @@ def _strategy_config(universe: str, drivers=DRIVER_NAMES) -> StrategyConfig:
 def _g10_availability(series_code: str, base: str, quote: str) -> PairAvailability:
     return PairAvailability(
         series_code=series_code,
-        universe="G10",
+        variant="G10",
         base_currency=base,
         quote_currency=quote,
         resolved={
@@ -69,7 +69,7 @@ def _g10_availability(series_code: str, base: str, quote: str) -> PairAvailabili
 def _blocked_availability(series_code: str) -> PairAvailability:
     return PairAvailability(
         series_code=series_code,
-        universe="G10",
+        variant="G10",
         base_currency="AUD",
         quote_currency="USD",
         missing_reasons={"base:swap_2y": "No swap_2y series for AUD."},
@@ -168,7 +168,7 @@ def test_chn_flows_cutover_failure_is_reported_not_raised():
     as_of = pd.Timestamp("2024-06-01")
     availability = PairAvailability(
         series_code="USDCNH_PX_LAST",
-        universe="CHN",
+        variant="CHN",
         base_currency="USD",
         quote_currency="CNH",
         resolved={
@@ -195,7 +195,7 @@ def test_chn_flows_cutover_failure_is_reported_not_raised():
 def _em_availability(series_code: str, base: str, quote: str, non_usd: str) -> PairAvailability:
     return PairAvailability(
         series_code=series_code,
-        universe="EM",
+        variant="EM",
         base_currency=base,
         quote_currency=quote,
         resolved={
@@ -233,7 +233,7 @@ def test_chn_pair_fetches_successfully_with_a_resolved_cutover():
     as_of = pd.Timestamp("2024-06-01")
     availability = PairAvailability(
         series_code="USDCNH_PX_LAST",
-        universe="CHN",
+        variant="CHN",
         base_currency="USD",
         quote_currency="CNH",
         resolved={

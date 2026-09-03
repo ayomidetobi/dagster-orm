@@ -1,33 +1,33 @@
-"""StrategyConfig: per-universe (G10/EM/CHN) STEER model parameters. FX_G10/FX_EM/FX_CHN:
+"""StrategyConfig: per-variant (G10/EM/CHN) STEER model parameters. FX_G10/FX_EM/FX_CHN:
 code-defined instances of it, config and entry point in one object.
 
-One StrategyConfig per universe -- no "if universe == 'EM'" branching should
-ever appear in asset code; every universe-specific number (window length,
+One StrategyConfig per variant -- no "if variant == 'EM'" branching should
+ever appear in asset code; every variant-specific number (window length,
 z threshold, risk/reward ratio, logged-rate threshold, expected coefficient
 signs) lives here instead.
 
 Currency pairs and their rate series are NOT configured here anymore --
 they come straight from the datalake via rewrite.data_api.dataset.fx
 (FXDevelopedMarkets/FXEmergingMarkets/FXChina), fetched at *run time* inside
-each universe's asset (see assets/steer/pairs.py) -- G10/EM/CHN are
-independently-fetched static Dagster partitions (one per universe), and
-each partition's run processes every currency_pair in that universe as data,
+each variant's asset (see assets/steer/pairs.py) -- G10/EM/CHN are
+independently-fetched static Dagster partitions (one per variant), and
+each partition's run processes every currency_pair in that variant as data,
 not as separate Dagster partitions (see assets/steer/partitions.py). Two
 drivers are genuinely single global series applied identically to every
-pair in every universe (global_equity_series, commodity_series) -- see
+pair in every variant (global_equity_series, commodity_series) -- see
 GLOBAL_DRIVERS below, which is why they live in code once rather than as
-per-universe fields (that would let G10/EM/CHN's copies silently drift
+per-variant fields (that would let G10/EM/CHN's copies silently drift
 apart, contradicting "applied identically"). local_equity and the
 rate-based drivers (interest_rate_differential/yield_curve_or_cds) are
 discovered and availability-checked per pair instead (see
 steer/source/discovery.py) -- a pair missing genuine per-country data for
 either is blocked rather than silently regressed on a proxy.
 
-FX_G10/FX_EM/FX_CHN replace loading a universe's StrategyConfig from YAML + wiring a Steer by
+FX_G10/FX_EM/FX_CHN replace loading a variant's StrategyConfig from YAML + wiring a Steer by
 hand:
 
     strategy_config = load_strategy_config("strategy_configs/g10.yaml")
-    steer = Steer.from_data_api(data_api, universe="G10", strategy_config=strategy_config)
+    steer = Steer.from_data_api(data_api, variant="G10", strategy_config=strategy_config)
     results = steer.fit(lookback_days=5, cointegration="each")
 
 with:
@@ -35,17 +35,17 @@ with:
     from dagster_quickstart.steer.config import FX_G10
     results = FX_G10.fit(lookback_days=5, cointegration="each")
 
-FXUniverse subclasses StrategyConfig rather than replacing it -- every field, and the
+FXVariant subclasses StrategyConfig rather than replacing it -- every field, and the
 expected_signs-covers-drivers pydantic validation, is exactly StrategyConfig's; this module
-only adds .steer()/.fit() and the 3 module-level singletons + the UNIVERSES lookup dict, and
-freezes the instances (see FXUniverse's docstring for why).
+only adds .steer()/.fit() and the 3 module-level singletons + the VARIANTS lookup dict, and
+freezes the instances (see FXVariant's docstring for why).
 
 No Dagster import here (see tests/test_steer_library_boundary.py) -- same boundary as the rest
 of steer/. DataAPI (rewrite.data_api, not Dagster) is also never constructed at import time:
 `import dagster_quickstart.steer.config` must not open a Postgres/S3 connection --
 default_data_api() is only ever called lazily, from inside .steer()/.fit(), and only when the
-caller didn't pass its own data_api (see tests/test_steer_universes.py's
-test_importing_universes_constructs_no_data_api).
+caller didn't pass its own data_api (see tests/test_steer_variants.py's
+test_importing_config_constructs_no_data_api).
 """
 
 from __future__ import annotations
@@ -63,9 +63,9 @@ from dagster_quickstart.steer.constants import (
     DRIVER_NAMES,
     DRIVER_OFFSHORE_SPREAD,
     DRIVER_YIELD_CURVE_OR_CDS,
-    UNIVERSE_CHN,
-    UNIVERSE_EM,
-    UNIVERSE_G10,
+    VARIANT_CHN,
+    VARIANT_EM,
+    VARIANT_G10,
 )
 
 if TYPE_CHECKING:
@@ -74,12 +74,12 @@ if TYPE_CHECKING:
 
 
 class GlobalDriverConfig(BaseModel):
-    """The 2 STEER drivers that are the same single series_code for every universe.
+    """The 2 STEER drivers that are the same single series_code for every variant.
 
     global_equity_series/commodity_series are a curation choice (which
-    benchmark to use), not a per-universe setting -- G10/EM/CHN apply the
+    benchmark to use), not a per-variant setting -- G10/EM/CHN apply the
     identical series to every pair. Defined once here (in code) rather
-    than duplicated across every universe's config so the 3 universes
+    than duplicated across every variant's config so the 3 variants
     can't drift apart; StrategyConfig.global_equity_series/commodity_series
     read from GLOBAL_DRIVERS below instead of being their own fields.
     """
@@ -90,7 +90,7 @@ class GlobalDriverConfig(BaseModel):
     commodity_series: str
 
 
-#: The one shared instance every universe's StrategyConfig uses -- see
+#: The one shared instance every variant's StrategyConfig uses -- see
 #: GlobalDriverConfig's docstring. MXWO (MSCI World) and BRENT are the
 #: real global benchmarks in the STEER metadata catalog (meta_series_steer.csv).
 GLOBAL_DRIVERS = GlobalDriverConfig(
@@ -100,7 +100,7 @@ GLOBAL_DRIVERS = GlobalDriverConfig(
 
 
 class StrategyConfig(BaseModel):
-    """STEER model parameters for one universe (G10, EM, or CHN).
+    """STEER model parameters for one variant (G10, EM, or CHN).
 
     stop_reward_ratio is the reward:risk multiple (2.0 means a 2:1
     reward:risk stop/target -- see generate_signal, steer/analytics/estimation.py, for the
@@ -112,13 +112,13 @@ class StrategyConfig(BaseModel):
 
     global_equity_series/commodity_series are NOT StrategyConfig fields -- they're
     properties reading from the single shared GLOBAL_DRIVERS instance (see
-    its docstring for why), so every universe always sees the identical
-    value with no possibility of a per-universe copy drifting out of sync.
+    its docstring for why), so every variant always sees the identical
+    value with no possibility of a per-variant copy drifting out of sync.
     """
 
     model_config = {"extra": "forbid"}
 
-    universe: Literal["G10", "EM", "CHN"]
+    variant: Literal["G10", "EM", "CHN"]
     ticker_source: str = "bloomberg"
     window_months: int = Field(gt=0)
     z_threshold: float = Field(default=1.5, gt=0)
@@ -127,7 +127,7 @@ class StrategyConfig(BaseModel):
     logged_rate_vol_window_days: int = Field(default=20, gt=0)
     cointegration_significance: float = Field(default=0.05, gt=0, lt=1)
     min_observations: int = Field(default=40, gt=0)
-    #: This universe's driver set -- defaults to the 5 canonical
+    #: This variant's driver set -- defaults to the 5 canonical
     #: DRIVER_NAMES; FX_CHN below overrides it to add
     #: offshore_spread/flows on top, since analytics/estimation.py is generic over
     #: however many columns `drivers` (steer/source/features.py) produces.
@@ -173,13 +173,13 @@ def default_data_api() -> "DataAPI":
     return DataAPI(live=False)
 
 
-class FXUniverse(StrategyConfig):
-    """A STEER universe's parameters, with the pipeline attached.
+class FXVariant(StrategyConfig):
+    """A STEER variant's parameters, with the pipeline attached.
 
     Config and entry point in one object: FX_G10.fit(...) instead of loading YAML and wiring
     a Steer by hand. Adds no fields over StrategyConfig -- just .steer()/.fit() -- so every
     validation StrategyConfig already does (expected_signs covering exactly `drivers`, the
-    universe/expected_signs field constraints, etc.) applies unchanged.
+    variant/expected_signs field constraints, etc.) applies unchanged.
 
     frozen=True matters: FX_G10/FX_EM/FX_CHN below are module-level singletons shared by
     every caller in the process -- without it, `FX_G10.z_threshold = 2.0` in one script would
@@ -189,24 +189,24 @@ class FXUniverse(StrategyConfig):
 
         custom_g10 = FX_G10.model_copy(update={"z_threshold": 2.0})
 
-    model_copy() returns a new FXUniverse -- FX_G10 itself, and every other caller holding it,
+    model_copy() returns a new FXVariant -- FX_G10 itself, and every other caller holding it,
     is untouched.
     """
 
     model_config = {"extra": "forbid", "frozen": True}
 
     def steer(self, data_api: Optional[Any] = None) -> "Steer":
-        """A Steer wired to this universe's config, over `data_api` (default_data_api() if omitted)."""
+        """A Steer wired to this variant's config, over `data_api` (default_data_api() if omitted)."""
         from dagster_quickstart.steer.model import Steer
 
         return Steer.from_data_api(
             data_api if data_api is not None else default_data_api(),
-            universe=self.universe,
+            variant=self.variant,
             strategy_config=self,
         )
 
     def fit(self, *, data_api: Optional[Any] = None, **kwargs: Any) -> "SteerPanel":
-        """Fit every pair in this universe. See Steer.fit for the keyword arguments.
+        """Fit every pair in this variant. See Steer.fit for the keyword arguments.
 
         data_api defaults to a fresh default_data_api() -- pass one explicitly (a fake/stub in
         tests, or a DataAPI already wired to a specific run's cache) to override it without
@@ -218,11 +218,11 @@ class FXUniverse(StrategyConfig):
 #: Transcribed verbatim from the fields that used to live in the now-deleted
 #: strategy_configs/g10.yaml/em.yaml/chn.yaml (see git history) -- window_months,
 #: stop_reward_ratio, logged_rate_threshold, cointegration_significance, min_observations, and
-#: expected_signs all differ per universe; ticker_source and logged_rate_vol_window_days
+#: expected_signs all differ per variant; ticker_source and logged_rate_vol_window_days
 #: happen to be identical across all 3 but were explicit fields in every YAML file, so they're
 #: explicit here too.
-FX_G10 = FXUniverse(
-    universe=UNIVERSE_G10,
+FX_G10 = FXVariant(
+    variant=VARIANT_G10,
     ticker_source="bloomberg",
     window_months=12,
     z_threshold=1.5,
@@ -240,8 +240,8 @@ FX_G10 = FXUniverse(
     },
 )
 
-FX_EM = FXUniverse(
-    universe=UNIVERSE_EM,
+FX_EM = FXVariant(
+    variant=VARIANT_EM,
     ticker_source="bloomberg",
     window_months=6,
     z_threshold=1.5,
@@ -259,8 +259,8 @@ FX_EM = FXUniverse(
     },
 )
 
-FX_CHN = FXUniverse(
-    universe=UNIVERSE_CHN,
+FX_CHN = FXVariant(
+    variant=VARIANT_CHN,
     ticker_source="bloomberg",
     window_months=6,
     z_threshold=1.5,
@@ -285,6 +285,6 @@ FX_CHN = FXUniverse(
     },
 )
 
-#: universe name -> its FXUniverse -- for anything that resolves a universe by string (e.g. a
-#: CLI --universe flag; see steer/run.py).
-UNIVERSES: Dict[str, FXUniverse] = {u.universe: u for u in (FX_G10, FX_EM, FX_CHN)}
+#: variant name -> its FXVariant -- for anything that resolves a variant by string (e.g. a
+#: CLI --variant flag; see steer/run.py).
+VARIANTS: Dict[str, FXVariant] = {u.variant: u for u in (FX_G10, FX_EM, FX_CHN)}

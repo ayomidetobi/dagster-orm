@@ -73,9 +73,9 @@ class _VendorTaggedValueStorage:
         return None
 
 
-def _strategy_config(universe: str, drivers=DRIVER_NAMES) -> StrategyConfig:
+def _strategy_config(variant: str, drivers=DRIVER_NAMES) -> StrategyConfig:
     return StrategyConfig(
-        universe=universe,
+        variant=variant,
         window_months=12,
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
@@ -87,7 +87,7 @@ def _strategy_config(universe: str, drivers=DRIVER_NAMES) -> StrategyConfig:
 def _g10_availability(series_code: str, base: str, quote: str) -> PairAvailability:
     return PairAvailability(
         series_code=series_code,
-        universe="G10",
+        variant="G10",
         base_currency=base,
         quote_currency=quote,
         resolved={
@@ -106,7 +106,7 @@ def _g10_availability(series_code: str, base: str, quote: str) -> PairAvailabili
 def _em_availability(series_code: str, base: str, quote: str, non_usd: str) -> PairAvailability:
     return PairAvailability(
         series_code=series_code,
-        universe="EM",
+        variant="EM",
         base_currency=base,
         quote_currency=quote,
         resolved={

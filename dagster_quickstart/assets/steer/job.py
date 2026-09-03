@@ -1,10 +1,10 @@
 """steer_daily_run: the job + schedule that materialize every STEER partition daily.
 
 Job/partition design notes:
-  - STEER_PARTITIONS is a single static dimension -- universe (G10/EM/CHN,
+  - STEER_PARTITIONS is a single static dimension -- variant (G10/EM/CHN,
     see partitions.py's module docstring). currency_pair is NOT a Dagster
-    partition; each universe's run fetches and processes every pair in
-    that universe as data (see steer/discovery.py's discover_pairs()).
+    partition; each variant's run fetches and processes every pair in
+    that variant as data (see steer/discovery.py's discover_pairs()).
   - Because the partition set is static and small, the schedule needs no
     live datalake query and no partition-registration step (an earlier
     per-pair-partition design needed steer_pair_discovery_sensor for
@@ -13,10 +13,10 @@ Job/partition design notes:
     every time it's materialized, the same way ingest_bloomberg_values
     re-fetches everything fresh on every run rather than being
     date-partitioned.
-  - One universe partition's asset check failing (e.g. steer_silver_prices'
+  - One variant partition's asset check failing (e.g. steer_silver_prices'
     freshness check reporting some stale pairs) fails *that partition's*
     run only -- Dagster's per-partition run isolation means the other
-    universes' runs are unaffected. Within a partition, one pair's data
+    variants' runs are unaffected. Within a partition, one pair's data
     gap or cointegration failure never fails the whole run either -- see
     each asset's own per-pair try/except and steer/signals.py's NONE
     signal for a failed cointegration test.
@@ -48,9 +48,9 @@ _DAILY_9AM_TIMEZONE = "Europe/Lisbon"
     execution_timezone=_DAILY_9AM_TIMEZONE,
 )
 def steer_daily_schedule(context: ScheduleEvaluationContext):
-    """Launch one run per universe partition (G10, EM, CHN) -- see job.py's module docstring."""
-    for universe in STEER_PARTITIONS.get_partition_keys():
+    """Launch one run per variant partition (G10, EM, CHN) -- see job.py's module docstring."""
+    for variant in STEER_PARTITIONS.get_partition_keys():
         yield RunRequest(
-            run_key=f"steer_daily-{context.scheduled_execution_time.date()}-{universe}",
-            partition_key=universe,
+            run_key=f"steer_daily-{context.scheduled_execution_time.date()}-{variant}",
+            partition_key=variant,
         )

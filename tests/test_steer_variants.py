@@ -1,7 +1,7 @@
-"""Tests for steer.config's FXUniverse, FX_G10/FX_EM/FX_CHN, UNIVERSES, default_data_api().
+"""Tests for steer.config's FXVariant, FX_G10/FX_EM/FX_CHN, VARIANTS, default_data_api().
 
 Acceptance criterion 1 (FX_G10.fit() matches the explicit load_strategy_config +
-Steer.from_data_api path) is proven by wiring both through the identical FXUniverse instance
+Steer.from_data_api path) is proven by wiring both through the identical FXVariant instance
 and the identical fake data_api -- .steer()/.fit() are a thin delegation onto
 Steer.from_data_api(), not a second implementation, so this is enough to catch a regression in
 the wiring itself; the pipeline's actual correctness is tests/test_steer_model.py's job.
@@ -15,7 +15,7 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from dagster_quickstart.steer.config import DRIVER_NAMES, FX_CHN, FX_EM, FX_G10, UNIVERSES
+from dagster_quickstart.steer.config import DRIVER_NAMES, FX_CHN, FX_EM, FX_G10, VARIANTS
 from dagster_quickstart.steer.model import Steer
 from tests.test_steer_assets import (
     FakeRewriteDataAPIResource,
@@ -25,8 +25,8 @@ from tests.test_steer_assets import (
 from tests.test_steer_model import _chn_metadata, _chn_values, _em_metadata, _em_values
 
 
-def test_universes_dict_keys_by_universe():
-    assert UNIVERSES == {"G10": FX_G10, "EM": FX_EM, "CHN": FX_CHN}
+def test_variants_dict_keys_by_variant():
+    assert VARIANTS == {"G10": FX_G10, "EM": FX_EM, "CHN": FX_CHN}
 
 
 def test_g10_and_em_use_the_five_canonical_drivers():
@@ -40,7 +40,7 @@ def test_chn_has_seven_drivers_and_the_tightened_cointegration_significance():
     assert FX_CHN.cointegration_significance == 0.01
 
 
-def test_fx_universe_is_frozen():
+def test_fx_variant_is_frozen():
     """Acceptance criterion 5: FX_G10/FX_EM/FX_CHN are shared module-level singletons --
     mutating one must be rejected, not silently change every other caller's behavior."""
     with pytest.raises(ValidationError):
@@ -56,7 +56,7 @@ def test_model_copy_produces_an_independent_variant():
 
 
 @pytest.mark.parametrize(
-    "universe_obj,build_metadata,build_values,series_code",
+    "variant_obj,build_metadata,build_values,series_code",
     [
         (FX_G10, _unblocked_g10_metadata, _unblocked_g10_values, "EURUSD_PX_LAST"),
         (FX_EM, _em_metadata, _em_values, "USDZAR_PX_LAST"),
@@ -64,23 +64,23 @@ def test_model_copy_produces_an_independent_variant():
     ],
 )
 def test_fit_matches_the_explicit_steer_from_data_api_path(
-    universe_obj, build_metadata, build_values, series_code
+    variant_obj, build_metadata, build_values, series_code
 ):
     """Acceptance criterion 1, for one G10, one EM, and one CHN pair."""
     resource = FakeRewriteDataAPIResource(build_metadata(), build_values())
 
-    via_universe = universe_obj.fit(data_api=resource.api, lookback_days=1, cointegration="each")
+    via_variant = variant_obj.fit(data_api=resource.api, lookback_days=1, cointegration="each")
     via_explicit = Steer.from_data_api(
-        resource.api, universe=universe_obj.universe, strategy_config=universe_obj
+        resource.api, variant=variant_obj.variant, strategy_config=variant_obj
     ).fit(lookback_days=1, cointegration="each")
 
-    fitted_via_universe = via_universe[series_code]
+    fitted_via_variant = via_variant[series_code]
     fitted_via_explicit = via_explicit[series_code]
 
-    assert fitted_via_universe.coefficient.equals(fitted_via_explicit.coefficient)
-    assert fitted_via_universe.z_score == fitted_via_explicit.z_score
-    assert fitted_via_universe.cointegration_passed == fitted_via_explicit.cointegration_passed
-    assert fitted_via_universe.dropped_variables == fitted_via_explicit.dropped_variables
+    assert fitted_via_variant.coefficient.equals(fitted_via_explicit.coefficient)
+    assert fitted_via_variant.z_score == fitted_via_explicit.z_score
+    assert fitted_via_variant.cointegration_passed == fitted_via_explicit.cointegration_passed
+    assert fitted_via_variant.dropped_variables == fitted_via_explicit.dropped_variables
 
 
 def test_importing_config_constructs_no_data_api(monkeypatch):
@@ -94,4 +94,4 @@ def test_importing_config_constructs_no_data_api(monkeypatch):
     sys.modules.pop("dagster_quickstart.steer.config", None)
     module = importlib.import_module("dagster_quickstart.steer.config")
 
-    assert module.FX_G10.universe == "G10"
+    assert module.FX_G10.variant == "G10"

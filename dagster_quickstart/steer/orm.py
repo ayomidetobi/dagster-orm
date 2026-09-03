@@ -14,6 +14,19 @@ above analytics/ in the import direction: constants, errors -> source/ -> analyt
 orm, model -> run), so the delegation has to run the other way: this module imports SteerResult
 at module level (to build/accept one), and SteerResult.save()/.load() import save_result()/
 load_result() only at call time, once both modules have finished loading.
+
+IMPORTANT -- universe/variant naming mismatch, deliberate: every Python-level name for the
+G10/EM/CHN axis was renamed `variant` (StrategyConfig.variant, SteerResult.variant, etc.), but
+the persisted column in every gold table (steer_estimates, steer_signals, steer_results,
+steer_result_summary) is still literally named `universe` -- gold.steer_estimates/
+gold.steer_signals already hold real rows (written by assets/steer/estimate_asset.py and
+signal_asset.py, not by this module) under that column name, and DataAPI.write_table() widens
+tables *by column name*: writing `variant` while a table still has `universe` would produce
+both columns, each half-populated, with no error raised, and every pre-rename snapshot would
+silently stop loading. save_result()/load_result() are the ONLY place that mismatch is bridged
+-- they read/write the DataFrame column as "universe" and the SteerResult attribute as
+`.variant`, so every other module in this package can use `variant` consistently and never has
+to know the physical column disagrees with it.
 """
 
 from __future__ import annotations
@@ -57,17 +70,22 @@ def save_result(result: SteerResult, data_api: Any) -> None:
 
     Writes to gold.steer_results (the time-series fields, via
     result.to_frame()) and gold.steer_result_summary (the scalar fields, via
-    result.cross_section()) -- both keyed by series_code/universe/as_of.
+    result.cross_section()) -- both keyed by series_code/variant/as_of.
     """
     timeseries = result.to_frame().copy()
     timeseries.index.name = "date"
     timeseries = timeseries.reset_index()
     timeseries.insert(0, "as_of", result.as_of)
-    timeseries.insert(0, "universe", result.universe)
+    # Persisted column is "universe", not "variant" -- see module docstring.
+    timeseries.insert(0, "universe", result.variant)
     timeseries.insert(0, "series_code", result.series_code)
     data_api.write_table(GOLD_SCHEMA, STEER_RESULTS_TABLE, timeseries)
 
-    summary = pd.DataFrame([result.cross_section()])
+    # cross_section() uses "variant" like every other in-memory SteerResult view -- renamed to
+    # "universe" only here, at the point this row becomes a persisted gold.steer_result_summary
+    # row (see module docstring).
+    summary_row = result.cross_section().rename({"variant": "universe"})
+    summary = pd.DataFrame([summary_row])
     data_api.write_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, summary)
 
 
@@ -81,7 +99,8 @@ def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp
     gold.steer_results that isn't spot/response/fitted/residual/
     upper_bound/lower_bound/date/as_of/universe/series_code" -- there's
     no fixed driver-name list to check against any more (see
-    steer/analytics/results.py's module docstring).
+    steer/analytics/results.py's module docstring). ("universe", not
+    "variant" -- the persisted column name; see module docstring.)
     """
     summary = data_api.read_table(
         GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, series_code=series_code
@@ -108,9 +127,9 @@ def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp
         column
         for column in timeseries.columns
         if column not in _FIXED_TIMESERIES_COLUMNS
-        and column not in ("as_of", "universe", "series_code")
+        and column not in ("as_of", "universe", "series_code")  # "universe" -- see module docstring
         # A column entirely NaN for this pair is padding from another
-        # universe's wider driver set sharing this physical table (see
+        # variant's wider driver set sharing this physical table (see
         # GenericTableRepository.write()'s column widening), not one of
         # this pair's own drivers.
         and not timeseries[column].isna().all()
@@ -118,7 +137,7 @@ def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp
     drivers = {name: timeseries[name] for name in driver_names}
 
     def _prefixed(prefix: str) -> pd.Series:
-        # pd.notna(v) drops padding from another universe's wider
+        # pd.notna(v) drops padding from another variant's wider
         # driver set sharing this physical table (see the driver_names
         # comment above) -- not a real coefficient/std-error/p-value
         # for this pair.
@@ -138,7 +157,7 @@ def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp
 
     return SteerResult(
         series_code=series_code,
-        universe=row["universe"],
+        variant=row["universe"],  # persisted column is "universe" -- see module docstring
         as_of=row_as_of,
         is_logged=bool(row["is_logged"]),
         spot=timeseries["spot"],

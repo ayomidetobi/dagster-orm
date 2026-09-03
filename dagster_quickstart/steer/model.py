@@ -38,7 +38,7 @@ from dagster_quickstart.steer.config import StrategyConfig
 from dagster_quickstart.steer.constants import (
     COINTEGRATION_MODE_EACH,
     COINTEGRATION_MODE_LATEST,
-    UNIVERSE_CHN,
+    VARIANT_CHN,
 )
 from dagster_quickstart.steer.errors import InsufficientDataError
 
@@ -77,7 +77,7 @@ class SteerPanel:
     blocked at fit() time (never fetched, let alone fitted).
     """
 
-    universe: str
+    variant: str
     z_threshold: float
     results: Dict[pd.Timestamp, Dict[str, SteerResult]] = field(default_factory=dict)
     signals_by_date: Dict[pd.Timestamp, Dict[str, SteerSignal]] = field(default_factory=dict)
@@ -91,7 +91,7 @@ class SteerPanel:
     def _resolve_as_of(self, as_of: Union[int, str, pd.Timestamp, None]) -> pd.Timestamp:
         dates = self.as_of_dates
         if not dates:
-            raise LookupError(f"No fitted dates in this SteerPanel ({self.universe}).")
+            raise LookupError(f"No fitted dates in this SteerPanel ({self.variant}).")
         if as_of is None:
             return dates[-1]
         if isinstance(as_of, int):
@@ -126,7 +126,7 @@ class SteerPanel:
         resolved = self._resolve_as_of(as_of)
         by_pair = self.results[resolved]
         if series_code not in by_pair:
-            raise KeyError(f"{series_code!r} was not fitted as of {resolved} ({self.universe}).")
+            raise KeyError(f"{series_code!r} was not fitted as of {resolved} ({self.variant}).")
         return by_pair[series_code]
 
     def signals(self, as_of: Union[int, str, pd.Timestamp, None] = None) -> pd.DataFrame:
@@ -197,7 +197,7 @@ class SteerPanel:
         ax.axvline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
         ax.axvline(0, color="black", linewidth=0.8)
         ax.set_xlabel("z-score")
-        ax.set_title(f"{self.universe} z-scores as of {resolved.date()}")
+        ax.set_title(f"{self.variant} z-scores as of {resolved.date()}")
         return ax
 
     def plot_z_history(self, series_codes: Optional[Sequence[str]] = None):
@@ -234,7 +234,7 @@ class SteerPanel:
         ax.axhline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_ylabel("z-score")
-        ax.set_title(f"{self.universe} z-score history")
+        ax.set_title(f"{self.variant} z-score history")
         ax.legend()
         return ax
 
@@ -248,7 +248,7 @@ class SteerPanel:
     def load(
         cls,
         data_api: Any,
-        universe: str,
+        variant: str,
         as_of: Optional[pd.Timestamp] = None,
     ) -> "SteerPanel":
         """Rebuild a SteerPanel from storage -- one SteerResult.load() per series_code found.
@@ -259,9 +259,11 @@ class SteerPanel:
         """
         from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
 
-        summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=universe).frame
+        # The persisted gold-table column is still named "universe" (see steer/orm.py's module
+        # docstring) -- `variant` is the Python-level name.
+        summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=variant).frame
         if summary.empty:
-            return cls(universe=universe, z_threshold=float("nan"))
+            return cls(variant=variant, z_threshold=float("nan"))
 
         summary = summary.copy()
         summary["as_of"] = pd.to_datetime(summary["as_of"])
@@ -273,7 +275,7 @@ class SteerPanel:
             result = SteerResult.load(data_api, str(series_code), as_of=as_of)
             results.setdefault(result.as_of, {})[str(series_code)] = result
 
-        return cls(universe=universe, z_threshold=float("nan"), results=results)
+        return cls(variant=variant, z_threshold=float("nan"), results=results)
 
 
 def _scalar_field(result: SteerResult, field_name: str) -> Any:
@@ -287,7 +289,7 @@ def _scalar_field(result: SteerResult, field_name: str) -> Any:
 
 
 class Steer:
-    """Fit STEER across every pair in one universe.
+    """Fit STEER across every pair in one variant.
 
     A facade over the existing pipeline -- discovery, features, estimation,
     cointegration, signals -- not a reimplementation of any of it. See
@@ -296,14 +298,14 @@ class Steer:
     exactly (same functions, same arguments, same StrategyConfig fields).
     """
 
-    def __init__(self, data_api: Any, *, universe: str, strategy_config: StrategyConfig) -> None:
+    def __init__(self, data_api: Any, *, variant: str, strategy_config: StrategyConfig) -> None:
         self._data_api = data_api
-        self.universe = universe
+        self.variant = variant
         self.strategy_config = strategy_config
 
     @classmethod
-    def from_data_api(cls, data_api: Any, *, universe: str, strategy_config: StrategyConfig) -> "Steer":
-        return cls(data_api, universe=universe, strategy_config=strategy_config)
+    def from_data_api(cls, data_api: Any, *, variant: str, strategy_config: StrategyConfig) -> "Steer":
+        return cls(data_api, variant=variant, strategy_config=strategy_config)
 
     def fit(
         self,
@@ -313,7 +315,7 @@ class Steer:
         cointegration: CointegrationMode = COINTEGRATION_MODE_LATEST,
         pairs: Optional[Sequence[str]] = None,
     ) -> SteerPanel:
-        """Fit every (non-blocked) pair in this universe over the trailing `lookback_days`.
+        """Fit every (non-blocked) pair in this variant over the trailing `lookback_days`.
 
         as_of=None means the latest date available in the fetched data (not
         wall-clock "now") -- the max rate-series date across every pair
@@ -372,13 +374,13 @@ class Steer:
             raise ValueError(f'cointegration must be "latest" or "each", got {cointegration!r}')
 
         config = self.strategy_config
-        empty = SteerPanel(universe=self.universe, z_threshold=config.z_threshold)
+        empty = SteerPanel(variant=self.variant, z_threshold=config.z_threshold)
 
-        pair_metadata = discover_pairs(self.universe, self._data_api)
+        pair_metadata = discover_pairs(self.variant, self._data_api)
         if pair_metadata.empty:
             return empty
 
-        report = build_availability_report({self.universe: pair_metadata}, self._data_api)
+        report = build_availability_report({self.variant: pair_metadata}, self._data_api)
         availabilities = pairs_from_availability_report(report)
         if pairs is not None:
             wanted = set(pairs)
@@ -393,7 +395,7 @@ class Steer:
                 available.append(availability)
 
         if not available:
-            return SteerPanel(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerPanel(variant=self.variant, z_threshold=config.z_threshold, blocked=blocked)
 
         all_series_codes = required_series_codes(
             ((a.series_code, a) for a in available), config
@@ -401,7 +403,7 @@ class Steer:
         driver_values = DriverValues.load(self._data_api, all_series_codes)
 
         chn_flows_cutover = None
-        if self.universe == UNIVERSE_CHN:
+        if self.variant == VARIANT_CHN:
             try:
                 chn_flows_cutover = resolve_flows_cutover(self._data_api)
             except ValueError:
@@ -430,7 +432,7 @@ class Steer:
             pair_features[availability.series_code] = features
 
         if not pair_features:
-            return SteerPanel(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerPanel(variant=self.variant, z_threshold=config.z_threshold, blocked=blocked)
 
         resolved_as_of = (
             pd.Timestamp(as_of)
@@ -443,7 +445,7 @@ class Steer:
         calendar = [timestamp for timestamp in calendar if timestamp <= resolved_as_of]
         if not calendar:
             raise InsufficientDataError(
-                f"No data on or before {resolved_as_of} for universe {self.universe!r}."
+                f"No data on or before {resolved_as_of} for variant {self.variant!r}."
             )
         fit_dates = calendar[-lookback_days:]
 
@@ -515,7 +517,7 @@ class Steer:
 
                 result = build_steer_result(
                     series_code,
-                    self.universe,
+                    self.variant,
                     rate,
                     drivers,
                     estimate=estimate,
@@ -533,7 +535,7 @@ class Steer:
                 signals_by_date[fit_date] = date_signals
 
         return SteerPanel(
-            universe=self.universe,
+            variant=self.variant,
             z_threshold=config.z_threshold,
             results=results,
             signals_by_date=signals_by_date,

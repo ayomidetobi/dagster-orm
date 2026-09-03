@@ -5,7 +5,7 @@ attaches the real Postgres+S3 DuckLake catalog, same as scripts/example_dataapi.
 STEER metadata catalog has already been ingested (see assets/load_metaseries/asset.py).
 
 Usage:
-    python -m dagster_quickstart.steer [--universe G10] [--lookback 5] [--outdir ./steer_plots]
+    python -m dagster_quickstart.steer [--variant G10] [--lookback 5] [--outdir ./steer_plots]
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import matplotlib
 
 matplotlib.use("Agg")  # non-interactive backend -- this script saves PNGs, never plt.show()
 
-from dagster_quickstart.steer.config import UNIVERSES
+from dagster_quickstart.steer.config import VARIANTS
 
 
 def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
@@ -32,7 +32,7 @@ def print_separator(text: str = "", char: str = "=", length: int = 60) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--universe", default="G10", choices=["G10", "EM", "CHN"])
+    parser.add_argument("--variant", default="G10", choices=["G10", "EM", "CHN"])
     parser.add_argument("--lookback", type=int, default=5, help="lookback_days for Steer.fit()")
     parser.add_argument("--outdir", default="./steer_plots", help="directory to write PNGs into")
     args = parser.parse_args()
@@ -40,13 +40,13 @@ def main() -> int:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    print_separator(f"Steer demo -- universe={args.universe}, lookback_days={args.lookback}")
+    print_separator(f"Steer demo -- variant={args.variant}, lookback_days={args.lookback}")
 
-    universe = UNIVERSES[args.universe]
-    # universe.fit() builds its own zero-config DataAPI(live=False) under the hood (see
+    variant = VARIANTS[args.variant]
+    # variant.fit() builds its own zero-config DataAPI(live=False) under the hood (see
     # steer/config.py's default_data_api()) -- same DuckLake connection example_dataapi.py
     # wires up explicitly.
-    results = universe.fit(lookback_days=args.lookback, cointegration="each")
+    results = variant.fit(lookback_days=args.lookback, cointegration="each")
 
     fitted_pairs = sorted(results.results.get(results.as_of_dates[-1], {})) if results.as_of_dates else []
 
@@ -59,7 +59,7 @@ def main() -> int:
 
     if not fitted_pairs:
         print_separator("No pairs fitted -- nothing to plot")
-        print("Every pair in this universe was blocked; see reasons above.", file=sys.stderr)
+        print("Every pair in this variant was blocked; see reasons above.", file=sys.stderr)
         return 1
 
     print_separator("Cross-section (latest date), sorted by |z-score| descending")

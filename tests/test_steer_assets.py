@@ -13,10 +13,10 @@ writes) somewhere real to read/write.
 
 METADATA/PAIRS below deliberately have no role-filter coverage (see
 steer/discovery.py's ROLE_FILTERS) for either pair's legs, so every pair
-in that fixture stays blocked -- exercising the per-universe loop and the
+in that fixture stays blocked -- exercising the per-variant loop and the
 blocking/skip path, which is real, verified behavior. The role-resolution
 logic itself (assess_pair_availability -- which roles/legs are required
-per universe, non-USD-leg-only roles, etc.) is covered directly by
+per variant, non-USD-leg-only roles, etc.) is covered directly by
 test_steer_discovery.py's pure-function tests instead.
 test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair
 below is the opposite case: a fully-resolvable G10 pair, proving the new
@@ -44,7 +44,7 @@ from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.config import StrategyConfig
 from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
 
-UNIVERSE = "G10"
+VARIANT = "G10"
 PAIRS = ["AUDJPY_PX_LAST", "EURGBP_PX_LAST"]
 
 #: FX-pair rows have no role-filter columns filled in -- deliberately, so
@@ -153,7 +153,7 @@ class FakeRewriteDataAPIResource:
 
 def _strategy_config() -> StrategyConfig:
     return StrategyConfig(
-        universe=UNIVERSE,
+        variant=VARIANT,
         ticker_source="bloomberg",
         window_months=12,
         stop_reward_ratio=2.0,
@@ -171,10 +171,10 @@ def _strategy_config() -> StrategyConfig:
 
 class FakeSteerConfigResource:
     def __init__(self, *configs: StrategyConfig):
-        self._configs = {config.universe: config for config in configs}
+        self._configs = {config.variant: config for config in configs}
 
-    def for_universe(self, universe: str) -> StrategyConfig:
-        return self._configs[universe]
+    def for_variant(self, variant: str) -> StrategyConfig:
+        return self._configs[variant]
 
 
 @pytest.fixture
@@ -186,9 +186,9 @@ def resources():
 
 
 def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resources):
-    """local_equity is never available (see steer/discovery.py) -- every pair in the universe is blocked,
+    """local_equity is never available (see steer/discovery.py) -- every pair in the variant is blocked,
     and the whole chain should skip cleanly end to end rather than fail, with nothing written to the
-    gold tables. Both pairs in the universe are discovered and processed within ONE partition run."""
+    gold tables. Both pairs in the variant are discovered and processed within ONE partition run."""
     result = materialize(
         [
             steer_data_availability,
@@ -199,7 +199,7 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
             steer_signal,
         ],
         resources=resources,
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
 
@@ -224,18 +224,18 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
     assert signals_table.empty
 
 
-def test_data_availability_reports_every_pair_in_the_universe(resources):
+def test_data_availability_reports_every_pair_in_the_variant(resources):
     result = materialize(
         [steer_data_availability],
         resources={"rewrite_data_api": resources["rewrite_data_api"]},
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
 
     report = result.output_for_node("steer_data_availability", output_name="result")
     assert set(report["series_code"]) == set(PAIRS)
-    assert (report["universe"] == UNIVERSE).all()
+    assert (report["variant"] == VARIANT).all()
     assert report["blocked"].all()
     assert report["block_reasons"].str.contains("local_equity").all()
 
@@ -247,7 +247,7 @@ def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
             "rewrite_data_api": resources["rewrite_data_api"],
             "steer_config": resources["steer_config"],
         },
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
@@ -351,7 +351,7 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
             steer_signal,
         ],
         resources=resources,
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
 
@@ -376,6 +376,15 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
     signals_table = data_api.read_table(GOLD_SCHEMA, STEER_SIGNALS_TABLE).frame
     assert not estimates_table.empty
     assert not signals_table.empty
+
+    # Acceptance criterion 6: the persisted column is (deliberately) still "universe", not
+    # "variant" -- see steer/orm.py's module docstring. gold.steer_estimates/gold.steer_signals
+    # already hold real rows under "universe"; a stray "variant" column would mean a write
+    # somewhere in estimate_asset.py/signal_asset.py regressed back to the Python-level name.
+    assert "universe" in estimates_table.columns
+    assert "variant" not in estimates_table.columns
+    assert "universe" in signals_table.columns
+    assert "variant" not in signals_table.columns
 
 
 def _wrap_with_call_counter(api, method_name: str) -> dict:
@@ -403,7 +412,7 @@ def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(
     materialize(
         [steer_data_availability],
         resources={"rewrite_data_api": resources["rewrite_data_api"]},
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     availability_only_calls = availability_only_counter["count"]
@@ -416,7 +425,7 @@ def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(
     materialize(
         [steer_data_availability, steer_silver_prices],
         resources=both_resources,
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
 
@@ -436,7 +445,7 @@ def test_blocked_pair_log_lines_are_unchanged_in_wording_and_count(resources, ca
     materialize(
         [steer_data_availability, steer_silver_prices],
         resources=resources,
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
 
@@ -459,7 +468,7 @@ def test_silver_asset_output_matches_build_silver_frame_called_directly(resource
     result = materialize(
         [steer_data_availability, steer_silver_prices],
         resources=resources,
-        partition_key=UNIVERSE,
+        partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
@@ -477,8 +486,8 @@ def test_silver_asset_output_matches_build_silver_frame_called_directly(resource
     as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
     direct_result = build_silver_frame(
         resources["rewrite_data_api"].api,
-        UNIVERSE,
-        resources["steer_config"].for_universe(UNIVERSE),
+        VARIANT,
+        resources["steer_config"].for_variant(VARIANT),
         availabilities,
         as_of=as_of,
     )
