@@ -704,3 +704,29 @@ def test_to_frame_is_long_form_tagged_with_series_code_and_as_of():
     assert set(frame["as_of"]) == set(results.as_of_dates)
     assert len(frame) == sum(len(result.to_frame()) for by_pair in results.results.values() for result in by_pair.values())
     assert "fair_value" in frame.columns
+
+
+def test_loaded_steer_results_signals_include_signal_and_reason():
+    """Acceptance criterion 5: signals() used to come back empty (or raise) on a SteerResults
+    rebuilt via SteerResults.load(), since signals_by_date was never persisted -- now that
+    PairResult.signal round-trips through save()/load() like everything else, a loaded
+    SteerResults' signals() should match a freshly-fit one's."""
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    fitted = steer.fit(lookback_days=1)
+    fitted.save(resource.api)
+
+    loaded = SteerResults.load(resource.api, "G10")
+    loaded_signals = loaded.signals().set_index("series_code")
+    fitted_signals = fitted.signals().set_index("series_code")
+
+    assert not loaded_signals.empty
+    assert set(loaded_signals.index) == set(fitted_signals.index)
+    for series_code in fitted_signals.index:
+        assert loaded_signals.loc[series_code, "signal"] == fitted_signals.loc[series_code, "signal"]
+        assert loaded_signals.loc[series_code, "reason"] == fitted_signals.loc[series_code, "reason"]
+        assert loaded_signals.loc[series_code, "entry_z_score"] == pytest.approx(
+            fitted_signals.loc[series_code, "entry_z_score"]
+        )

@@ -69,7 +69,12 @@ import pandas as pd
 import pandera as pa
 import statsmodels.api as sm
 
-from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerEstimate, window_slice
+from dagster_quickstart.steer.analytics.estimation import (
+    CointegrationResult,
+    SteerEstimate,
+    SteerSignal,
+    window_slice,
+)
 from dagster_quickstart.steer.constants import (
     DRIVER_NAMES,
     IS_LOGGED_COLUMN,
@@ -105,16 +110,22 @@ class PairResult:
     terminology). design is derived on demand from `drivers` (+ a constant
     column) rather than stored twice.
 
-    upper/lower and upper_bound/lower_bound are now the same KIND of
-    object -- fitted +/- z_threshold * residual_std, the reference
-    production model's actual trading-trigger boundary (see module
-    docstring) -- they differ only in shape: upper_bound/lower_bound are
-    the full windowed *series* (the band drawn on a chart), while
-    upper/lower are a single scalar *level* (generate_signal's
-    Signal.target/.stop_loss for the specific signal actually generated, if
-    passed to build_pair_result). upper/lower are optional: a pair that
-    hasn't had a signal generated yet (e.g. cointegration failed) still
-    gets a full PairResult, just with upper/lower left None.
+    upper/lower and upper_bound/lower_bound are the same KIND of object --
+    fitted +/- z_threshold * residual_std, the reference production model's
+    actual trading-trigger boundary (see module docstring) -- they differ
+    only in shape: upper_bound/lower_bound are the full windowed *series*
+    (the band drawn on a chart), while upper/lower are a single scalar
+    *level*. upper/lower are now properties derived from `signal`
+    (generate_signal's own Signal.target/.stop_loss, for the signal
+    actually generated for this pair/as_of) rather than stored fields of
+    their own -- `signal` holds the whole SteerSignal (BUY/SELL/NONE +
+    entry_z_score + reason), not just the two price levels PairResult used
+    to keep, so a pair's trading signal is now part of what PairResult IS,
+    not a fact tracked separately alongside it (see SteerResults.signals(),
+    steer/model.py). signal is optional: a pair that hasn't had a signal
+    generated yet (e.g. cointegration failed before generate_signal ran)
+    still gets a full PairResult, just with signal (and so upper/lower)
+    left None.
     """
 
     series_code: str
@@ -142,9 +153,21 @@ class PairResult:
     #: the SteerEstimate it was built from.
     dropped_variables: Tuple[str, ...] = ()
     cointegration_passed: Optional[bool] = None
-    upper: Optional[float] = None
-    lower: Optional[float] = None
+    #: generate_signal's own result for this pair/as_of, if one was generated -- see this
+    #: class's own docstring for why upper/lower are now derived from it rather than stored
+    #: fields of their own.
+    signal: Optional[SteerSignal] = None
     markov_state: Optional[str] = None
+
+    @property
+    def upper(self) -> Optional[float]:
+        """The signal's target price level, if a signal was generated -- see class docstring."""
+        return self.signal.target if self.signal else None
+
+    @property
+    def lower(self) -> Optional[float]:
+        """The signal's stop-loss price level, if a signal was generated -- see class docstring."""
+        return self.signal.stop_loss if self.signal else None
 
     @property
     def fx(self) -> pd.Series:
@@ -208,12 +231,14 @@ class PairResult:
 
     def cross_section(self) -> pd.Series:
         """This pair's scalar summary as one flat row (series_code, z_score, fair_value, upper/lower,
-        dropped_variables, cointegration_passed, and every coefficient/standard_error/p_value with a
-        `{name}_<driver>` suffix). Concat several pairs' cross_section() rows (e.g.
+        signal/reason, dropped_variables, cointegration_passed, and every coefficient/standard_error/
+        p_value with a `{name}_<driver>` suffix). Concat several pairs' cross_section() rows (e.g.
         `pd.DataFrame([r.cross_section() for r in results])`) to compare pairs side by side at one
         point in time -- the econometric sense of "cross section", as opposed to one pair's own time
         series. fair_value is the latest rate-level fitted value -- the number anyone comparing pairs
-        side by side actually wants (see the fair_value property).
+        side by side actually wants (see the fair_value property). signal/reason (None/None if no
+        signal was generated) are what makes this round-trip through save()/load() -- see this
+        class's own docstring and SteerResults.signals().
         """
         row: dict = {
             "series_code": self.series_code,
@@ -226,6 +251,8 @@ class PairResult:
             "cointegration_passed": self.cointegration_passed,
             "upper": self.upper,
             "lower": self.lower,
+            "signal": self.signal.signal if self.signal else None,
+            "reason": self.signal.reason if self.signal else None,
             "markov_state": self.markov_state,
         }
         for name, value in self.coefficient.items():
@@ -309,8 +336,7 @@ def build_pair_result(
     window_months: int,
     z_threshold: float = 1.5,
     cointegration: Optional[CointegrationResult] = None,
-    signal_target: Optional[float] = None,
-    signal_stop_loss: Optional[float] = None,
+    signal: Optional[SteerSignal] = None,
 ) -> PairResult:
     """Build one pair's PairResult from its raw rate + driver frame and an already-computed SteerEstimate.
 
@@ -334,9 +360,14 @@ def build_pair_result(
 
     cointegration (cointegration_test's result for this
     pair/as_of, if available) becomes cointegration_passed.
-    signal_target/signal_stop_loss (from generate_signal's
-    Signal.target/.stop_loss, if a signal was already generated for this
-    pair) become upper/lower; pass neither to leave them None.
+    signal (generate_signal's result for this pair/as_of, if one was
+    already generated) becomes this PairResult's own signal -- upper/lower
+    are then derived from it (see PairResult's docstring); pass None to
+    leave signal/upper/lower all unset. signal.as_of/.entry_z_score are
+    asserted to agree with estimate.as_of/.z_score -- they're now
+    duplicated data (computed in different places, by generate_signal and
+    sign_check_and_reestimate respectively), and a mismatch would mean a
+    real upstream bug, not something to relax this check for.
     """
     rate_f = rate.astype(float)
     drivers_f = drivers.astype(float)
@@ -362,6 +393,20 @@ def build_pair_result(
 
     driver_series = {name: drivers_f[name].reindex(windowed.index) for name in drivers_f.columns}
 
+    if signal is not None:
+        assert pd.Timestamp(signal.as_of) == pd.Timestamp(as_of), (
+            f"signal.as_of ({signal.as_of}) disagrees with estimate.as_of ({as_of}) for "
+            f"{series_code!r} -- generate_signal and sign_check_and_reestimate should always "
+            "be called for the identical as_of; a mismatch means a real bug upstream, not "
+            "something for this assertion to relax."
+        )
+        assert signal.entry_z_score == estimate.z_score, (
+            f"signal.entry_z_score ({signal.entry_z_score}) disagrees with estimate.z_score "
+            f"({estimate.z_score}) for {series_code!r} -- generate_signal takes estimate.z_score "
+            "directly, so these should always be identical; a mismatch means a real bug "
+            "upstream, not something for this assertion to relax."
+        )
+
     return PairResult(
         series_code=series_code,
         variant=variant,
@@ -380,8 +425,7 @@ def build_pair_result(
         z_score=estimate.z_score,
         dropped_variables=estimate.dropped_variables,
         cointegration_passed=cointegration.passed if cointegration is not None else None,
-        upper=signal_target,
-        lower=signal_stop_loss,
+        signal=signal,
         markov_state=None,
     )
 

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
-from dagster_quickstart.steer.analytics.estimation import sign_check_and_reestimate
+from dagster_quickstart.steer.analytics.estimation import SteerSignal, sign_check_and_reestimate
 from dagster_quickstart.steer.analytics.results import PairResult, build_pair_result
 from dagster_quickstart.steer.orm import (
     GOLD_SCHEMA,
@@ -117,10 +117,29 @@ def _estimate(cointegrated_system, **overrides):
     )
 
 
-def _build(cointegrated_system, **kwargs):
+def _signal_for(estimate, *, target, stop_loss):
+    """A SteerSignal that agrees with `estimate`'s as_of/z_score, as build_pair_result now
+    asserts -- signal/reason are placeholders here, since these tests only care about
+    target/stop_loss ending up as upper/lower."""
+    return SteerSignal(
+        as_of=estimate.as_of,
+        signal="NONE",
+        entry_z_score=estimate.z_score,
+        target=target,
+        stop_loss=stop_loss,
+        reason="test signal",
+    )
+
+
+def _build(cointegrated_system, *, signal_target=None, signal_stop_loss=None, **kwargs):
     rate, drivers = cointegrated_system
     as_of = rate.index[-1]
     estimate = _estimate(cointegrated_system, as_of=as_of)
+    signal = (
+        _signal_for(estimate, target=signal_target, stop_loss=signal_stop_loss)
+        if signal_target is not None or signal_stop_loss is not None
+        else None
+    )
     return build_pair_result(
         "AUDJPY_SPOT_0004",
         "G10",
@@ -128,6 +147,7 @@ def _build(cointegrated_system, **kwargs):
         drivers,
         estimate=estimate,
         window_months=12,
+        signal=signal,
         **kwargs,
     )
 
@@ -146,7 +166,7 @@ def test_build_steer_result_time_series_share_one_index(cointegrated_system):
         assert series.index.equals(index)
 
 
-def _build_logged(cointegrated_system, **kwargs):
+def _build_logged(cointegrated_system, *, signal_target=None, signal_stop_loss=None, **kwargs):
     """Same fixture/pair, fit in log space -- rate stays comfortably positive (~1.11-1.42)
     throughout this fixture's window, so log() is well-defined."""
     rate, drivers = cointegrated_system
@@ -166,8 +186,20 @@ def _build_logged(cointegrated_system, **kwargs):
         },
         min_observations=40,
     )
+    signal = (
+        _signal_for(estimate, target=signal_target, stop_loss=signal_stop_loss)
+        if signal_target is not None or signal_stop_loss is not None
+        else None
+    )
     return build_pair_result(
-        "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12, **kwargs
+        "AUDJPY_SPOT_0004",
+        "G10",
+        rate,
+        drivers,
+        estimate=estimate,
+        window_months=12,
+        signal=signal,
+        **kwargs,
     )
 
 
@@ -446,6 +478,8 @@ def test_cross_section_is_one_flat_row_with_named_coefficients(cointegrated_syst
     assert row["series_code"] == "AUDJPY_SPOT_0004"
     assert row["variant"] == "G10"
     assert row["upper"] == 1.5
+    assert row["signal"] == "NONE"
+    assert row["reason"] == "test signal"
     assert row["coefficient_interest_rate_differential"] == pytest.approx(0.5, abs=0.05)
     assert "standard_error_interest_rate_differential" in row
     assert "p_value_interest_rate_differential" in row
@@ -474,6 +508,10 @@ def test_save_and_load_round_trips_every_field(cointegrated_system, data_api):
     assert loaded.is_logged == result.is_logged
     assert loaded.upper == result.upper
     assert loaded.lower == result.lower
+    assert loaded.signal is not None
+    assert loaded.signal.signal == result.signal.signal
+    assert loaded.signal.reason == result.signal.reason
+    assert loaded.signal.entry_z_score == pytest.approx(result.signal.entry_z_score)
     assert loaded.markov_state == result.markov_state
     assert loaded.dropped_variables == result.dropped_variables
     assert loaded.z_score == pytest.approx(result.z_score)
@@ -492,6 +530,20 @@ def test_save_and_load_round_trips_every_field(cointegrated_system, data_api):
     pd.testing.assert_series_equal(
         loaded.p_values.sort_index(), result.p_values.sort_index(), check_names=False
     )
+
+
+def test_no_signal_round_trips_as_none(cointegrated_system, data_api):
+    """A PairResult built without a signal (cointegration failed before generate_signal ran,
+    say) must load back with signal=None, not some placeholder SteerSignal."""
+    result = _build(cointegrated_system)
+    assert result.signal is None
+
+    result.save(data_api)
+    loaded = PairResult.load(data_api, "AUDJPY_SPOT_0004")
+
+    assert loaded.signal is None
+    assert loaded.upper is None
+    assert loaded.lower is None
 
 
 def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_system, data_api):

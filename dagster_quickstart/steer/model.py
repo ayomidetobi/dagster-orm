@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 import pandas as pd
 
-from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerSignal
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult
 from dagster_quickstart.steer.analytics.results import PairResult
 from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC, StrategyConfig
 from dagster_quickstart.steer.constants import (
@@ -70,14 +70,11 @@ def _insufficient_data_cointegration(as_of: pd.Timestamp) -> CointegrationResult
 class SteerResults:
     """Every PairResult fitted by one Steer.fit() call -- {as_of: {series_code: PairResult}}.
 
-    signals_by_date holds the SteerSignal (BUY/SELL/NONE + reason) generated
-    alongside each PairResult -- PairResult itself only keeps the
-    resulting target/stop-loss *levels* (upper/lower), not the signal
-    enum/reason text, so signals() needs this parallel dict. It's only
-    populated by fit() -- SteerResults.load() (from storage) can rebuild
-    every PairResult but not the signal text, since that isn't part of
-    what PairResult.save() persists; signals() raises a clear error on a
-    loaded-not-fitted SteerResults rather than silently returning nothing.
+    signals() builds directly from each PairResult's own `signal` field (see PairResult's
+    docstring, steer/analytics/results.py) -- there is no parallel signals_by_date dict any
+    more, so it works identically on a freshly fit() SteerResults and one rebuilt by
+    SteerResults.load() from storage (a signal now round-trips as part of what PairResult.save()
+    persists, where it used to be lost).
 
     blocked is series_code -> reason, for pairs the stored availability report reported
     blocked at fit() time (never fetched, let alone fitted).
@@ -86,7 +83,6 @@ class SteerResults:
     variant: str
     z_threshold: float
     results: Dict[pd.Timestamp, Dict[str, PairResult]] = field(default_factory=dict)
-    signals_by_date: Dict[pd.Timestamp, Dict[str, SteerSignal]] = field(default_factory=dict)
     blocked: Dict[str, str] = field(default_factory=dict)
 
     @property
@@ -215,24 +211,26 @@ class SteerResults:
         return by_pair[series_code]
 
     def signals(self, as_of: Union[int, str, pd.Timestamp, None] = None) -> pd.DataFrame:
-        """DataFrame matching STEER_SIGNALS_SCHEMA's columns, at one fitted date (default latest)."""
+        """DataFrame matching STEER_SIGNALS_SCHEMA's columns, at one fitted date (default latest).
+
+        Built from each PairResult's own `signal` field -- works the same whether this
+        SteerResults came from a fresh fit() or from SteerResults.load(). A pair fitted without
+        a signal (signal=None -- see PairResult's docstring) has nothing to report here and is
+        left out, rather than emitting an all-null row for it.
+        """
         resolved = self._resolve_as_of(as_of)
-        if resolved not in self.signals_by_date:
-            raise LookupError(
-                "No signal data for this SteerResults -- SteerResults.load() reconstructs "
-                "PairResult objects but not the signal enum/reason text (not part of what "
-                "PairResult persists); signals() only works on a freshly fit() SteerResults."
-            )
+        by_pair = self.results[resolved]
         rows = [
             {
                 "series_code": series_code,
-                "signal": signal.signal,
-                "entry_z_score": signal.entry_z_score,
-                "target": signal.target,
-                "stop_loss": signal.stop_loss,
-                "reason": signal.reason,
+                "signal": result.signal.signal,
+                "entry_z_score": result.signal.entry_z_score,
+                "target": result.signal.target,
+                "stop_loss": result.signal.stop_loss,
+                "reason": result.signal.reason,
             }
-            for series_code, signal in self.signals_by_date[resolved].items()
+            for series_code, result in by_pair.items()
+            if result.signal is not None
         ]
         return pd.DataFrame(rows)
 
@@ -366,9 +364,9 @@ class SteerResults:
     ) -> "SteerResults":
         """Rebuild a SteerResults from storage -- one PairResult.load() per series_code found.
 
-        signals_by_date/blocked come back empty (see SteerResults's own
-        docstring for signals_by_date) -- only what PairResult.save()
-        actually persists round-trips.
+        blocked comes back empty -- fit()'s block reasons are never persisted, only fitted
+        pairs are. signals() works on the result, though: each PairResult's own `signal` field
+        (see its docstring) round-trips through PairResult.save()/.load() like everything else.
         """
         from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
 
@@ -584,11 +582,9 @@ class Steer:
                 )
 
         results: Dict[pd.Timestamp, Dict[str, PairResult]] = {}
-        signals_by_date: Dict[pd.Timestamp, Dict[str, SteerSignal]] = {}
 
         for fit_date in fit_dates:
             date_results: Dict[str, PairResult] = {}
-            date_signals: Dict[str, SteerSignal] = {}
 
             for series_code, features in pair_features.items():
                 trailing = features.loc[:fit_date]
@@ -645,21 +641,17 @@ class Steer:
                     window_months=config.window_months,
                     z_threshold=config.z_threshold,
                     cointegration=coint_result,
-                    signal_target=signal.target,
-                    signal_stop_loss=signal.stop_loss,
+                    signal=signal,
                 )
                 date_results[series_code] = result
-                date_signals[series_code] = signal
 
             if date_results:
                 results[fit_date] = date_results
-                signals_by_date[fit_date] = date_signals
 
         return SteerResults(
             variant=self.variant,
             z_threshold=config.z_threshold,
             results=results,
-            signals_by_date=signals_by_date,
             blocked=blocked,
         )
 

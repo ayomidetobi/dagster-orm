@@ -31,11 +31,12 @@ to know the physical column disagrees with it.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import pandas as pd
 
 from dagster_quickstart.availability.storage import latest_snapshot
+from dagster_quickstart.steer.analytics.estimation import Signal, SteerSignal
 from dagster_quickstart.steer.analytics.results import PairResult
 
 SILVER_SCHEMA = "silver"
@@ -162,6 +163,26 @@ def load_result(
     dropped = row.get("dropped_variables")
     dropped_variables = tuple(dropped.split(",")) if isinstance(dropped, str) and dropped else ()
 
+    # signal/reason round-trip together, from the same SteerSignal at save() time (see
+    # PairResult.cross_section()) -- "signal" being present is a sufficient null-check for both.
+    signal_value = row.get("signal")
+    signal = (
+        SteerSignal(
+            as_of=row_as_of,
+            # cast: persisted as plain VARCHAR (see PairResult.cross_section()), not validated
+            # against the Signal literal at read time -- STEER_SIGNALS_SCHEMA already validates
+            # this same "signal" value's allowed set at write time (gold.steer_signals), and
+            # cross_section()'s own value only ever comes from a real Signal in the first place.
+            signal=cast(Signal, str(signal_value)),
+            entry_z_score=float(row["z_score"]),
+            target=_optional_float(row.get("upper")),
+            stop_loss=_optional_float(row.get("lower")),
+            reason=str(row.get("reason", "")),
+        )
+        if pd.notna(signal_value)
+        else None
+    )
+
     return PairResult(
         series_code=series_code,
         variant=row["universe"],  # persisted column is "universe" -- see module docstring
@@ -182,7 +203,6 @@ def load_result(
         cointegration_passed=(
             bool(row["cointegration_passed"]) if pd.notna(row.get("cointegration_passed")) else None
         ),
-        upper=_optional_float(row.get("upper")),
-        lower=_optional_float(row.get("lower")),
+        signal=signal,
         markov_state=row["markov_state"] if pd.notna(row.get("markov_state")) else None,
     )
