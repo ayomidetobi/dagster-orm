@@ -15,13 +15,14 @@ report assets/availability_asset.py already wrote (read_latest_report()) rather 
 rediscovering pairs and re-resolving every driver role itself -- the script/notebook path and
 the Dagster asset graph share one source of truth, not two implementations that could disagree.
 
-PairResult (steer/analytics/results.py) already is the right object for one pair at
-one as_of and is not modified here. SteerResults is the plural container
-its own module docstring describes building manually
-(`pd.DataFrame([r.cross_section() for r in results])`) -- this module
-formalizes that into `get_cross_section()`, plus a few other views
-(`panel`, `signals`, the plotting helpers) over the same underlying
-PairResult objects.
+PairResult (steer/analytics/results.py) is the ELEMENT type -- one pair, one as_of, everything
+about it. SteerResults is the CONTAINER, closed under slicing: select()/pair()/at() each
+narrow it to a smaller SteerResults (never a refit), while `results[series_code]` is the one
+place that hands back the element itself (a PairResult, at the latest date) -- the same split
+pandas draws between df[["col"]] (a DataFrame) and df["col"] (a Series). cross_section()/
+to_frame() mirror PairResult's own methods of the same name, one level up (every pair at one
+date / every pair at every date, instead of one pair's own time series); `panel`, `signals`,
+the plotting helpers are the other views over the same underlying PairResult objects.
 
 Look-ahead safety: fit(lookback_days=N) re-fits EVERY one of the N dates
 independently via window_slice (`timestamp <= as_of`, steer/analytics/estimation.py),
@@ -111,18 +112,97 @@ class SteerResults:
             raise KeyError(f"{resolved} is not a fitted date. Fitted dates: {dates}")
         return resolved
 
-    def get_cross_section(self, index: Union[int, str, pd.Timestamp] = -1) -> pd.DataFrame:
+    def select(
+        self,
+        pairs: Optional[Sequence[str]] = None,
+        dates: Optional[Sequence[Union[int, str, pd.Timestamp]]] = None,
+    ) -> "SteerResults":
+        """A new SteerResults narrowed to `pairs`/`dates` -- the slicing primitive pair()/at()
+        wrap. Either argument left as None keeps every pair/date this SteerResults already has.
+
+        A dict comprehension over self.results, never a refit -- cheap by construction. An
+        empty selection (pairs that were never fitted, or dates that resolve to none of
+        self.as_of_dates) returns an empty SteerResults rather than raising; _resolve_as_of
+        already raises usefully once something is actually asked of the result (e.g. .get(),
+        which needs a fitted date to exist). A fitted date whose pairs are all filtered out is
+        dropped entirely, not kept as an empty entry -- matching fit()'s own invariant that a
+        results key only ever exists with at least one pair under it. Carries the same
+        variant/z_threshold/blocked as self -- slicing narrows which pairs/dates are visible,
+        not what variant this is or which pairs were blocked before fitting even started.
+        """
+        resolved_dates = (
+            {self._resolve_as_of(date) for date in dates} if dates is not None else set(self.results)
+        )
+        pair_set = set(pairs) if pairs is not None else None
+
+        new_results: Dict[pd.Timestamp, Dict[str, PairResult]] = {}
+        for as_of, by_pair in self.results.items():
+            if as_of not in resolved_dates:
+                continue
+            filtered = (
+                by_pair
+                if pair_set is None
+                else {code: result for code, result in by_pair.items() if code in pair_set}
+            )
+            if filtered:
+                new_results[as_of] = filtered
+
+        return SteerResults(
+            variant=self.variant,
+            z_threshold=self.z_threshold,
+            results=new_results,
+            blocked=self.blocked,
+        )
+
+    def pair(self, series_code: str) -> "SteerResults":
+        """A new SteerResults narrowed to one pair, every fitted date it appears in. See select()."""
+        return self.select(pairs=[series_code])
+
+    def at(self, date: Union[int, str, pd.Timestamp]) -> "SteerResults":
+        """A new SteerResults narrowed to one fitted date, every pair fitted at it. See select()."""
+        return self.select(dates=[date])
+
+    def cross_section(self, index: Union[int, str, pd.Timestamp] = -1) -> pd.DataFrame:
         """One row per pair fitted at `index` (a negative/positive position, or a date).
 
         Built entirely from each PairResult.cross_section() -- no
-        duplicated cross-section logic here.
+        duplicated cross-section logic here. Same name as PairResult.cross_section() --
+        the container's takes an index (which fitted date), the element's takes nothing
+        (there's only ever one), but it's the same concept at each level.
         """
         as_of = self._resolve_as_of(index)
         by_pair = self.results[as_of]
         return pd.DataFrame([result.cross_section() for result in by_pair.values()])
 
+    def to_frame(self) -> pd.DataFrame:
+        """Long-form concat of every fitted PairResult's to_frame(), tagged with series_code/as_of.
+
+        Mirrors PairResult.to_frame() one level up: one row per pair/as_of/date here, versus
+        one row per date for a single pair there. Empty SteerResults -> empty DataFrame.
+        """
+        frames = []
+        for as_of, by_pair in self.results.items():
+            for series_code, result in by_pair.items():
+                frame = result.to_frame().copy()
+                frame.index.name = "date"
+                frame = frame.reset_index()
+                frame.insert(0, "as_of", as_of)
+                frame.insert(0, "series_code", series_code)
+                frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
     def __getitem__(self, series_code: str) -> PairResult:
-        """The PairResult for `series_code` at the most recent fitted date."""
+        """The PairResult for `series_code` at the most recent fitted date.
+
+        The one place this class returns the ELEMENT type rather than narrowing itself --
+        deliberate asymmetry, matching pandas' own df[col] (a Series) vs df[[col]] (a
+        DataFrame): this is the single most common lookup (today's number for one pair), and
+        should hand back the number itself, not a one-pair-one-date container the caller then
+        has to unwrap again. Don't "fix" this to return a SteerResults for consistency with
+        pair()/at() -- that would be a regression, not a cleanup.
+        """
         return self.get(series_code)
 
     def get(
@@ -176,6 +256,30 @@ class SteerResults:
     def plot_pair(self, series_code: str, as_of: Union[int, str, pd.Timestamp, None] = None):
         """Delegates to PairResult.plot() for one pair/date. Returns the Axes."""
         return self.get(series_code, as_of=as_of).plot()
+
+    def plot(self, *, ax=None):
+        """Delegates to the single PairResult.plot() this SteerResults has been narrowed to --
+        e.g. results.pair(series_code).at(as_of).plot(). Raises a clear ValueError if this
+        SteerResults still has more than one pair or more than one fitted date; that's what
+        plot_pair(series_code, as_of) and the multi-pair/multi-date plotting helpers
+        (plot_z_scores/plot_z_history) are for -- this method doesn't guess which one to show.
+        """
+        dates = self.as_of_dates
+        if len(dates) != 1:
+            raise ValueError(
+                f"plot() needs exactly one fitted date, but this SteerResults has {len(dates)} "
+                "-- narrow with .at(date) first, or use plot_pair(series_code, as_of)/"
+                "plot_z_scores()/plot_z_history() directly."
+            )
+        by_pair = self.results[dates[0]]
+        if len(by_pair) != 1:
+            raise ValueError(
+                f"plot() needs exactly one pair, but this SteerResults has {len(by_pair)} -- "
+                "narrow with .pair(series_code) first, or use plot_pair(series_code, as_of) "
+                "directly."
+            )
+        (result,) = by_pair.values()
+        return result.plot(ax=ax)
 
     def plot_z_scores(self, as_of: Union[int, str, pd.Timestamp, None] = None):
         """Horizontal bar of z-score by pair at one date, sorted, with +/-z_threshold lines.

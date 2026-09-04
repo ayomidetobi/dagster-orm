@@ -64,7 +64,7 @@ def main() -> int:
         return 1
 
     print_separator("Cross-section (latest date), sorted by |z-score| descending")
-    cross_section = results.get_cross_section(-1)
+    cross_section = results.cross_section(-1)
     cross_section = cross_section.assign(_abs_z=cross_section["z_score"].abs()).sort_values(
         "_abs_z", ascending=False
     ).drop(columns="_abs_z")

@@ -19,8 +19,9 @@ from dagster_quickstart.assets.steer.estimate_asset import steer_estimate
 from dagster_quickstart.assets.steer.gold_features_asset import steer_features
 from dagster_quickstart.assets.steer.signal_asset import steer_signal
 from dagster_quickstart.assets.steer.silver_asset import steer_silver_prices
+from dagster_quickstart.steer.analytics.results import PairResult
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.model import Steer
+from dagster_quickstart.steer.model import Steer, SteerResults
 from tests.test_steer_assets import (
     FakeRewriteDataAPIResource,
     FakeSteerConfigResource,
@@ -507,14 +508,14 @@ def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
     assert len(set(coefficients)) > 1  # not all identical -- each date genuinely re-fit
 
 
-def test_get_cross_section_matches_steer_result_cross_section():
+def test_cross_section_matches_pair_result_cross_section():
     """Acceptance criterion 4."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
     _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
-    cross_section = results.get_cross_section(-1)
+    cross_section = results.cross_section(-1)
 
     assert len(cross_section) == 1
     row = cross_section.iloc[0]
@@ -572,3 +573,134 @@ def test_blocked_pairs_are_skipped_and_recorded():
     assert "GBPUSD_PX_LAST" in results.blocked
     assert "GBP" in results.blocked["GBPUSD_PX_LAST"]
     assert "EURUSD_PX_LAST" in results.results[results.as_of_dates[-1]]
+
+
+def _fit_g10_lookback(lookback_days: int):
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+    return steer.fit(lookback_days=lookback_days, cointegration="latest")
+
+
+def test_select_narrows_to_given_dates():
+    results = _fit_g10_lookback(5)
+    wanted = results.as_of_dates[-2:]
+
+    narrowed = results.select(dates=wanted)
+
+    assert narrowed.as_of_dates == wanted
+    assert narrowed.variant == results.variant
+    assert narrowed.z_threshold == results.z_threshold
+    assert narrowed.blocked == results.blocked
+
+
+def test_select_narrows_to_given_pairs():
+    results = _fit_g10_lookback(1)
+
+    kept = results.select(pairs=["EURUSD_PX_LAST"])
+    assert kept.as_of_dates == results.as_of_dates
+    assert "EURUSD_PX_LAST" in kept.results[kept.as_of_dates[-1]]
+
+
+def test_select_to_a_pair_that_was_never_fitted_returns_an_empty_steer_results_not_raise():
+    """Acceptance criterion (Part 1): slicing to an empty selection returns an empty
+    SteerResults, never raises -- only asking something concrete of the empty result (here,
+    .get()) raises, via _resolve_as_of's existing "no fitted dates" LookupError."""
+    results = _fit_g10_lookback(1)
+
+    empty = results.select(pairs=["NOT_A_REAL_PAIR"])
+
+    assert empty.as_of_dates == []
+    assert empty.results == {}
+    with pytest.raises(LookupError):
+        empty.get("NOT_A_REAL_PAIR")
+
+
+def test_pair_narrows_to_one_pair_every_fitted_date():
+    results = _fit_g10_lookback(5)
+
+    narrowed = results.pair("EURUSD_PX_LAST")
+
+    assert narrowed.as_of_dates == results.as_of_dates
+    for as_of in narrowed.as_of_dates:
+        assert set(narrowed.results[as_of]) == {"EURUSD_PX_LAST"}
+
+
+def test_at_narrows_to_one_date_every_fitted_pair():
+    results = _fit_g10_lookback(5)
+    target_date = results.as_of_dates[-2]
+
+    narrowed = results.at(target_date)
+
+    assert narrowed.as_of_dates == [target_date]
+    assert set(narrowed.results[target_date]) == set(results.results[target_date])
+
+
+def test_getitem_returns_pair_result_pair_returns_steer_results():
+    """Acceptance criterion 2."""
+    results = _fit_g10_lookback(1)
+
+    assert isinstance(results["EURUSD_PX_LAST"], PairResult)
+    assert isinstance(results.pair("EURUSD_PX_LAST"), SteerResults)
+
+
+def test_pair_at_plot_chains_through_steer_results_to_a_pair_result():
+    """Acceptance criterion 1: each intermediate is a SteerResults, .plot() only at the end."""
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    results = _fit_g10_lookback(5)
+
+    sliced = results.pair("EURUSD_PX_LAST")
+    assert isinstance(sliced, SteerResults)
+    sliced_again = sliced.at(-1)
+    assert isinstance(sliced_again, SteerResults)
+
+    ax = results.pair("EURUSD_PX_LAST").at(-1).plot()
+    assert ax is not None
+
+
+def test_slicing_never_refits():
+    """Acceptance criterion 3: select()/pair()/at() are dict comprehensions over already-fitted
+    results, never a refit -- confirmed with a call-counting wrapper around the estimation
+    function fit() itself calls, rather than trusting that by inspection alone."""
+    from dagster_quickstart.steer.analytics import estimation
+
+    call_count = 0
+    original = estimation.sign_check_and_reestimate
+
+    def counting(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(estimation, "sign_check_and_reestimate", counting)
+        results = steer.fit(lookback_days=5, cointegration="latest")
+        calls_after_fit = call_count
+        assert calls_after_fit > 0
+
+        results.select(pairs=["EURUSD_PX_LAST"])
+        results.pair("EURUSD_PX_LAST")
+        results.at(-1)
+        results.select(dates=results.as_of_dates[:2])
+        results.cross_section(-1)
+        results.to_frame()
+
+        assert call_count == calls_after_fit
+
+
+def test_to_frame_is_long_form_tagged_with_series_code_and_as_of():
+    results = _fit_g10_lookback(2)
+
+    frame = results.to_frame()
+
+    assert set(frame["series_code"]) == {"EURUSD_PX_LAST"}
+    assert set(frame["as_of"]) == set(results.as_of_dates)
+    assert len(frame) == sum(len(result.to_frame()) for by_pair in results.results.values() for result in by_pair.values())
+    assert "fair_value" in frame.columns
