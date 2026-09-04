@@ -1,4 +1,4 @@
-"""DuckLake silver/gold schema/table names, and SteerResult persistence, for the STEER pipeline.
+"""DuckLake silver/gold schema/table names, and PairResult persistence, for the STEER pipeline.
 
 Silver/gold aren't a bronze/silver/gold convention DuckLake (rewrite/data_api/) has any notion
 of on its own -- just metadata/values/metadata_derived tables. STEER adds silver/gold as real
@@ -7,16 +7,16 @@ DataAPI.read_table()/.write_table() (rewrite.data_api.api.data_api) -- see
 rewrite.data_api.repositories.generic_table_repository.GenericTableRepository for how those
 read/write without a second DuckLake attach and without ever rewriting an existing row.
 
-save_result()/load_result() own the actual read/write logic for SteerResult's 2 gold tables;
-SteerResult.save()/.load() (steer/analytics/results.py) are thin delegates to these, via a
+save_result()/load_result() own the actual read/write logic for PairResult's 2 gold tables;
+PairResult.save()/.load() (steer/analytics/results.py) are thin delegates to these, via a
 function-body import -- analytics/ may not import this module at module level (this module is
 above analytics/ in the import direction: constants, errors -> source/ -> analytics/ -> config,
-orm, model -> run), so the delegation has to run the other way: this module imports SteerResult
-at module level (to build/accept one), and SteerResult.save()/.load() import save_result()/
+orm, model -> run), so the delegation has to run the other way: this module imports PairResult
+at module level (to build/accept one), and PairResult.save()/.load() import save_result()/
 load_result() only at call time, once both modules have finished loading.
 
 IMPORTANT -- universe/variant naming mismatch, deliberate: every Python-level name for the
-G10/EM/CHN axis was renamed `variant` (StrategyConfig.variant, SteerResult.variant, etc.), but
+G10/EM/CHN axis was renamed `variant` (StrategyConfig.variant, PairResult.variant, etc.), but
 the persisted column in every gold table (steer_estimates, steer_signals, steer_results,
 steer_result_summary) is still literally named `universe` -- gold.steer_estimates/
 gold.steer_signals already hold real rows (written by assets/steer/estimate_asset.py and
@@ -24,7 +24,7 @@ signal_asset.py, not by this module) under that column name, and DataAPI.write_t
 tables *by column name*: writing `variant` while a table still has `universe` would produce
 both columns, each half-populated, with no error raised, and every pre-rename snapshot would
 silently stop loading. save_result()/load_result() are the ONLY place that mismatch is bridged
--- they read/write the DataFrame column as "universe" and the SteerResult attribute as
+-- they read/write the DataFrame column as "universe" and the PairResult attribute as
 `.variant`, so every other module in this package can use `variant` consistently and never has
 to know the physical column disagrees with it.
 """
@@ -36,14 +36,14 @@ from typing import Any, Optional
 import pandas as pd
 
 from dagster_quickstart.availability.storage import latest_snapshot
-from dagster_quickstart.steer.analytics.results import SteerResult
+from dagster_quickstart.steer.analytics.results import PairResult
 
 SILVER_SCHEMA = "silver"
 GOLD_SCHEMA = "gold"
 
 STEER_ESTIMATES_TABLE = "steer_estimates"
 STEER_SIGNALS_TABLE = "steer_signals"
-#: SteerResult's 2 tables -- see steer/analytics/results.py's module docstring.
+#: PairResult's 2 tables -- see steer/analytics/results.py's module docstring.
 #: steer_results is long-form (one row per series_code/as_of/date);
 #: steer_result_summary is one row per series_code/as_of (z_score,
 #: upper/lower, and every coefficient/standard_error/p_value, flattened).
@@ -52,7 +52,7 @@ STEER_RESULT_SUMMARY_TABLE = "steer_result_summary"
 
 #: to_frame()'s fixed (non-driver) time-series columns -- everything else
 #: in a loaded gold.steer_results row is a driver series (see load_result()).
-#: fair_value is included here (not a SteerResult dataclass field -- it's derived from
+#: fair_value is included here (not a PairResult dataclass field -- it's derived from
 #: fitted/is_logged via the fair_value property) purely so driver inference below
 #: doesn't mistake it for a driver column.
 _FIXED_TIMESERIES_COLUMNS = (
@@ -66,8 +66,8 @@ _FIXED_TIMESERIES_COLUMNS = (
 )
 
 
-def save_result(result: SteerResult, data_api: Any) -> None:
-    """Write one SteerResult via data_api.write_table() -- see module docstring.
+def save_result(result: PairResult, data_api: Any) -> None:
+    """Write one PairResult via data_api.write_table() -- see module docstring.
 
     Writes to gold.steer_results (the time-series fields, via
     result.to_frame()) and gold.steer_result_summary (the scalar fields, via
@@ -82,7 +82,7 @@ def save_result(result: SteerResult, data_api: Any) -> None:
     timeseries.insert(0, "series_code", result.series_code)
     data_api.write_table(GOLD_SCHEMA, STEER_RESULTS_TABLE, timeseries)
 
-    # cross_section() uses "variant" like every other in-memory SteerResult view -- renamed to
+    # cross_section() uses "variant" like every other in-memory PairResult view -- renamed to
     # "universe" only here, at the point this row becomes a persisted gold.steer_result_summary
     # row (see module docstring).
     summary_row = result.cross_section().rename({"variant": "universe"})
@@ -92,8 +92,8 @@ def save_result(result: SteerResult, data_api: Any) -> None:
 
 def load_result(
     data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None
-) -> SteerResult:
-    """Load one pair's SteerResult back via data_api.read_table() -- see save_result()/module docstring.
+) -> PairResult:
+    """Load one pair's PairResult back via data_api.read_table() -- see save_result()/module docstring.
 
     Both tables are append-only snapshots -- without `as_of`, the most
     recent snapshot for this series_code is returned; pass `as_of` to
@@ -109,12 +109,12 @@ def load_result(
         GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, series_code=series_code
     ).frame
     if summary.empty:
-        raise LookupError(f"No SteerResult found in DuckLake for {series_code!r}.")
+        raise LookupError(f"No PairResult found in DuckLake for {series_code!r}.")
     summary["as_of"] = pd.to_datetime(summary["as_of"])
     if as_of is not None:
         summary = summary[summary["as_of"] == pd.Timestamp(as_of)]
         if summary.empty:
-            raise LookupError(f"No SteerResult found for {series_code!r} as of {as_of}.")
+            raise LookupError(f"No PairResult found for {series_code!r} as of {as_of}.")
         row = summary.iloc[0]
     else:
         # latest_snapshot() (dagster_quickstart.availability.storage) -- the same "most recent
@@ -162,7 +162,7 @@ def load_result(
     dropped = row.get("dropped_variables")
     dropped_variables = tuple(dropped.split(",")) if isinstance(dropped, str) and dropped else ()
 
-    return SteerResult(
+    return PairResult(
         series_code=series_code,
         variant=row["universe"],  # persisted column is "universe" -- see module docstring
         as_of=row_as_of,

@@ -11,16 +11,16 @@ business logic that assets/ingestion/ wires into assets.
 
 Layout: constants.py/errors.py (leaves) -> source/ (data in -- may touch DataAPI) ->
 analytics/ (math out -- no I/O at all) -> config.py/orm.py/model.py (StrategyConfig/FXVariant,
-DuckLake persistence, the Steer/SteerPanel facade) -> run.py (the `python -m
+DuckLake persistence, the Steer/SteerResults facade) -> run.py (the `python -m
 dagster_quickstart.steer` CLI). assets/steer/ sits on top of all of it, unchanged by this
 layering -- it only ever imports from here, never the reverse.
 """
 
 from __future__ import annotations
 
-from dagster_quickstart.steer.analytics.results import SteerResult
+from dagster_quickstart.steer.analytics.results import PairResult
 from dagster_quickstart.steer.config import FX_CHN, FX_EM, FX_G10, VARIANTS, StrategyConfig
-from dagster_quickstart.steer.model import Steer, SteerPanel
+from dagster_quickstart.steer.model import Steer, SteerResults
 
 __all__ = [
     "FX_G10",
@@ -29,6 +29,6 @@ __all__ = [
     "VARIANTS",
     "StrategyConfig",
     "Steer",
-    "SteerPanel",
-    "SteerResult",
+    "SteerResults",
+    "PairResult",
 ]

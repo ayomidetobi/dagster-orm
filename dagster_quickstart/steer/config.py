@@ -77,7 +77,7 @@ from dagster_quickstart.steer.constants import (
 
 if TYPE_CHECKING:
     from dagster_quickstart.rewrite.data_api.api.data_api import DataAPI
-    from dagster_quickstart.steer.model import Steer, SteerPanel
+    from dagster_quickstart.steer.model import Steer, SteerResults
 
 
 class GlobalDriverConfig(BaseModel):
@@ -281,7 +281,7 @@ class FXVariant(StrategyConfig):
             strategy_config=self,
         )
 
-    def fit(self, *, data_api: Optional[Any] = None, **kwargs: Any) -> "SteerPanel":
+    def fit(self, *, data_api: Optional[Any] = None, **kwargs: Any) -> "SteerResults":
         """Fit every pair in this variant. See Steer.fit for the keyword arguments.
 
         data_api defaults to a fresh default_data_api() -- pass one explicitly (a fake/stub in

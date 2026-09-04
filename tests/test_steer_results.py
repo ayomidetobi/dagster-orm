@@ -1,4 +1,4 @@
-"""Unit tests for steer.results: SteerResult / build_steer_result."""
+"""Unit tests for steer.results: PairResult / build_pair_result."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 from dagster_quickstart.rewrite.data_api.factory import create_data_api
 from dagster_quickstart.steer.analytics.estimation import sign_check_and_reestimate
-from dagster_quickstart.steer.analytics.results import SteerResult, build_steer_result
+from dagster_quickstart.steer.analytics.results import PairResult, build_pair_result
 from dagster_quickstart.steer.orm import (
     GOLD_SCHEMA,
     STEER_RESULT_SUMMARY_TABLE,
@@ -57,7 +57,7 @@ class _EmptyValueStorage:
 @pytest.fixture
 def data_api():
     """A real DataAPI (create_data_api) over a real in-memory duckdb connection -- the metadata/
-    value repositories are never touched by SteerResult.save()/.load(), which only ever use
+    value repositories are never touched by PairResult.save()/.load(), which only ever use
     data_api.write_table()/.read_table() (see steer/results.py)."""
     return create_data_api(
         duckdb_connection=duckdb.connect(":memory:"),
@@ -121,7 +121,7 @@ def _build(cointegrated_system, **kwargs):
     rate, drivers = cointegrated_system
     as_of = rate.index[-1]
     estimate = _estimate(cointegrated_system, as_of=as_of)
-    return build_steer_result(
+    return build_pair_result(
         "AUDJPY_SPOT_0004",
         "G10",
         rate,
@@ -166,7 +166,7 @@ def _build_logged(cointegrated_system, **kwargs):
         },
         min_observations=40,
     )
-    return build_steer_result(
+    return build_pair_result(
         "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12, **kwargs
     )
 
@@ -240,14 +240,14 @@ def test_fx_is_an_alias_for_spot(cointegrated_system):
 def test_z_score_and_dropped_variables_agree_with_the_estimate_it_was_built_from(
     cointegrated_system,
 ):
-    """Regression: build_steer_result used to independently re-fit with every
+    """Regression: build_pair_result used to independently re-fit with every
     driver and no sign check, so its z_score could silently disagree with the
     real SteerEstimate whenever a driver had been dropped. Taking the
     estimate as input makes them agree by construction."""
     estimate = _estimate(cointegrated_system)
     rate, drivers = cointegrated_system
 
-    result = build_steer_result(
+    result = build_pair_result(
         "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12
     )
 
@@ -278,7 +278,7 @@ def test_dropped_driver_is_excluded_from_the_design_matrix(cointegrated_system):
     )
     assert estimate.dropped_variables  # sanity: a drop actually happened
 
-    result = build_steer_result(
+    result = build_pair_result(
         "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12
     )
 
@@ -316,7 +316,7 @@ def test_trigger_band_matches_the_default_z_threshold(cointegrated_system):
     estimate = _estimate(cointegrated_system)
     residual_std = estimate.residual_std
 
-    result = build_steer_result(
+    result = build_pair_result(
         "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12
     )
 
@@ -329,7 +329,7 @@ def test_trigger_band_uses_the_given_z_threshold_not_the_default(cointegrated_sy
     estimate = _estimate(cointegrated_system)
     residual_std = estimate.residual_std
 
-    result = build_steer_result(
+    result = build_pair_result(
         "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12,
         z_threshold=2.0,
     )
@@ -341,7 +341,7 @@ def test_band_and_signal_trigger_agree_at_the_latest_date(cointegrated_system):
     """Acceptance criterion: abs(spot - fitted) > (upper_bound - fitted) at the latest date
     IFF abs(z_score) > z_threshold. spot and response coincide here because is_logged=False
     (see _build/_estimate) -- residual_std is computed identically (ddof=0) in both
-    estimate_steer (which produces z_score) and build_steer_result (which produces the
+    estimate_steer (which produces z_score) and build_pair_result (which produces the
     band), so the two are guaranteed to agree by construction, not by coincidence."""
     rate, drivers = cointegrated_system
     z_threshold = 1.5
@@ -357,7 +357,7 @@ def test_band_and_signal_trigger_agree_at_the_latest_date(cointegrated_system):
             rate, drivers, as_of=rate.index[-1], window_months=12, is_logged=False,
             expected_signs=expected_signs, min_observations=40,
         )
-        result = build_steer_result(
+        result = build_pair_result(
             "AUDJPY_SPOT_0004", "G10", rate, drivers, estimate=estimate, window_months=12,
             z_threshold=z_threshold,
         )
@@ -467,7 +467,7 @@ def test_save_and_load_round_trips_every_field(cointegrated_system, data_api):
     result = _build(cointegrated_system, signal_target=1.5, signal_stop_loss=1.0)
 
     result.save(data_api)
-    loaded = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
+    loaded = PairResult.load(data_api, "AUDJPY_SPOT_0004")
 
     assert loaded.series_code == result.series_code
     assert loaded.variant == result.variant
@@ -499,7 +499,7 @@ def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_
     earlier_as_of = rate.index[-30]
     later_as_of = rate.index[-1]
 
-    earlier = build_steer_result(
+    earlier = build_pair_result(
         "AUDJPY_SPOT_0004",
         "G10",
         rate,
@@ -507,7 +507,7 @@ def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_
         estimate=_estimate(cointegrated_system, as_of=earlier_as_of),
         window_months=12,
     )
-    later = build_steer_result(
+    later = build_pair_result(
         "AUDJPY_SPOT_0004",
         "G10",
         rate,
@@ -518,20 +518,20 @@ def test_save_twice_appends_a_new_snapshot_load_returns_the_latest(cointegrated_
     earlier.save(data_api)
     later.save(data_api)
 
-    loaded_latest = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
+    loaded_latest = PairResult.load(data_api, "AUDJPY_SPOT_0004")
     assert loaded_latest.as_of == later_as_of
 
-    loaded_earlier = SteerResult.load(data_api, "AUDJPY_SPOT_0004", as_of=earlier_as_of)
+    loaded_earlier = PairResult.load(data_api, "AUDJPY_SPOT_0004", as_of=earlier_as_of)
     assert loaded_earlier.as_of == earlier_as_of
 
 
 def test_load_missing_pair_raises_lookup_error(data_api):
     with pytest.raises(LookupError):
-        SteerResult.load(data_api, "NOT_A_REAL_PAIR")
+        PairResult.load(data_api, "NOT_A_REAL_PAIR")
 
 
 def test_a_chn_style_seven_driver_result_round_trips_through_storage(data_api):
-    """SteerResult used to hardcode 5 driver dataclass fields -- no room for
+    """PairResult used to hardcode 5 driver dataclass fields -- no room for
     CHN's 2 extras. A 7-driver result must save/load cleanly, and coexist
     in the same summary table as a 5-driver G10 result (DataAPI.write_table()'s
     column widening -- see rewrite.data_api.repositories.generic_table_repository)."""
@@ -562,12 +562,12 @@ def test_a_chn_style_seven_driver_result_round_trips_through_storage(data_api):
         min_observations=40,
     )
 
-    result = build_steer_result(
+    result = build_pair_result(
         "USDCNH_PX_LAST", "CHN", rate, drivers, estimate=estimate, window_months=6
     )
     result.save(data_api)
 
-    loaded = SteerResult.load(data_api, "USDCNH_PX_LAST")
+    loaded = PairResult.load(data_api, "USDCNH_PX_LAST")
     assert set(loaded.drivers) == set(drivers.columns)
     assert loaded.drivers["offshore_spread"].index.equals(loaded.spot.index)
 
@@ -592,13 +592,13 @@ def test_g10_and_chn_summaries_coexist_with_different_driver_columns(data_api, c
         rate, drivers, as_of=as_of, window_months=6, is_logged=False,
         expected_signs={name: 0 for name in drivers.columns}, min_observations=40,
     )
-    chn_result = build_steer_result(
+    chn_result = build_pair_result(
         "USDCNH_PX_LAST", "CHN", rate, drivers, estimate=estimate, window_months=6
     )
     chn_result.save(data_api)
 
-    g10_loaded = SteerResult.load(data_api, "AUDJPY_SPOT_0004")
-    chn_loaded = SteerResult.load(data_api, "USDCNH_PX_LAST")
+    g10_loaded = PairResult.load(data_api, "AUDJPY_SPOT_0004")
+    chn_loaded = PairResult.load(data_api, "USDCNH_PX_LAST")
     assert set(g10_loaded.drivers) == {
         "interest_rate_differential", "yield_curve_or_cds", "local_equity", "global_equity", "commodity",
     }

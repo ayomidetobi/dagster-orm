@@ -1,4 +1,4 @@
-"""Tests for steer.model.Steer/SteerPanel -- the model-object facade.
+"""Tests for steer.model.Steer/SteerResults -- the model-object facade.
 
 Acceptance criterion 1 is the important one: Steer.fit() must produce EXACTLY the same numbers
 as materializing the real asset graph (fx_data_availability -> ... -> steer_signal), for one

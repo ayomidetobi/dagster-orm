@@ -1,4 +1,4 @@
-"""CLI entry point for the Steer/SteerPanel facade: `python -m dagster_quickstart.steer`.
+"""CLI entry point for the Steer/SteerResults facade: `python -m dagster_quickstart.steer`.
 
 Zero-config: reads DATABASE_URL / S3_* from dagster_quickstart/.env (via python-decouple) and
 attaches the real Postgres+S3 DuckLake catalog, same as scripts/example_dataapi.py. Assumes the

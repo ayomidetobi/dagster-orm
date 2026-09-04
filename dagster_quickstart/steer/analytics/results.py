@@ -1,4 +1,4 @@
-"""SteerResult: one consolidated, retrievable artifact per currency pair, and the pandera
+"""PairResult: one consolidated, retrievable artifact per currency pair, and the pandera
 schemas for the three STEER table boundaries (features, estimates, signals) it and its
 upstream feature table are validated against.
 
@@ -8,8 +8,8 @@ regression's design/response/fitted/residual, and its statistical
 diagnostics (coefficients, standard errors, p-values, z-score,
 upper_bound/lower_bound) into one object per pair -- everything already
 computed elsewhere in steer/ (source/features.py, analytics/estimation.py) via
-build_steer_result(), just packaged for easy per-pair retrieval
-(SteerResult.save()/.load()), cross-pair comparison (cross_section()), and
+build_pair_result(), just packaged for easy per-pair retrieval
+(PairResult.save()/.load()), cross-pair comparison (cross_section()), and
 plotting (plot()).
 
 upper_bound/lower_bound = fitted +/- z_threshold * residual_std -- the SAME boundary
@@ -17,7 +17,7 @@ generate_signal (steer/analytics/estimation.py) uses to decide whether a BUY/SEL
 (|z_score| >= z_threshold), matching the reference production model exactly (Figs 16/17 of the
 published methodology shade this exact band). This is deliberately NOT a statistical confidence
 interval on the fitted mean (which measures parameter uncertainty, not residual dispersion, and
-on a ~250-observation window is roughly 5x narrower than this trigger band) -- SteerResult.plot()
+on a ~250-observation window is roughly 5x narrower than this trigger band) -- PairResult.plot()
 must shade the actual trading-trigger band, not something with no relationship to where signals
 fire.
 
@@ -32,7 +32,7 @@ the trailing regression window ending at `as_of` (see
 window_slice, steer/analytics/estimation.py) -- so they concatenate/plot directly with
 no reindexing.
 
-build_steer_result() takes an already-computed SteerEstimate (from sign_check_and_reestimate)
+build_pair_result() takes an already-computed SteerEstimate (from sign_check_and_reestimate)
 rather than independently re-fitting and re-deriving z_score/dropped_variables itself, so the
 two can never silently disagree about which drivers were dropped or what the z_score is --
 this module still fits its own OLS (over the identical window, on the identical kept-driver
@@ -45,7 +45,7 @@ markov_state is a reserved field, always None today -- no Markov
 regime-switching model exists anywhere in this codebase; it's a
 placeholder for a future addition, not a fabricated value.
 
-SteerResult.save()/.load() are thin delegates onto steer.orm.save_result()/.load_result() --
+PairResult.save()/.load() are thin delegates onto steer.orm.save_result()/.load_result() --
 see steer/orm.py's module docstring for why the import has to live inside the method body
 rather than at module level (this module sits below orm.py in steer/'s import direction, so a
 module-level import here would invert that). Persisted into 2 DuckLake gold tables --
@@ -98,7 +98,7 @@ _FIXED_TIMESERIES_COLUMNS = (
 
 
 @dataclass(frozen=True)
-class SteerResult:
+class PairResult:
     """One pair's full STEER snapshot -- prices, drivers, regression diagnostics.
 
     fx is an alias for spot (same series, both names are common FX
@@ -112,9 +112,9 @@ class SteerResult:
     the full windowed *series* (the band drawn on a chart), while
     upper/lower are a single scalar *level* (generate_signal's
     Signal.target/.stop_loss for the specific signal actually generated, if
-    passed to build_steer_result). upper/lower are optional: a pair that
+    passed to build_pair_result). upper/lower are optional: a pair that
     hasn't had a signal generated yet (e.g. cointegration failed) still
-    gets a full SteerResult, just with upper/lower left None.
+    gets a full PairResult, just with upper/lower left None.
     """
 
     series_code: str
@@ -138,7 +138,7 @@ class SteerResult:
 
     z_score: float
     #: Drivers sign_check_and_reestimate dropped before this fit -- see
-    #: build_steer_result's docstring for why this now always agrees with
+    #: build_pair_result's docstring for why this now always agrees with
     #: the SteerEstimate it was built from.
     dropped_variables: Tuple[str, ...] = ()
     cointegration_passed: Optional[bool] = None
@@ -291,7 +291,7 @@ class SteerResult:
     @classmethod
     def load(
         cls, data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None
-    ) -> "SteerResult":
+    ) -> "PairResult":
         """Thin delegate to steer.orm.load_result() -- see save()'s docstring for why the
         import is inside the method body."""
         from dagster_quickstart.steer.orm import load_result
@@ -299,7 +299,7 @@ class SteerResult:
         return load_result(data_api, series_code, as_of=as_of)
 
 
-def build_steer_result(
+def build_pair_result(
     series_code: str,
     variant: str,
     rate: pd.Series,
@@ -311,8 +311,8 @@ def build_steer_result(
     cointegration: Optional[CointegrationResult] = None,
     signal_target: Optional[float] = None,
     signal_stop_loss: Optional[float] = None,
-) -> SteerResult:
-    """Build one pair's SteerResult from its raw rate + driver frame and an already-computed SteerEstimate.
+) -> PairResult:
+    """Build one pair's PairResult from its raw rate + driver frame and an already-computed SteerEstimate.
 
     `drivers` has this pair's variant's driver columns (StrategyConfig.drivers
     -- 5 for G10/EM, 7 for CHN); `estimate` is
@@ -362,7 +362,7 @@ def build_steer_result(
 
     driver_series = {name: drivers_f[name].reindex(windowed.index) for name in drivers_f.columns}
 
-    return SteerResult(
+    return PairResult(
         series_code=series_code,
         variant=variant,
         as_of=pd.Timestamp(as_of),

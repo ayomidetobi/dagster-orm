@@ -1,5 +1,5 @@
 """Math out: rolling-window OLS estimation, cointegration testing, signal generation, and the
-SteerResult output artifact -- NO I/O at all. Every function here takes pandas objects in and
+PairResult output artifact -- NO I/O at all. Every function here takes pandas objects in and
 returns pandas objects out, so this whole layer is testable against synthetic series with no
 database, no S3, no DuckLake attach.
 

@@ -110,7 +110,7 @@ SILVER_SCHEMA: Literal["silver"] = "silver"
 GOLD_SCHEMA: Literal["gold"] = "gold"
 STEER_ESTIMATES_TABLE: Literal["steer_estimates"] = "steer_estimates"
 STEER_SIGNALS_TABLE: Literal["steer_signals"] = "steer_signals"
-#: SteerResult's 2 tables -- see steer/analytics/results.py's module docstring. steer_results is
+#: PairResult's 2 tables -- see steer/analytics/results.py's module docstring. steer_results is
 #: long-form (one row per series_code/as_of/date); steer_result_summary is one row per
 #: series_code/as_of (z_score, upper/lower, and every coefficient/standard_error/p_value,
 #: flattened).
