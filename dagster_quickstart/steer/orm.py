@@ -37,7 +37,7 @@ import pandas as pd
 
 from dagster_quickstart.availability.storage import latest_snapshot
 from dagster_quickstart.steer.analytics.estimation import Signal, SteerSignal
-from dagster_quickstart.steer.analytics.results import PairResult
+from dagster_quickstart.steer.analytics.results import PairResult, unflatten_by_driver
 
 SILVER_SCHEMA = "silver"
 GOLD_SCHEMA = "gold"
@@ -144,19 +144,6 @@ def load_result(
     ]
     drivers = {name: timeseries[name] for name in driver_names}
 
-    def _prefixed(prefix: str) -> pd.Series:
-        # pd.notna(v) drops padding from another variant's wider
-        # driver set sharing this physical table (see the driver_names
-        # comment above) -- not a real coefficient/std-error/p-value
-        # for this pair.
-        return pd.Series(
-            {
-                str(k)[len(prefix) :]: v
-                for k, v in row.items()
-                if str(k).startswith(prefix) and pd.notna(v)
-            }
-        )
-
     def _optional_float(value: object) -> Optional[float]:
         return float(value) if pd.notna(value) else None  # type: ignore[call-overload,arg-type]
 
@@ -195,9 +182,9 @@ def load_result(
         residual=timeseries["residual"],
         upper_bound=timeseries["upper_bound"],
         lower_bound=timeseries["lower_bound"],
-        coefficient=_prefixed("coefficient_"),
-        standard_error=_prefixed("standard_error_"),
-        p_values=_prefixed("p_value_"),
+        coefficient=unflatten_by_driver("coefficient_", row),
+        standard_error=unflatten_by_driver("standard_error_", row),
+        p_values=unflatten_by_driver("p_value_", row),
         z_score=float(row["z_score"]),
         dropped_variables=dropped_variables,
         cointegration_passed=(

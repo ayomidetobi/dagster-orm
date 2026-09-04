@@ -39,7 +39,7 @@ import pandas as pd
 
 from dagster_quickstart.steer.analytics.estimation import CointegrationResult
 from dagster_quickstart.steer.analytics.results import PairResult
-from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC, StrategyConfig
+from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC, VARIANTS, StrategyConfig
 from dagster_quickstart.steer.constants import (
     COINTEGRATION_MODE_EACH,
     COINTEGRATION_MODE_LATEST,
@@ -108,6 +108,12 @@ class SteerResults:
             raise KeyError(f"{resolved} is not a fitted date. Fitted dates: {dates}")
         return resolved
 
+    def _by_pair(self, as_of: Union[int, str, pd.Timestamp, None]) -> Dict[str, PairResult]:
+        """Every PairResult fitted at `as_of` -- the _resolve_as_of(as_of) + self.results[...]
+        pair every method that needs one fitted date's pairs (rather than a full narrowed
+        SteerResults -- see select()) was resolving inline."""
+        return self.results[self._resolve_as_of(as_of)]
+
     def select(
         self,
         pairs: Optional[Sequence[str]] = None,
@@ -166,8 +172,7 @@ class SteerResults:
         the container's takes an index (which fitted date), the element's takes nothing
         (there's only ever one), but it's the same concept at each level.
         """
-        as_of = self._resolve_as_of(index)
-        by_pair = self.results[as_of]
+        by_pair = self._by_pair(index)
         return pd.DataFrame([result.cross_section() for result in by_pair.values()])
 
     def to_frame(self) -> pd.DataFrame:
@@ -205,7 +210,7 @@ class SteerResults:
         self, series_code: str, as_of: Union[int, str, pd.Timestamp, None] = None
     ) -> PairResult:
         resolved = self._resolve_as_of(as_of)
-        by_pair = self.results[resolved]
+        by_pair = self._by_pair(resolved)
         if series_code not in by_pair:
             raise KeyError(f"{series_code!r} was not fitted as of {resolved} ({self.variant}).")
         return by_pair[series_code]
@@ -218,8 +223,7 @@ class SteerResults:
         a signal (signal=None -- see PairResult's docstring) has nothing to report here and is
         left out, rather than emitting an all-null row for it.
         """
-        resolved = self._resolve_as_of(as_of)
-        by_pair = self.results[resolved]
+        by_pair = self._by_pair(as_of)
         rows = [
             {
                 "series_code": series_code,
@@ -279,6 +283,17 @@ class SteerResults:
         (result,) = by_pair.values()
         return result.plot(ax=ax)
 
+    def _draw_threshold_lines(self, ax, *, horizontal: bool) -> None:
+        """+/-z_threshold and a zero reference line, on whichever axis matters --
+        axhline (horizontal) for a time-series y-axis (plot_z_history), axvline (vertical) for
+        a bar chart's x-axis (plot_z_scores). Shared since the two plots' reference lines are
+        the identical three values, differing only in which axis they belong on.
+        """
+        line = ax.axhline if horizontal else ax.axvline
+        line(self.z_threshold, color="black", linestyle="--", linewidth=1)
+        line(-self.z_threshold, color="black", linestyle="--", linewidth=1)
+        line(0, color="black", linewidth=0.8)
+
     def plot_z_scores(self, as_of: Union[int, str, pd.Timestamp, None] = None):
         """Horizontal bar of z-score by pair at one date, sorted, with +/-z_threshold lines.
 
@@ -288,7 +303,7 @@ class SteerResults:
         import matplotlib.pyplot as plt
 
         resolved = self._resolve_as_of(as_of)
-        by_pair = self.results[resolved]
+        by_pair = self._by_pair(resolved)
         z_scores = pd.Series(
             {code: result.z_score for code, result in by_pair.items()}
         ).sort_values()
@@ -304,9 +319,7 @@ class SteerResults:
 
         _, ax = plt.subplots(figsize=(8, max(3, 0.35 * len(z_scores))))
         ax.barh(z_scores.index, z_scores.to_numpy(), color=colors)
-        ax.axvline(self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axvline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axvline(0, color="black", linewidth=0.8)
+        self._draw_threshold_lines(ax, horizontal=False)
         ax.set_xlabel("z-score")
         ax.set_title(f"{self.variant} z-scores as of {resolved.date()}")
         return ax
@@ -341,9 +354,7 @@ class SteerResults:
             series = pd.Series(z_by_date).sort_index()
             ax.plot(series.index, series.to_numpy(), marker="o", label=code)
 
-        ax.axhline(self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axhline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axhline(0, color="black", linewidth=0.8)
+        self._draw_threshold_lines(ax, horizontal=True)
         ax.set_ylabel("z-score")
         ax.set_title(f"{self.variant} z-score history")
         ax.legend()
@@ -367,8 +378,17 @@ class SteerResults:
         blocked comes back empty -- fit()'s block reasons are never persisted, only fitted
         pairs are. signals() works on the result, though: each PairResult's own `signal` field
         (see its docstring) round-trips through PairResult.save()/.load() like everything else.
+
+        z_threshold comes from VARIANTS[variant]'s current config, not from anything persisted
+        -- PairResult doesn't carry the z_threshold it was actually built with, so this is
+        today's config value for `variant`, not necessarily the exact historical one a very old
+        snapshot was fit with. Used to be float("nan") unconditionally, which made
+        plot_z_scores()/plot_z_history()'s threshold reference lines vanish (NaN axvline/axhline)
+        and their bar/line coloring always fall through to "gray" (value >= nan is always False).
         """
         from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
+
+        z_threshold = VARIANTS[variant].z_threshold
 
         # The persisted gold-table column is still named "universe" (see steer/orm.py's module
         # docstring) -- `variant` is the Python-level name.
@@ -376,7 +396,7 @@ class SteerResults:
             GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=variant
         ).frame
         if summary.empty:
-            return cls(variant=variant, z_threshold=float("nan"))
+            return cls(variant=variant, z_threshold=z_threshold)
 
         summary = summary.copy()
         summary["as_of"] = pd.to_datetime(summary["as_of"])
@@ -388,7 +408,7 @@ class SteerResults:
             result = PairResult.load(data_api, str(series_code), as_of=as_of)
             results.setdefault(result.as_of, {})[str(series_code)] = result
 
-        return cls(variant=variant, z_threshold=float("nan"), results=results)
+        return cls(variant=variant, z_threshold=z_threshold, results=results)
 
 
 def _scalar_field(result: PairResult, field_name: str) -> Any:

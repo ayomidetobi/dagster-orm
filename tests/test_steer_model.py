@@ -730,3 +730,30 @@ def test_loaded_steer_results_signals_include_signal_and_reason():
         assert loaded_signals.loc[series_code, "entry_z_score"] == pytest.approx(
             fitted_signals.loc[series_code, "entry_z_score"]
         )
+
+
+def test_loaded_steer_results_plot_z_scores_has_finite_threshold_lines():
+    """Acceptance criterion (Part 5): SteerResults.load() used to always set z_threshold=NaN,
+    which made plot_z_scores()'s +/-z_threshold reference lines vanish (NaN axvline) and its
+    bar coloring always fall through to gray (value >= nan is always False). z_threshold now
+    comes from VARIANTS[variant]'s current config."""
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    fitted = steer.fit(lookback_days=1)
+    fitted.save(resource.api)
+
+    loaded = SteerResults.load(resource.api, "G10")
+    assert np.isfinite(loaded.z_threshold)
+
+    ax = loaded.plot_z_scores()
+    threshold_lines = [line for line in ax.get_lines() if line.get_xdata()[0] != 0]
+    assert threshold_lines
+    for line in threshold_lines:
+        assert np.isfinite(line.get_xdata()[0])

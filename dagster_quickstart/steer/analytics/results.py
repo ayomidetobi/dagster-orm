@@ -102,6 +102,35 @@ _FIXED_TIMESERIES_COLUMNS = (
 )
 
 
+def flatten_by_driver(prefix: str, series: pd.Series) -> Dict[str, Any]:
+    """A driver-keyed Series (driver name -> value) as `{prefix}{driver}` -> value entries.
+
+    The single place a driver-indexed Series becomes flat, name-suffixed columns --
+    cross_section() calls this three times (coefficient_/standard_error_/p_value_), and
+    unflatten_by_driver (below) is its exact inverse, used by steer.orm.load_result() to parse
+    those same columns back. Kept together so a rename of one side can't silently drift from
+    the other, the way three independent f-strings/manual slices could.
+    """
+    return {f"{prefix}{name}": value for name, value in series.items()}
+
+
+def unflatten_by_driver(prefix: str, row: pd.Series) -> pd.Series:
+    """The inverse of flatten_by_driver: every `row` entry whose key starts with `prefix`,
+    keyed back by driver name (the part after `prefix`) instead of the flat column name.
+
+    Drops any value that's NaN -- padding from another variant's wider driver set sharing the
+    same physical table (see GenericTableRepository.write()'s column widening), not a real
+    coefficient/standard-error/p-value for this pair.
+    """
+    return pd.Series(
+        {
+            str(key)[len(prefix) :]: value
+            for key, value in row.items()
+            if str(key).startswith(prefix) and pd.notna(value)
+        }
+    )
+
+
 @dataclass(frozen=True)
 class PairResult:
     """One pair's full STEER snapshot -- prices, drivers, regression diagnostics.
@@ -255,12 +284,9 @@ class PairResult:
             "reason": self.signal.reason if self.signal else None,
             "markov_state": self.markov_state,
         }
-        for name, value in self.coefficient.items():
-            row[f"coefficient_{name}"] = value
-        for name, value in self.standard_error.items():
-            row[f"standard_error_{name}"] = value
-        for name, value in self.p_values.items():
-            row[f"p_value_{name}"] = value
+        row.update(flatten_by_driver("coefficient_", self.coefficient))
+        row.update(flatten_by_driver("standard_error_", self.standard_error))
+        row.update(flatten_by_driver("p_value_", self.p_values))
         return pd.Series(row)
 
     def plot(self, *, ax=None):
