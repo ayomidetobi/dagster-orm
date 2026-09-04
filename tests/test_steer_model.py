@@ -29,6 +29,22 @@ from tests.test_steer_assets import (
 )
 
 
+def _write_availability_report(data_api, variant: str) -> None:
+    """Write `variant`'s availability report to storage -- what fx_data_availability's asset
+    body does, reused directly here since Steer.fit() (like steer_silver_prices) now reads the
+    stored report instead of rebuilding it itself; every direct Steer.fit() call in this file
+    needs this run first, the same way a real fx_data_availability materialization would need to
+    precede a real steer_silver_prices run."""
+    from dagster_quickstart.availability.report import build_availability_report
+    from dagster_quickstart.availability.storage import write_report
+    from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
+    from dagster_quickstart.steer.source.discovery import discover_pairs
+
+    pairs = discover_pairs(variant, data_api)
+    report = build_availability_report({variant: pairs}, data_api, STEER_AVAILABILITY_SPEC)
+    write_report(data_api, report)
+
+
 def _materialize_asset_pipeline(
     metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig
 ):
@@ -36,9 +52,16 @@ def _materialize_asset_pipeline(
         "rewrite_data_api": FakeRewriteDataAPIResource(metadata, values),
         "steer_config": FakeSteerConfigResource(strategy_config),
     }
+    availability_result = materialize(
+        [fx_data_availability],
+        resources=resources,
+        partition_key=strategy_config.variant,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert availability_result.success
+
     result = materialize(
         [
-            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -444,6 +467,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
     strategy_config = _g10_strategy_config()
 
     resource = FakeRewriteDataAPIResource(metadata, values)
+    _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=strategy_config)
 
     full_dates = sorted(values["timestamp"].unique())
@@ -453,6 +477,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
 
     truncated_values = values[values["timestamp"] <= cutoff]
     truncated_resource = FakeRewriteDataAPIResource(metadata, truncated_values)
+    _write_availability_report(truncated_resource.api, "G10")
     truncated_steer = Steer.from_data_api(
         truncated_resource.api, variant="G10", strategy_config=strategy_config
     )
@@ -469,6 +494,7 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
 def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
     """Acceptance criterion 3."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=5, cointegration="latest")
@@ -484,6 +510,7 @@ def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
 def test_get_cross_section_matches_steer_result_cross_section():
     """Acceptance criterion 4."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
@@ -505,6 +532,7 @@ def test_get_cross_section_matches_steer_result_cross_section():
 def test_plot_z_history_raises_a_clear_error_when_lookback_is_one():
     """Acceptance criterion 5."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
@@ -536,6 +564,7 @@ def test_blocked_pairs_are_skipped_and_recorded():
         ignore_index=True,
     )
     resource = FakeRewriteDataAPIResource(metadata, _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
     steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)

@@ -22,7 +22,13 @@ from tests.test_steer_assets import (
     _unblocked_g10_metadata,
     _unblocked_g10_values,
 )
-from tests.test_steer_model import _chn_metadata, _chn_values, _em_metadata, _em_values
+from tests.test_steer_model import (
+    _chn_metadata,
+    _chn_values,
+    _em_metadata,
+    _em_values,
+    _write_availability_report,
+)
 
 
 def test_variants_dict_keys_by_variant():
@@ -68,6 +74,7 @@ def test_fit_matches_the_explicit_steer_from_data_api_path(
 ):
     """Acceptance criterion 1, for one G10, one EM, and one CHN pair."""
     resource = FakeRewriteDataAPIResource(build_metadata(), build_values())
+    _write_availability_report(resource.api, variant_obj.variant)
 
     via_variant = variant_obj.fit(data_api=resource.api, lookback_days=1, cointegration="each")
     via_explicit = Steer.from_data_api(

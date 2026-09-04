@@ -1,8 +1,9 @@
 """STEER daily model pipeline: silver conform -> gold features -> cointegration -> estimate -> signal.
 
 fx_data_availability moved to dagster_quickstart/assets/availability_asset.py (its own module,
-outside the "steer" asset group) -- see that module's docstring. steer_silver_prices still
-takes its report as a Dagster asset input (parameter name fx_data_availability).
+outside the "steer" asset group) -- see that module's docstring. steer_silver_prices reads its
+stored report directly (dagster_quickstart.availability.storage.read_latest_report), not as a
+Dagster asset input -- the two assets aren't connected in the graph at all.
 
 See dagster_quickstart/steer/ for the pure business logic these assets
 wire into Dagster, and this package's README section in the repo root

@@ -36,6 +36,7 @@ from dagster import DagsterInstance, materialize
 
 from dagster_quickstart.assets.availability_asset import fx_data_availability
 from dagster_quickstart.assets.steer.cointegration_asset import steer_cointegration
+from dagster_quickstart.availability.storage import read_latest_report
 from dagster_quickstart.assets.steer.estimate_asset import steer_estimate
 from dagster_quickstart.assets.steer.gold_features_asset import steer_features
 from dagster_quickstart.assets.steer.signal_asset import steer_signal
@@ -189,10 +190,21 @@ def resources():
 def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resources):
     """local_equity is never available (see steer/discovery.py) -- every pair in the variant is blocked,
     and the whole chain should skip cleanly end to end rather than fail, with nothing written to the
-    gold tables. Both pairs in the variant are discovered and processed within ONE partition run."""
+    gold tables. Both pairs in the variant are discovered and processed within ONE partition run.
+
+    fx_data_availability and steer_silver_prices are no longer connected in the Dagster graph
+    (see assets/availability_asset.py's module docstring) -- materialized as two separate steps,
+    the way an unrelated schedule/run would, rather than one combined selection."""
+    availability_result = materialize(
+        [fx_data_availability],
+        resources=resources,
+        partition_key=VARIANT,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert availability_result.success
+
     result = materialize(
         [
-            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -206,7 +218,7 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
 
     assert result.success
 
-    availability_output = result.output_for_node("fx_data_availability", output_name="result")
+    availability_output = read_latest_report(resources["rewrite_data_api"].api, VARIANT)
     assert len(availability_output) == len(PAIRS)
     assert availability_output["blocked"].all()
 
@@ -234,7 +246,7 @@ def test_data_availability_reports_every_pair_in_the_variant(resources):
     )
     assert result.success
 
-    report = result.output_for_node("fx_data_availability", output_name="result")
+    report = read_latest_report(resources["rewrite_data_api"].api, VARIANT)
     assert set(report["series_code"]) == set(PAIRS)
     assert (report["variant"] == VARIANT).all()
     assert report["blocked"].all()
@@ -242,8 +254,14 @@ def test_data_availability_reports_every_pair_in_the_variant(resources):
 
 
 def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
+    materialize(
+        [fx_data_availability],
+        resources={"rewrite_data_api": resources["rewrite_data_api"]},
+        partition_key=VARIANT,
+        instance=DagsterInstance.ephemeral(),
+    )
     result = materialize(
-        [fx_data_availability, steer_silver_prices],
+        [steer_silver_prices],
         resources={
             "rewrite_data_api": resources["rewrite_data_api"],
             "steer_config": resources["steer_config"],
@@ -397,9 +415,16 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
         "steer_config": FakeSteerConfigResource(_strategy_config()),
     }
 
+    availability_result = materialize(
+        [fx_data_availability],
+        resources=resources,
+        partition_key=VARIANT,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert availability_result.success
+
     result = materialize(
         [
-            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -413,7 +438,7 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
 
     assert result.success
 
-    availability_output = result.output_for_node("fx_data_availability", output_name="result")
+    availability_output = read_latest_report(resources["rewrite_data_api"].api, VARIANT)
     assert availability_output["blocked"].eq(False).all()
 
     silver_output = result.output_for_node("steer_silver_prices", output_name="result")
@@ -457,35 +482,28 @@ def _wrap_with_call_counter(api, method_name: str) -> dict:
 
 
 def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(resources):
-    """Acceptance criterion: steer_silver_prices depends on fx_data_availability's output
-    (see silver_asset.py) and reconstructs every pair's PairAvailability from it via
-    PairAvailability.from_report_row -- no re-discovery, no re-resolution. Proven black-box:
-    adding steer_silver_prices to the materialize() selection must not change the
-    get_metadata() call count versus materializing fx_data_availability alone."""
-    availability_only_counter = _wrap_with_call_counter(
-        resources["rewrite_data_api"].api, "get_metadata"
-    )
+    """Acceptance criterion: steer_silver_prices reads fx_data_availability's stored report
+    (dagster_quickstart.availability.storage.read_latest_report -- see silver_asset.py) and
+    reconstructs every pair's PairAvailability from it via PairAvailability.from_report_row --
+    no re-discovery, no re-resolution. Proven black-box: materializing steer_silver_prices
+    (after fx_data_availability has already run and written its report) must issue zero
+    get_metadata() calls of its own."""
     materialize(
         [fx_data_availability],
         resources={"rewrite_data_api": resources["rewrite_data_api"]},
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
-    availability_only_calls = availability_only_counter["count"]
 
-    both_resources = {
-        "rewrite_data_api": FakeRewriteDataAPIResource(METADATA, _values_frame()),
-        "steer_config": resources["steer_config"],
-    }
-    both_counter = _wrap_with_call_counter(both_resources["rewrite_data_api"].api, "get_metadata")
+    counter = _wrap_with_call_counter(resources["rewrite_data_api"].api, "get_metadata")
     materialize(
-        [fx_data_availability, steer_silver_prices],
-        resources=both_resources,
+        [steer_silver_prices],
+        resources=resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
 
-    assert both_counter["count"] == availability_only_calls
+    assert counter["count"] == 0
 
 
 def test_blocked_pair_log_lines_are_unchanged_in_wording_and_count(resources, capfd):
@@ -499,7 +517,13 @@ def test_blocked_pair_log_lines_are_unchanged_in_wording_and_count(resources, ca
     wrote to stderr, only that something did.
     """
     materialize(
-        [fx_data_availability, steer_silver_prices],
+        [fx_data_availability],
+        resources=resources,
+        partition_key=VARIANT,
+        instance=DagsterInstance.ephemeral(),
+    )
+    materialize(
+        [steer_silver_prices],
         resources=resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
@@ -522,15 +546,23 @@ def test_silver_asset_output_matches_build_silver_frame_called_directly(resource
     from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
     from dagster_quickstart.steer.source.features import build_silver_frame
 
+    availability_result = materialize(
+        [fx_data_availability],
+        resources=resources,
+        partition_key=VARIANT,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert availability_result.success
+
     result = materialize(
-        [fx_data_availability, steer_silver_prices],
+        [steer_silver_prices],
         resources=resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
 
-    availability_output = result.output_for_node("fx_data_availability", output_name="result")
+    availability_output = read_latest_report(resources["rewrite_data_api"].api, VARIANT)
     asset_silver_output = result.output_for_node("steer_silver_prices", output_name="result")
     materializations = [
         event

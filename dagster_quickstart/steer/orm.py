@@ -35,6 +35,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from dagster_quickstart.availability.storage import latest_snapshot
 from dagster_quickstart.steer.analytics.results import SteerResult
 
 SILVER_SCHEMA = "silver"
@@ -89,7 +90,9 @@ def save_result(result: SteerResult, data_api: Any) -> None:
     data_api.write_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, summary)
 
 
-def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None) -> SteerResult:
+def load_result(
+    data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp] = None
+) -> SteerResult:
     """Load one pair's SteerResult back via data_api.read_table() -- see save_result()/module docstring.
 
     Both tables are append-only snapshots -- without `as_of`, the most
@@ -112,7 +115,11 @@ def load_result(data_api: Any, series_code: str, *, as_of: Optional[pd.Timestamp
         summary = summary[summary["as_of"] == pd.Timestamp(as_of)]
         if summary.empty:
             raise LookupError(f"No SteerResult found for {series_code!r} as of {as_of}.")
-    row = summary.sort_values("as_of").iloc[-1]
+        row = summary.iloc[0]
+    else:
+        # latest_snapshot() (dagster_quickstart.availability.storage) -- the same "most recent
+        # as_of" logic the availability report's own append-only read uses.
+        row = latest_snapshot(summary).iloc[0]
     row_as_of = row["as_of"]
 
     timeseries = data_api.read_table(

@@ -19,18 +19,24 @@ The report includes a flat `{leg}_{role}` column per resolved driver role
 dagster_quickstart.availability.report.build_availability_report), not
 just the blocked/reason summary -- steer_silver_prices reconstructs each
 pair's PairAvailability straight from these columns via
-PairAvailability.from_report_row, instead of re-resolving every role from
-a fresh metadata query.
+PairAvailability.from_report_row.
+
+Writes the report to silver.fx_availability (dagster_quickstart.availability.storage.write_report)
+rather than yielding it as a Dagster Output -- no downstream asset takes it as an input, no
+`deps=` either. steer_silver_prices (and Steer.fit(), for the script/notebook path) each read
+the stored report independently via read_latest_report(); the two are no longer connected in
+the Dagster graph at all, so this asset and steer_silver_prices can run on different schedules,
+different runs, or out of order -- read_latest_report() logs how stale the report it found was,
+rather than either asset silently assuming freshness.
 """
 
-import pandas as pd
 from dagster import (
     AssetCheckResult,
     AssetCheckSeverity,
     AssetCheckSpec,
     AssetExecutionContext,
+    MaterializeResult,
     MetadataValue,
-    Output,
     StaticPartitionsDefinition,
     asset,
 )
@@ -68,6 +74,7 @@ def fx_data_availability(context: AssetExecutionContext):
     substituted with a global proxy when missing.
     """
     from dagster_quickstart.availability.report import build_availability_report
+    from dagster_quickstart.availability.storage import write_report
     from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
     from dagster_quickstart.steer.source.discovery import discover_pairs
 
@@ -82,7 +89,7 @@ def fx_data_availability(context: AssetExecutionContext):
             severity=AssetCheckSeverity.WARN,
             description=f"No FX pairs discovered in the datalake for {variant}.",
         )
-        yield Output(pd.DataFrame(), metadata={"pair_count": 0})
+        yield MaterializeResult(metadata={"pair_count": 0})
         return
 
     report = build_availability_report({variant: pairs}, data_api, STEER_AVAILABILITY_SPEC)
@@ -101,8 +108,9 @@ def fx_data_availability(context: AssetExecutionContext):
         metadata={"blocked_count": blocked_count, "total_count": total_count},
     )
 
-    yield Output(
-        report,
+    write_report(data_api, report)
+
+    yield MaterializeResult(
         metadata={
             "variant": variant,
             "pair_count": total_count,

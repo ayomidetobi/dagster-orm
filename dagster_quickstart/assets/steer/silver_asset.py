@@ -1,13 +1,13 @@
 """Silver layer: materialize this variant's steer.source.features.build_silver_frame result.
 
-One partition per variant (G10/EM/CHN, static -- see partitions.py).
-Depends on fx_data_availability (same partition keys -- see
-assets/availability_asset.py's FX_AVAILABILITY_PARTITIONS -- so Dagster aligns
-the partition and the IO manager hands this asset the upstream frame
-directly -- no manual S3/Parquet read) instead of re-discovering pairs and
-re-resolving every driver role itself, so this asset's runtime never
-duplicates fx_data_availability's (role, currency) resolution work --
-this asset's own runtime is that one plus a single get_values() call.
+One partition per variant (G10/EM/CHN, static -- see partitions.py). Reads
+fx_data_availability's stored report (dagster_quickstart.availability.storage.
+read_latest_report) instead of re-discovering pairs and re-resolving every
+driver role itself, so this asset's runtime never duplicates
+fx_data_availability's (role, currency) resolution work -- this asset's own
+runtime is that read plus a single get_values() call. Not a Dagster asset
+dependency (no `deps=`, no parameter) -- see assets/availability_asset.py's
+module docstring for why the two are fully decoupled.
 
 All domain logic (collecting series codes, loading DriverValues, resolving
 the CHN flows cutover, iterating pairs, skipping blocked/stale ones,
@@ -47,14 +47,23 @@ from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
     ],
     group_name="steer",
 )
-def steer_silver_prices(context: AssetExecutionContext, fx_data_availability: pd.DataFrame):
+def steer_silver_prices(context: AssetExecutionContext):
     """Fetch this variant's every pair's rate + drivers from DuckLake and conform them.
+
+    Reads fx_data_availability's stored report directly (dagster_quickstart.availability.storage.
+    read_latest_report) rather than taking it as a Dagster asset input -- the two assets aren't
+    connected in the graph at all any more (see assets/availability_asset.py's module docstring),
+    so this can run on a different schedule/run than fx_data_availability without either asset
+    knowing about the other. read_latest_report() raises if nothing's ever been written for this
+    variant (a genuine missing prerequisite -- this step should fail, not silently produce an
+    empty silver frame) and logs how stale whatever it found is.
 
     See steer.source.features.build_silver_frame's docstring for what "blocked"/
     "stale" mean and why a pair is skipped rather than passed through
     partial.
     """
     from dagster_quickstart.availability.report import pairs_from_availability_report
+    from dagster_quickstart.availability.storage import read_latest_report
     from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
     from dagster_quickstart.steer.source.features import build_silver_frame
 
@@ -62,7 +71,8 @@ def steer_silver_prices(context: AssetExecutionContext, fx_data_availability: pd
     data_api = context.resources.rewrite_data_api.api
     strategy_config = context.resources.steer_config.for_variant(variant)
 
-    availabilities = pairs_from_availability_report(fx_data_availability, STEER_AVAILABILITY_SPEC)
+    report = read_latest_report(data_api, variant)
+    availabilities = pairs_from_availability_report(report, STEER_AVAILABILITY_SPEC)
     as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
 
     result = build_silver_frame(data_api, variant, strategy_config, availabilities, as_of=as_of)

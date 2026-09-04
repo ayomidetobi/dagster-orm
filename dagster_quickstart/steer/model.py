@@ -3,14 +3,17 @@
 Pure Python -- no Dagster -- callable from a script or notebook the same
 way as from an asset. `Steer.fit()` is a thin orchestration layer over
 functions that already exist and are already exercised by the asset graph
-(assets/steer/*.py, assets/availability_asset.py): steer.source.discovery.discover_pairs,
-dagster_quickstart.availability.report.build_availability_report,
+(assets/steer/*.py, assets/availability_asset.py):
+dagster_quickstart.availability.storage.read_latest_report,
 steer.source.features.fetch_raw_driver_frame/build_steer_features,
 steer.analytics.estimation.sign_check_and_reestimate/cointegration_test/generate_signal,
 steer.analytics.results.build_steer_result. It does
 not reimplement any of them -- same numbers as the asset pipeline, for the
 same inputs, by construction (see tests/test_steer_model.py's direct
-comparison against a materialized asset graph).
+comparison against a materialized asset graph). fit() reads the availability
+report assets/availability_asset.py already wrote (read_latest_report()) rather than
+rediscovering pairs and re-resolving every driver role itself -- the script/notebook path and
+the Dagster asset graph share one source of truth, not two implementations that could disagree.
 
 SteerResult (steer/analytics/results.py) already is the right object for one pair at
 one as_of and is not modified here. SteerPanel is the plural container
@@ -75,7 +78,7 @@ class SteerPanel:
     what SteerResult.save() persists; signals() raises a clear error on a
     loaded-not-fitted SteerPanel rather than silently returning nothing.
 
-    blocked is series_code -> reason, for pairs steer.source.discovery reported
+    blocked is series_code -> reason, for pairs the stored availability report reported
     blocked at fit() time (never fetched, let alone fitted).
     """
 
@@ -339,7 +342,7 @@ class Steer:
         across dates, which would be look-ahead (day t-5's z would depend on
         coefficients estimated using data through day t).
 
-        pairs=None fits every pair steer.source.discovery doesn't report blocked;
+        pairs=None fits every pair the stored availability report doesn't report blocked;
         pass a subset of series_codes to fit fewer. A blocked pair is
         skipped entirely (never fetched) -- see SteerPanel.blocked for
         why, in the same wording steer.source.features.build_silver_frame uses.
@@ -361,10 +364,8 @@ class Steer:
             traded, silently. Costs one ADF call per pair per date instead
             of one per pair total.
         """
-        from dagster_quickstart.availability.report import (
-            build_availability_report,
-            pairs_from_availability_report,
-        )
+        from dagster_quickstart.availability.report import pairs_from_availability_report
+        from dagster_quickstart.availability.storage import read_latest_report
         from dagster_quickstart.steer.analytics.estimation import (
             cointegration_test,
             generate_signal,
@@ -372,7 +373,6 @@ class Steer:
         )
         from dagster_quickstart.steer.analytics.results import build_steer_result
         from dagster_quickstart.steer.constants import IS_LOGGED_COLUMN, RATE_COLUMN
-        from dagster_quickstart.steer.source.discovery import discover_pairs
         from dagster_quickstart.steer.source.features import (
             DriverValues,
             build_steer_features,
@@ -386,15 +386,13 @@ class Steer:
             raise ValueError(f'cointegration must be "latest" or "each", got {cointegration!r}')
 
         config = self.strategy_config
-        empty = SteerPanel(variant=self.variant, z_threshold=config.z_threshold)
 
-        pair_metadata = discover_pairs(self.variant, self._data_api)
-        if pair_metadata.empty:
-            return empty
-
-        report = build_availability_report(
-            {self.variant: pair_metadata}, self._data_api, STEER_AVAILABILITY_SPEC
-        )
+        # Shares one source of truth with the asset graph (assets/availability_asset.py writes
+        # this same stored report) instead of re-discovering pairs and re-resolving every driver
+        # role itself -- read_latest_report() raises LookupError if nothing's ever been written
+        # for this variant, rather than fit() silently returning an empty SteerPanel; a caller
+        # that genuinely has no data run yet should see that, not a quietly-empty result.
+        report = read_latest_report(self._data_api, self.variant)
         availabilities = pairs_from_availability_report(report, STEER_AVAILABILITY_SPEC)
         if pairs is not None:
             wanted = set(pairs)
