@@ -105,17 +105,6 @@ def test_discover_pairs_finds_every_pair_in_the_real_catalog(
     assert len(pairs) == expected_count
 
 
-@pytest.mark.parametrize("variant", ["G10", "EM", "CHN"])
-def test_require_real_still_returns_every_pair(real_catalog_data_api, variant):
-    """The regression this guards against: pairs marked is_synthetic=True
-    would vanish under require_real=True, and a production run that filters
-    is_synthetic=False (the normal way to exclude the 24 placeholder driver
-    rows) would discover zero pairs and estimate nothing."""
-    pairs = discover_pairs(variant, real_catalog_data_api, require_real=True)
-
-    assert not pairs.empty
-
-
 def test_g10_is_the_full_45_pair_cross_with_no_reciprocals():
     frame = pd.read_csv(CATALOG_PATH)
     g10 = frame[(frame["sub_asset_class"] == "FX Spot") & (frame["market_development"] == "G10")]
@@ -172,17 +161,23 @@ def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_dat
     assert blocked == []
 
 
-def test_cnh_local_equity_resolves_to_the_real_series_not_the_synthetic_duplicate(
+def test_cnh_local_equity_resolves_to_the_live_series_via_explicit_exclusion(
     real_catalog_data_api,
 ):
     """Acceptance criterion: CNH's local_equity role matches 2 real-catalog rows --
-    CNHLIVEMSCI_PX_LAST (real) and CNHMSCI_PX_LAST (synthetic). is_synthetic no longer
-    filters anything, but it must still decide this tie-break: real before synthetic."""
+    CNHLIVEMSCI_PX_LAST (real, live vintage -- confirmed correct, the daily CHN model runs on
+    live data) and CNHMSCI_PX_LAST (synthetic, close vintage). Resolution is driven by
+    STEER_AVAILABILITY_SPEC.excluded_series_codes explicitly excluding CNHMSCI_PX_LAST from
+    local_equity -- not by sort order (there is no is_synthetic tie-break any more) and not by
+    alphabetical accident. See steer/config.py's STEER_AVAILABILITY_SPEC for why."""
     resolver = RoleResolver.from_data_api(real_catalog_data_api, STEER_AVAILABILITY_SPEC)
 
     code, _ = resolver.resolve("local_equity", "CNH")
 
     assert code == "CNHLIVEMSCI_PX_LAST"
+    # The exclusion prevents the ambiguity from existing at all, not just from winning a
+    # tie-break -- only one candidate ever reaches the (role, currency) group.
+    assert ("local_equity", "CNH") not in resolver.ambiguities
 
 
 def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolution(

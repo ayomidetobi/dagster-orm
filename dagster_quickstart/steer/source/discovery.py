@@ -38,19 +38,16 @@ VARIANT_TO_DATASET_CLASS: Dict[str, Type[DatasetBase]] = {
 }
 
 
-def discover_pairs(variant: str, data_api: Any, *, require_real: bool = False) -> pd.DataFrame:
-    """Metadata for every real currency_pair (series_code) in `variant`.
+def discover_pairs(variant: str, data_api: Any) -> pd.DataFrame:
+    """Metadata for every currency_pair (series_code) in `variant`.
 
-    require_real=True excludes any pair row with is_synthetic=True. All 67
-    FX pair rows are is_synthetic=False (they're real, standard-convention
-    tickers -- see rewrite/data_api/dataset/fx.py), so this should never
-    actually narrow the pair list; it exists so a production caller that
-    filters *everything* by is_synthetic=False (the normal way to exclude
-    the 24 placeholder driver rows) doesn't also silently lose every pair.
+    All catalog data is treated as real for discovery/resolution purposes
+    -- no data-quality-flag filter here (see dagster_quickstart.availability's
+    package docstring and steer/config.py's STEER_AVAILABILITY_SPEC for
+    where a genuine catalog gap, like a placeholder driver row, is instead
+    handled: reported blocked, or explicitly excluded by series_code, never
+    silently dropped by a blanket flag check).
     """
     DatasetBase.configure(data_api)
     dataset_cls = VARIANT_TO_DATASET_CLASS[variant]
-    metadata = dataset_cls().info
-    if require_real and not metadata.empty and "is_synthetic" in metadata.columns:
-        metadata = metadata[metadata["is_synthetic"] == False]  # noqa: E712
-    return metadata
+    return dataset_cls().info

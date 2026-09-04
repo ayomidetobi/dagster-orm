@@ -16,6 +16,7 @@ from dagster_quickstart.availability.report import (
     build_availability_report,
 )
 from dagster_quickstart.availability.roles import RoleResolver
+from dagster_quickstart.availability.spec import AvailabilitySpec
 from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
 
 REQUIRED_ROLES = STEER_AVAILABILITY_SPEC.required_roles
@@ -75,23 +76,81 @@ def test_role_resolver_none_when_nothing_matches():
     assert "GBP" in reason
 
 
-def test_role_resolver_prefers_real_row_over_synthetic_duplicate():
-    """CNH's local_equity role matches 2 rows in the real catalog -- the real
-    CNHLIVEMSCI_PX_LAST and the synthetic CNHMSCI_PX_LAST. The real one wins --
-    this is the ONLY thing is_synthetic still influences (see module docstring)."""
+def _spec_with(*, excluded_series_codes=None) -> AvailabilitySpec:
+    """A minimal AvailabilitySpec for testing RoleResolver's ambiguity/exclusion mechanism
+    directly -- generic, not STEER's real vocabulary (that's what STEER_AVAILABILITY_SPEC-based
+    tests elsewhere in this file, and tests/test_steer_universe_datasets.py's real-catalog CNH
+    test, are for)."""
+    return AvailabilitySpec(
+        role_filters={"swap_2y": {"sub_asset_class": ["Interest Rate Swap"], "tenor": ["2Y"]}},
+        required_roles={"G10": (("swap_2y",), ())},
+        single_non_usd_leg={"G10": False},
+        single_non_usd_leg_reason="unused in this test",
+        excluded_series_codes=excluded_series_codes or {},
+        variants=("G10",),
+    )
+
+
+def test_role_resolver_records_and_logs_a_genuine_ambiguity(capfd):
+    """resolve_role must record when more than one row matched, rather than silently taking the
+    first row -- ambiguous role resolution is a catalog problem, visible the moment it happens
+    (a logged warning naming the role, currency and candidates), not discovered later when a
+    coefficient looks wrong."""
+    spec = _spec_with()
     resolver = RoleResolver(
         pd.DataFrame(
             [
-                _role_row("local_equity", "CNH", "CNHMSCI_PX_LAST", is_synthetic=True),
-                _role_row("local_equity", "CNH", "CNHLIVEMSCI_PX_LAST", is_synthetic=False),
+                _role_row("swap_2y", "EUR", "EUR2YSW_B_PX_LAST"),
+                _role_row("swap_2y", "EUR", "EUR2YSW_A_PX_LAST"),
             ]
         ),
-        STEER_AVAILABILITY_SPEC,
+        spec,
     )
 
-    code, _ = resolver.resolve("local_equity", "CNH")
+    assert resolver.ambiguities[("swap_2y", "EUR")] == (
+        "EUR2YSW_A_PX_LAST",
+        "EUR2YSW_B_PX_LAST",
+    )
+    # Still resolves deterministically (alphabetically-first) -- ambiguous doesn't mean broken,
+    # it means visible.
+    code, _ = resolver.resolve("swap_2y", "EUR")
+    assert code == "EUR2YSW_A_PX_LAST"
 
-    assert code == "CNHLIVEMSCI_PX_LAST"
+    captured = capfd.readouterr()
+    combined = captured.out + captured.err
+    assert "availability_role_ambiguous" in combined
+    assert "swap_2y" in combined
+    assert "EUR" in combined
+    assert "EUR2YSW_A_PX_LAST" in combined
+    assert "EUR2YSW_B_PX_LAST" in combined
+
+
+def test_role_resolver_does_not_flag_a_currency_with_only_one_match():
+    spec = _spec_with()
+    resolver = RoleResolver(pd.DataFrame([_role_row("swap_2y", "EUR", "EUR2YSW_PX_LAST")]), spec)
+
+    assert resolver.ambiguities == {}
+
+
+def test_excluded_series_codes_prevents_the_ambiguity_from_ever_being_recorded():
+    """The fix for a real ambiguity (see STEER_AVAILABILITY_SPEC.excluded_series_codes / CNH's
+    local_equity) is an explicit exclusion, applied before candidates are grouped -- so the
+    excluded row never even reaches the point where it could create an ambiguity, rather than
+    winning some other tie-break."""
+    spec = _spec_with(excluded_series_codes={"swap_2y": ("EUR2YSW_B_PX_LAST",)})
+    resolver = RoleResolver(
+        pd.DataFrame(
+            [
+                _role_row("swap_2y", "EUR", "EUR2YSW_B_PX_LAST"),
+                _role_row("swap_2y", "EUR", "EUR2YSW_A_PX_LAST"),
+            ]
+        ),
+        spec,
+    )
+
+    assert ("swap_2y", "EUR") not in resolver.ambiguities
+    code, _ = resolver.resolve("swap_2y", "EUR")
+    assert code == "EUR2YSW_A_PX_LAST"
 
 
 def test_role_resolver_from_data_api_calls_get_metadata_exactly_once_with_no_filters():

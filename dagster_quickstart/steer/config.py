@@ -133,6 +133,17 @@ GLOBAL_DRIVERS = GlobalDriverConfig(
 #: its des_notes in meta_series_steer.csv) added on the assumption that CHN
 #: takes the same driver-2 treatment as EM -- the source ticker sheet
 #: supplies no CNH curve legs and no China CDS, so this is unconfirmed.
+#:
+#: excluded_series_codes: CNH's local_equity role matches 2 real-catalog rows --
+#: CNHLIVEMSCI_PX_LAST (real, intraday/live vintage) and CNHMSCI_PX_LAST (SYNTHETIC PLACEHOLDER,
+#: "not a verified vendor ticker" per its des_notes -- a close vintage added only to pair with
+#: the live one). Confirmed with the model owner: the daily CHN model runs on the live vintage,
+#: so CNHMSCI_PX_LAST is excluded here explicitly -- not left to the RoleResolver's
+#: series_code-ascending tie-break (which happens to also pick CNHLIVEMSCI today, but only
+#: because "CNHL" sorts before "CNHM"; that's an accident of alphabetical order, not a
+#: decision). Adding a `vintage` catalog column so local_equity's role_filters could select
+#: live vs. close on their own merits was considered and is out of scope for this pass; this
+#: exclusion is the interim fix -- revisit if a second currency ever gets a live/close pair.
 STEER_AVAILABILITY_SPEC = AvailabilitySpec(
     role_filters={
         ROLE_SWAP_2Y: dict(sub_asset_class=["Interest Rate Swap"], tenor=["2Y"]),
@@ -157,6 +168,9 @@ STEER_AVAILABILITY_SPEC = AvailabilitySpec(
         "5Y sovereign CDS as a single-country level; a cross with two non-USD legs has no "
         "defined driver-2 treatment under the published spec."
     ),
+    excluded_series_codes={
+        ROLE_LOCAL_EQUITY: ("CNHMSCI_PX_LAST",),
+    },
     variants=VARIANT_NAMES,
 )
 

@@ -36,6 +36,14 @@ class AvailabilitySpec:
         variant that sets single_non_usd_leg uses identical wording today; a spec with
         genuinely different per-variant wording would need this promoted to a dict too.
 
+    excluded_series_codes: role -> series_codes that must never resolve for it, checked before
+        role_filters' matches are grouped by currency (see RoleResolver). Exists for a
+        catalog row that would otherwise match a role's filters and create a genuine ambiguity
+        (RoleResolver.ambiguities) that the catalog itself doesn't yet have a column to resolve
+        (e.g. two "vintages" of the same underlying series, live vs. close) -- an explicit,
+        named exclusion instead of a silent tie-break on sort order or an incidental
+        data-quality-flag column. Empty for a role with no such exclusion.
+
     variants: every variant this spec covers -- e.g. for deriving Dagster partition keys
         without importing anything specific to whichever domain built this spec.
     """
@@ -44,4 +52,5 @@ class AvailabilitySpec:
     required_roles: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]]
     single_non_usd_leg: Dict[str, bool]
     single_non_usd_leg_reason: str
+    excluded_series_codes: Dict[str, Tuple[str, ...]]
     variants: Tuple[str, ...]
