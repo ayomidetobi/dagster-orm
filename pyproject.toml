@@ -13,7 +13,12 @@ code_location_name = "dagster_quickstart"
 # discipline and isn't mypy-clean; fixing that is a separate, much larger
 # effort outside this pipeline's scope. Extend `files` here as other parts
 # of the codebase are made mypy-clean.
-files = ["dagster_quickstart/steer", "dagster_quickstart/assets/steer"]
+files = [
+    "dagster_quickstart/steer",
+    "dagster_quickstart/assets/steer",
+    "dagster_quickstart/availability",
+    "dagster_quickstart/assets/availability_asset.py",
+]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true

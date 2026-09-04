@@ -16,16 +16,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
-from dagster_quickstart.rewrite.data_api.factory import create_data_api
-from dagster_quickstart.steer.source.discovery import (
-    RoleResolver,
+from dagster_quickstart.availability.report import (
     assess_pair_availability,
     build_availability_report,
-    discover_pairs,
 )
+from dagster_quickstart.availability.roles import RoleResolver
+from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
+from dagster_quickstart.rewrite.data_api.factory import create_data_api
+from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
+from dagster_quickstart.steer.source.discovery import discover_pairs
 
-CATALOG_PATH = Path(__file__).resolve().parents[1] / "dagster_quickstart" / "data" / "meta_series_steer.csv"
+CATALOG_PATH = (
+    Path(__file__).resolve().parents[1] / "dagster_quickstart" / "data" / "meta_series_steer.csv"
+)
 
 
 class FakeMetadataStorage:
@@ -153,12 +156,17 @@ def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_dat
     -- all 10 G10, all 21 EM, CNH -- has full role coverage in the catalog,
     not just that the roles exist somewhere."""
     pairs = discover_pairs(variant, real_catalog_data_api)
-    resolver = RoleResolver.from_data_api(real_catalog_data_api)
+    resolver = RoleResolver.from_data_api(real_catalog_data_api, STEER_AVAILABILITY_SPEC)
 
     blocked = [
-        (series_code, assess_pair_availability(series_code, variant, resolver).block_reasons)
+        (
+            series_code,
+            assess_pair_availability(
+                series_code, variant, resolver, STEER_AVAILABILITY_SPEC
+            ).block_reasons,
+        )
         for series_code in pairs["series_code"]
-        if assess_pair_availability(series_code, variant, resolver).blocked
+        if assess_pair_availability(series_code, variant, resolver, STEER_AVAILABILITY_SPEC).blocked
     ]
 
     assert blocked == []
@@ -170,7 +178,7 @@ def test_cnh_local_equity_resolves_to_the_real_series_not_the_synthetic_duplicat
     """Acceptance criterion: CNH's local_equity role matches 2 real-catalog rows --
     CNHLIVEMSCI_PX_LAST (real) and CNHMSCI_PX_LAST (synthetic). is_synthetic no longer
     filters anything, but it must still decide this tie-break: real before synthetic."""
-    resolver = RoleResolver.from_data_api(real_catalog_data_api)
+    resolver = RoleResolver.from_data_api(real_catalog_data_api, STEER_AVAILABILITY_SPEC)
 
     code, _ = resolver.resolve("local_equity", "CNH")
 
@@ -198,7 +206,9 @@ def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolutio
 
     real_catalog_data_api.get_metadata = counting_get_metadata
 
-    report = build_availability_report(pairs_by_variant, real_catalog_data_api)
+    report = build_availability_report(
+        pairs_by_variant, real_catalog_data_api, STEER_AVAILABILITY_SPEC
+    )
 
     assert call_count["n"] == 1
     assert len(report) == 45 + 21 + 1

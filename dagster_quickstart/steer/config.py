@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, model_validator
 
+from dagster_quickstart.availability.spec import AvailabilitySpec
 from dagster_quickstart.steer.constants import (
     DRIVER_COMMODITY,
     DRIVER_FLOWS,
@@ -63,9 +64,15 @@ from dagster_quickstart.steer.constants import (
     DRIVER_NAMES,
     DRIVER_OFFSHORE_SPREAD,
     DRIVER_YIELD_CURVE_OR_CDS,
+    ROLE_CDS_5Y,
+    ROLE_LOCAL_EQUITY,
+    ROLE_RATE_3M,
+    ROLE_SWAP_2Y,
+    ROLE_YIELD_10Y,
     VARIANT_CHN,
     VARIANT_EM,
     VARIANT_G10,
+    VARIANTS as VARIANT_NAMES,
 )
 
 if TYPE_CHECKING:
@@ -96,6 +103,61 @@ class GlobalDriverConfig(BaseModel):
 GLOBAL_DRIVERS = GlobalDriverConfig(
     global_equity_series="MXWO_PX_LAST",
     commodity_series="BRENT_PX_LAST",
+)
+
+
+#: STEER's answers to dagster_quickstart.availability's generic (role, currency) -> series_code
+#: resolution shape (see AvailabilitySpec's docstring) -- the actual role filters and per-variant
+#: requirements, transcribed verbatim from the pre-extraction ROLE_FILTERS/REQUIRED_ROLES (see
+#: git history). Every driver leg is expressed as a filter query against the real catalog's
+#: controlled vocabulary (sub_asset_class/tenor/market_segment/currency), not a hand-maintained
+#: mnemonic dictionary.
+#:
+#: Required roles differ by variant:
+#:   - G10: swap_2y, rate_3m, yield_10y, local_equity, for BOTH legs.
+#:     interest_rate_differential uses swap_2y (both legs); yield_curve_or_cds
+#:     is the (3m - 10y) curve-slope differential, using rate_3m/yield_10y
+#:     (see steer/source/features.py) -- two different rate drivers, not the same
+#:     series reused twice.
+#:   - EM/CHN: swap_2y and local_equity for BOTH legs; cds_5y for the
+#:     non-USD leg ONLY (yield_curve_or_cds is that leg's CDS *level*, not a
+#:     difference -- see steer/source/features.py). EM/CHN currently has no
+#:     sovereign-yield coverage in this catalog, so there's no 3m/10y curve
+#:     slope to build for them; cds_5y is the published methodology's driver
+#:     2 for these variants instead. Both also require exactly one non-USD leg
+#:     (single_non_usd_leg) -- EM and CHN pairs are USD-quoted by construction,
+#:     and driver 2 is a single-country level that presupposes exactly one
+#:     non-USD leg (see single_non_usd_leg_reason).
+#:
+#: CHN's cds_5y role resolves to CNHCDS_PX_LAST, a SYNTHETIC PLACEHOLDER (see
+#: its des_notes in meta_series_steer.csv) added on the assumption that CHN
+#: takes the same driver-2 treatment as EM -- the source ticker sheet
+#: supplies no CNH curve legs and no China CDS, so this is unconfirmed.
+STEER_AVAILABILITY_SPEC = AvailabilitySpec(
+    role_filters={
+        ROLE_SWAP_2Y: dict(sub_asset_class=["Interest Rate Swap"], tenor=["2Y"]),
+        ROLE_RATE_3M: dict(sub_asset_class=["Money Market Rate"], tenor=["3M"]),
+        ROLE_YIELD_10Y: dict(sub_asset_class=["Sovereign Yield"], tenor=["10Y"]),
+        ROLE_CDS_5Y: dict(sub_asset_class=["Sovereign CDS"], tenor=["5Y"]),
+        ROLE_LOCAL_EQUITY: dict(sub_asset_class=["Equity Index"], market_segment=["Local"]),
+    },
+    required_roles={
+        VARIANT_G10: ((ROLE_SWAP_2Y, ROLE_RATE_3M, ROLE_YIELD_10Y, ROLE_LOCAL_EQUITY), ()),
+        VARIANT_EM: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
+        VARIANT_CHN: ((ROLE_SWAP_2Y, ROLE_LOCAL_EQUITY), (ROLE_CDS_5Y,)),
+    },
+    single_non_usd_leg={
+        VARIANT_G10: False,
+        VARIANT_EM: True,
+        VARIANT_CHN: True,
+    },
+    # Quoted verbatim in the EM/CHN FX rows' des_notes (meta_series_steer.csv) -- keep in sync.
+    single_non_usd_leg_reason=(
+        "EM and CHN pairs are USD-quoted by construction. EM driver 2 is the non-USD leg's "
+        "5Y sovereign CDS as a single-country level; a cross with two non-USD legs has no "
+        "defined driver-2 treatment under the published spec."
+    ),
+    variants=VARIANT_NAMES,
 )
 
 

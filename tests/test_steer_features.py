@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dagster_quickstart.availability.report import PairAvailability
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.source.discovery import PairAvailability
 from dagster_quickstart.steer.source.features import (
     DriverValues,
     build_chn_flows,
@@ -164,8 +164,8 @@ class _FakeFetchDataAPI:
 
     def __init__(self, values: pd.DataFrame, metadata: pd.DataFrame | None = None):
         self._values = values
-        self._metadata = metadata if metadata is not None else pd.DataFrame(
-            columns=["series_code", "valid_to"]
+        self._metadata = (
+            metadata if metadata is not None else pd.DataFrame(columns=["series_code", "valid_to"])
         )
 
     def get_values(self, series_codes):

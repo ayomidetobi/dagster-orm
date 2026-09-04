@@ -12,12 +12,13 @@ get_values() in isolation, and gives DataAPI.read_table()/.write_table()
 writes) somewhere real to read/write.
 
 METADATA/PAIRS below deliberately have no role-filter coverage (see
-steer/discovery.py's ROLE_FILTERS) for either pair's legs, so every pair
-in that fixture stays blocked -- exercising the per-variant loop and the
-blocking/skip path, which is real, verified behavior. The role-resolution
-logic itself (assess_pair_availability -- which roles/legs are required
-per variant, non-USD-leg-only roles, etc.) is covered directly by
-test_steer_discovery.py's pure-function tests instead.
+steer/config.py's STEER_AVAILABILITY_SPEC.role_filters) for either pair's
+legs, so every pair in that fixture stays blocked -- exercising the
+per-variant loop and the blocking/skip path, which is real, verified
+behavior. The role-resolution logic itself (assess_pair_availability --
+which roles/legs are required per variant, non-USD-leg-only roles, etc.)
+is covered directly by tests/test_availability_report.py's pure-function
+tests instead.
 test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair
 below is the opposite case: a fully-resolvable G10 pair, proving the new
 metadata-driven discovery + driver construction actually reaches a written
@@ -33,7 +34,7 @@ import pandas as pd
 import pytest
 from dagster import DagsterInstance, materialize
 
-from dagster_quickstart.assets.steer.availability_asset import steer_data_availability
+from dagster_quickstart.assets.availability_asset import fx_data_availability
 from dagster_quickstart.assets.steer.cointegration_asset import steer_cointegration
 from dagster_quickstart.assets.steer.estimate_asset import steer_estimate
 from dagster_quickstart.assets.steer.gold_features_asset import steer_features
@@ -191,7 +192,7 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
     gold tables. Both pairs in the variant are discovered and processed within ONE partition run."""
     result = materialize(
         [
-            steer_data_availability,
+            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -205,7 +206,7 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
 
     assert result.success
 
-    availability_output = result.output_for_node("steer_data_availability", output_name="result")
+    availability_output = result.output_for_node("fx_data_availability", output_name="result")
     assert len(availability_output) == len(PAIRS)
     assert availability_output["blocked"].all()
 
@@ -226,14 +227,14 @@ def test_full_graph_processes_every_pair_and_skips_cleanly_when_blocked(resource
 
 def test_data_availability_reports_every_pair_in_the_variant(resources):
     result = materialize(
-        [steer_data_availability],
+        [fx_data_availability],
         resources={"rewrite_data_api": resources["rewrite_data_api"]},
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
 
-    report = result.output_for_node("steer_data_availability", output_name="result")
+    report = result.output_for_node("fx_data_availability", output_name="result")
     assert set(report["series_code"]) == set(PAIRS)
     assert (report["variant"] == VARIANT).all()
     assert report["blocked"].all()
@@ -242,7 +243,7 @@ def test_data_availability_reports_every_pair_in_the_variant(resources):
 
 def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
     result = materialize(
-        [steer_data_availability, steer_silver_prices],
+        [fx_data_availability, steer_silver_prices],
         resources={
             "rewrite_data_api": resources["rewrite_data_api"],
             "steer_config": resources["steer_config"],
@@ -264,28 +265,81 @@ def test_silver_prices_discovers_and_skips_every_pair_as_blocked(resources):
 def _unblocked_g10_metadata() -> pd.DataFrame:
     """One G10 pair (EURUSD) with every required role resolvable -- swap_2y/
     rate_3m/yield_10y/local_equity for both EUR and USD -- so it clears
-    steer_data_availability and flows all the way through to a signal."""
+    fx_data_availability and flows all the way through to a signal."""
     rows = [
-        {"series_code": "EURUSD_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
-         "market_development": "G10", "currency": "EUR", "tenor": None, "market_segment": None},
-        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
-        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+        {
+            "series_code": "EURUSD_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Spot",
+            "market_development": "G10",
+            "currency": "EUR",
+            "tenor": None,
+            "market_segment": None,
+        },
+        {
+            "series_code": "MXWO_PX_LAST",
+            "asset_class": "Equity",
+            "sub_asset_class": "Equity Index",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": "Global",
+        },
+        {
+            "series_code": "BRENT_PX_LAST",
+            "asset_class": "Commodity",
+            "sub_asset_class": "Crude Oil",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": None,
+        },
     ]
     for ccy in ("EUR", "USD"):
-        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Interest Rate Swap", "market_development": "G10",
-                     "currency": ccy, "tenor": "2Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_3M", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Money Market Rate", "market_development": "G10",
-                     "currency": ccy, "tenor": "3M", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_10Y", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Sovereign Yield", "market_development": "G10",
-                     "currency": ccy, "tenor": "10Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
-                     "sub_asset_class": "Equity Index", "market_development": "G10",
-                     "currency": ccy, "tenor": None, "market_segment": "Local"})
+        rows.append(
+            {
+                "series_code": f"{ccy}_SWAP",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Interest Rate Swap",
+                "market_development": "G10",
+                "currency": ccy,
+                "tenor": "2Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_3M",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Money Market Rate",
+                "market_development": "G10",
+                "currency": ccy,
+                "tenor": "3M",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_10Y",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Sovereign Yield",
+                "market_development": "G10",
+                "currency": ccy,
+                "tenor": "10Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_EQ",
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Index",
+                "market_development": "G10",
+                "currency": ccy,
+                "tenor": None,
+                "market_segment": "Local",
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -337,13 +391,15 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
     new metadata-driven discovery + driver construction actually works end
     to end, not just that it degrades gracefully when data is missing."""
     resources = {
-        "rewrite_data_api": FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values()),
+        "rewrite_data_api": FakeRewriteDataAPIResource(
+            _unblocked_g10_metadata(), _unblocked_g10_values()
+        ),
         "steer_config": FakeSteerConfigResource(_strategy_config()),
     }
 
     result = materialize(
         [
-            steer_data_availability,
+            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -357,7 +413,7 @@ def test_full_graph_produces_an_estimate_and_signal_for_a_fully_available_pair()
 
     assert result.success
 
-    availability_output = result.output_for_node("steer_data_availability", output_name="result")
+    availability_output = result.output_for_node("fx_data_availability", output_name="result")
     assert availability_output["blocked"].eq(False).all()
 
     silver_output = result.output_for_node("steer_silver_prices", output_name="result")
@@ -401,16 +457,16 @@ def _wrap_with_call_counter(api, method_name: str) -> dict:
 
 
 def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(resources):
-    """Acceptance criterion: steer_silver_prices depends on steer_data_availability's output
+    """Acceptance criterion: steer_silver_prices depends on fx_data_availability's output
     (see silver_asset.py) and reconstructs every pair's PairAvailability from it via
     PairAvailability.from_report_row -- no re-discovery, no re-resolution. Proven black-box:
     adding steer_silver_prices to the materialize() selection must not change the
-    get_metadata() call count versus materializing steer_data_availability alone."""
+    get_metadata() call count versus materializing fx_data_availability alone."""
     availability_only_counter = _wrap_with_call_counter(
         resources["rewrite_data_api"].api, "get_metadata"
     )
     materialize(
-        [steer_data_availability],
+        [fx_data_availability],
         resources={"rewrite_data_api": resources["rewrite_data_api"]},
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
@@ -423,7 +479,7 @@ def test_steer_silver_prices_issues_zero_get_metadata_calls_for_role_resolution(
     }
     both_counter = _wrap_with_call_counter(both_resources["rewrite_data_api"].api, "get_metadata")
     materialize(
-        [steer_data_availability, steer_silver_prices],
+        [fx_data_availability, steer_silver_prices],
         resources=both_resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
@@ -443,7 +499,7 @@ def test_blocked_pair_log_lines_are_unchanged_in_wording_and_count(resources, ca
     wrote to stderr, only that something did.
     """
     materialize(
-        [steer_data_availability, steer_silver_prices],
+        [fx_data_availability, steer_silver_prices],
         resources=resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
@@ -462,27 +518,29 @@ def test_silver_asset_output_matches_build_silver_frame_called_directly(resource
     """Acceptance criterion: the asset's Output frame and check metadata are byte-identical to
     calling steer.pipeline.build_silver_frame directly on the same inputs -- steer_silver_prices
     is proven to be a thin wrapper, not an independent implementation."""
-    from dagster_quickstart.steer.source.discovery import pairs_from_availability_report
+    from dagster_quickstart.availability.report import pairs_from_availability_report
+    from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
     from dagster_quickstart.steer.source.features import build_silver_frame
 
     result = materialize(
-        [steer_data_availability, steer_silver_prices],
+        [fx_data_availability, steer_silver_prices],
         resources=resources,
         partition_key=VARIANT,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
 
-    availability_output = result.output_for_node("steer_data_availability", output_name="result")
+    availability_output = result.output_for_node("fx_data_availability", output_name="result")
     asset_silver_output = result.output_for_node("steer_silver_prices", output_name="result")
     materializations = [
-        event for event in result.all_events
+        event
+        for event in result.all_events
         if event.event_type_value == "ASSET_MATERIALIZATION"
         and event.step_key == "steer_silver_prices"
     ]
     asset_metadata = materializations[-1].materialization.metadata
 
-    availabilities = pairs_from_availability_report(availability_output)
+    availabilities = pairs_from_availability_report(availability_output, STEER_AVAILABILITY_SPEC)
     as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
     direct_result = build_silver_frame(
         resources["rewrite_data_api"].api,

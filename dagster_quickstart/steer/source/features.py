@@ -52,6 +52,7 @@ import numpy as np
 import pandas as pd
 import structlog
 
+from dagster_quickstart.availability.report import PairAvailability
 from dagster_quickstart.steer.constants import (
     CURRENCY_USD,
     DRIVER_COMMODITY,
@@ -79,7 +80,6 @@ from dagster_quickstart.steer.constants import (
     VARIANT_CHN,
     VARIANT_G10,
 )
-from dagster_quickstart.steer.source.discovery import PairAvailability
 
 if TYPE_CHECKING:
     # source/ needs StrategyConfig only for a type annotation and .drivers/.global_equity_series/
@@ -355,7 +355,9 @@ class DriverValues:
         self._wide = wide
 
     @classmethod
-    def load(cls, data_api: Any, series_codes: Iterable[str], *, start: Any = None, end: Any = None) -> "DriverValues":
+    def load(
+        cls, data_api: Any, series_codes: Iterable[str], *, start: Any = None, end: Any = None
+    ) -> "DriverValues":
         """Fetch every series in `series_codes` in one call.
 
         Deliberately does NOT pass ticker_source -- get_values() resolves the vendor
@@ -444,7 +446,9 @@ def fetch_raw_driver_frame(
     )
 
     if has_data("_base_swap_2y") and has_data("_quote_swap_2y"):
-        features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = renamed["_base_swap_2y"] - renamed["_quote_swap_2y"]
+        features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = (
+            renamed["_base_swap_2y"] - renamed["_quote_swap_2y"]
+        )
     else:
         features[DRIVER_INTEREST_RATE_DIFFERENTIAL] = pd.NA
 
@@ -615,7 +619,9 @@ def build_silver_frame(
     for availability in availabilities:
         if availability.blocked:
             blocked_pairs.append(availability.series_code)
-            skipped_reasons[availability.series_code] = f"blocked: {'; '.join(availability.block_reasons)}"
+            skipped_reasons[availability.series_code] = (
+                f"blocked: {'; '.join(availability.block_reasons)}"
+            )
             continue
 
         raw = fetch_raw_driver_frame(

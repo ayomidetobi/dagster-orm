@@ -2,6 +2,7 @@ from dagster import Definitions
 from decouple import Csv, config
 
 from dagster_quickstart.assets import (
+    fx_data_availability,
     ingest_bloomberg_values,
     load_meta_series_to_s3,
     steer_assets,
@@ -26,6 +27,7 @@ from dagster_quickstart.sensors import (
 all_assets = [
     load_meta_series_to_s3,
     ingest_bloomberg_values,
+    fx_data_availability,
     *steer_assets,
 ]
 

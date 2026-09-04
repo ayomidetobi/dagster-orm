@@ -3,7 +3,8 @@
 Pure Python -- no Dagster -- callable from a script or notebook the same
 way as from an asset. `Steer.fit()` is a thin orchestration layer over
 functions that already exist and are already exercised by the asset graph
-(assets/steer/*.py): steer.source.discovery.discover_pairs/build_availability_report,
+(assets/steer/*.py, assets/availability_asset.py): steer.source.discovery.discover_pairs,
+dagster_quickstart.availability.report.build_availability_report,
 steer.source.features.fetch_raw_driver_frame/build_steer_features,
 steer.analytics.estimation.sign_check_and_reestimate/cointegration_test/generate_signal,
 steer.analytics.results.build_steer_result. It does
@@ -34,7 +35,7 @@ import pandas as pd
 
 from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerSignal
 from dagster_quickstart.steer.analytics.results import SteerResult
-from dagster_quickstart.steer.config import StrategyConfig
+from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC, StrategyConfig
 from dagster_quickstart.steer.constants import (
     COINTEGRATION_MODE_EACH,
     COINTEGRATION_MODE_LATEST,
@@ -43,6 +44,7 @@ from dagster_quickstart.steer.constants import (
 from dagster_quickstart.steer.errors import InsufficientDataError
 
 CointegrationMode = Literal["latest", "each"]
+
 
 #: A cointegration verdict synthesized for a date where the ADF test itself couldn't run
 #: (too little trailing history) -- passed=False, matching how
@@ -182,11 +184,15 @@ class SteerPanel:
 
         resolved = self._resolve_as_of(as_of)
         by_pair = self.results[resolved]
-        z_scores = pd.Series({code: result.z_score for code, result in by_pair.items()}).sort_values()
+        z_scores = pd.Series(
+            {code: result.z_score for code, result in by_pair.items()}
+        ).sort_values()
 
         colors = [
-            "tab:red" if value >= self.z_threshold
-            else "tab:green" if value <= -self.z_threshold
+            "tab:red"
+            if value >= self.z_threshold
+            else "tab:green"
+            if value <= -self.z_threshold
             else "tab:gray"
             for value in z_scores
         ]
@@ -261,7 +267,9 @@ class SteerPanel:
 
         # The persisted gold-table column is still named "universe" (see steer/orm.py's module
         # docstring) -- `variant` is the Python-level name.
-        summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=variant).frame
+        summary = data_api.read_table(
+            GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=variant
+        ).frame
         if summary.empty:
             return cls(variant=variant, z_threshold=float("nan"))
 
@@ -285,7 +293,9 @@ def _scalar_field(result: SteerResult, field_name: str) -> Any:
     cross_section = result.cross_section()
     if field_name in cross_section.index:
         return cross_section[field_name]
-    raise AttributeError(f"SteerResult has no field {field_name!r} (checked attributes and cross_section()).")
+    raise AttributeError(
+        f"SteerResult has no field {field_name!r} (checked attributes and cross_section())."
+    )
 
 
 class Steer:
@@ -304,7 +314,9 @@ class Steer:
         self.strategy_config = strategy_config
 
     @classmethod
-    def from_data_api(cls, data_api: Any, *, variant: str, strategy_config: StrategyConfig) -> "Steer":
+    def from_data_api(
+        cls, data_api: Any, *, variant: str, strategy_config: StrategyConfig
+    ) -> "Steer":
         return cls(data_api, variant=variant, strategy_config=strategy_config)
 
     def fit(
@@ -349,6 +361,10 @@ class Steer:
             traded, silently. Costs one ADF call per pair per date instead
             of one per pair total.
         """
+        from dagster_quickstart.availability.report import (
+            build_availability_report,
+            pairs_from_availability_report,
+        )
         from dagster_quickstart.steer.analytics.estimation import (
             cointegration_test,
             generate_signal,
@@ -356,11 +372,7 @@ class Steer:
         )
         from dagster_quickstart.steer.analytics.results import build_steer_result
         from dagster_quickstart.steer.constants import IS_LOGGED_COLUMN, RATE_COLUMN
-        from dagster_quickstart.steer.source.discovery import (
-            build_availability_report,
-            discover_pairs,
-            pairs_from_availability_report,
-        )
+        from dagster_quickstart.steer.source.discovery import discover_pairs
         from dagster_quickstart.steer.source.features import (
             DriverValues,
             build_steer_features,
@@ -380,8 +392,10 @@ class Steer:
         if pair_metadata.empty:
             return empty
 
-        report = build_availability_report({self.variant: pair_metadata}, self._data_api)
-        availabilities = pairs_from_availability_report(report)
+        report = build_availability_report(
+            {self.variant: pair_metadata}, self._data_api, STEER_AVAILABILITY_SPEC
+        )
+        availabilities = pairs_from_availability_report(report, STEER_AVAILABILITY_SPEC)
         if pairs is not None:
             wanted = set(pairs)
             availabilities = [a for a in availabilities if a.series_code in wanted]
@@ -390,16 +404,16 @@ class Steer:
         available = []
         for availability in availabilities:
             if availability.blocked:
-                blocked[availability.series_code] = "blocked: " + "; ".join(availability.block_reasons)
+                blocked[availability.series_code] = "blocked: " + "; ".join(
+                    availability.block_reasons
+                )
             else:
                 available.append(availability)
 
         if not available:
             return SteerPanel(variant=self.variant, z_threshold=config.z_threshold, blocked=blocked)
 
-        all_series_codes = required_series_codes(
-            ((a.series_code, a) for a in available), config
-        )
+        all_series_codes = required_series_codes(((a.series_code, a) for a in available), config)
         driver_values = DriverValues.load(self._data_api, all_series_codes)
 
         chn_flows_cutover = None
@@ -499,12 +513,17 @@ class Steer:
                 coint_result: CointegrationResult
                 if cointegration == COINTEGRATION_MODE_EACH:
                     coint_result = self._safe_cointegration_test(
-                        cointegration_test, rate, drivers, as_of=fit_date, is_logged=is_logged, config=config
+                        cointegration_test,
+                        rate,
+                        drivers,
+                        as_of=fit_date,
+                        is_logged=is_logged,
+                        config=config,
                     )
                 else:
-                    coint_result = latest_cointegration.get(series_code) or _insufficient_data_cointegration(
-                        fit_date
-                    )
+                    coint_result = latest_cointegration.get(
+                        series_code
+                    ) or _insufficient_data_cointegration(fit_date)
 
                 current_rate = float(rate.loc[:fit_date].iloc[-1])
                 signal = generate_signal(
@@ -543,7 +562,9 @@ class Steer:
         )
 
     @staticmethod
-    def _safe_cointegration_test(cointegration_test, rate, drivers, *, as_of, is_logged, config) -> CointegrationResult:
+    def _safe_cointegration_test(
+        cointegration_test, rate, drivers, *, as_of, is_logged, config
+    ) -> CointegrationResult:
         """cointegration_test(), or a synthetic passed=False verdict on InsufficientDataError --
         see _insufficient_data_cointegration's docstring for why that (not a missing/None
         result) matches the asset pipeline's own handling of the same case."""

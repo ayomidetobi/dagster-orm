@@ -1,11 +1,12 @@
 """Silver layer: materialize this variant's steer.source.features.build_silver_frame result.
 
 One partition per variant (G10/EM/CHN, static -- see partitions.py).
-Depends on steer_data_availability (same partitions_def, so Dagster aligns
+Depends on fx_data_availability (same partition keys -- see
+assets/availability_asset.py's FX_AVAILABILITY_PARTITIONS -- so Dagster aligns
 the partition and the IO manager hands this asset the upstream frame
 directly -- no manual S3/Parquet read) instead of re-discovering pairs and
 re-resolving every driver role itself, so this asset's runtime never
-duplicates steer_data_availability's (role, currency) resolution work --
+duplicates fx_data_availability's (role, currency) resolution work --
 this asset's own runtime is that one plus a single get_values() call.
 
 All domain logic (collecting series codes, loading DriverValues, resolving
@@ -46,27 +47,30 @@ from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
     ],
     group_name="steer",
 )
-def steer_silver_prices(context: AssetExecutionContext, steer_data_availability: pd.DataFrame):
+def steer_silver_prices(context: AssetExecutionContext, fx_data_availability: pd.DataFrame):
     """Fetch this variant's every pair's rate + drivers from DuckLake and conform them.
 
     See steer.source.features.build_silver_frame's docstring for what "blocked"/
     "stale" mean and why a pair is skipped rather than passed through
     partial.
     """
-    from dagster_quickstart.steer.source.discovery import pairs_from_availability_report
+    from dagster_quickstart.availability.report import pairs_from_availability_report
+    from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
     from dagster_quickstart.steer.source.features import build_silver_frame
 
     variant = context.partition_key
     data_api = context.resources.rewrite_data_api.api
     strategy_config = context.resources.steer_config.for_variant(variant)
 
-    availabilities = pairs_from_availability_report(steer_data_availability)
+    availabilities = pairs_from_availability_report(fx_data_availability, STEER_AVAILABILITY_SPEC)
     as_of = pd.Timestamp.utcnow().tz_localize(None).normalize()
 
     result = build_silver_frame(data_api, variant, strategy_config, availabilities, as_of=as_of)
 
     if result.chn_flows_cutover_error:
-        context.log.warning(f"Could not resolve CHN flows cutover: {result.chn_flows_cutover_error}")
+        context.log.warning(
+            f"Could not resolve CHN flows cutover: {result.chn_flows_cutover_error}"
+        )
     for series_code, reason in result.skipped_reasons.items():
         context.log.info(f"Skipping {series_code} -- {reason}")
 

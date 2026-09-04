@@ -1,7 +1,7 @@
 """Tests for steer.model.Steer/SteerPanel -- the model-object facade.
 
 Acceptance criterion 1 is the important one: Steer.fit() must produce EXACTLY the same numbers
-as materializing the real asset graph (steer_data_availability -> ... -> steer_signal), for one
+as materializing the real asset graph (fx_data_availability -> ... -> steer_signal), for one
 G10, one EM, and one CHN pair, since it's a facade over the same functions, not a second
 implementation.
 """
@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 from dagster import DagsterInstance, materialize
 
-from dagster_quickstart.assets.steer.availability_asset import steer_data_availability
+from dagster_quickstart.assets.availability_asset import fx_data_availability
 from dagster_quickstart.assets.steer.cointegration_asset import steer_cointegration
 from dagster_quickstart.assets.steer.estimate_asset import steer_estimate
 from dagster_quickstart.assets.steer.gold_features_asset import steer_features
@@ -29,14 +29,16 @@ from tests.test_steer_assets import (
 )
 
 
-def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig):
+def _materialize_asset_pipeline(
+    metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig
+):
     resources = {
         "rewrite_data_api": FakeRewriteDataAPIResource(metadata, values),
         "steer_config": FakeSteerConfigResource(strategy_config),
     }
     result = materialize(
         [
-            steer_data_availability,
+            fx_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -70,22 +72,68 @@ def _g10_strategy_config() -> StrategyConfig:
 
 def _em_metadata() -> pd.DataFrame:
     rows = [
-        {"series_code": "USDZAR_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
-         "market_development": "EM", "currency": "ZAR", "tenor": None, "market_segment": None},
-        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
-        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+        {
+            "series_code": "USDZAR_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Spot",
+            "market_development": "EM",
+            "currency": "ZAR",
+            "tenor": None,
+            "market_segment": None,
+        },
+        {
+            "series_code": "MXWO_PX_LAST",
+            "asset_class": "Equity",
+            "sub_asset_class": "Equity Index",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": "Global",
+        },
+        {
+            "series_code": "BRENT_PX_LAST",
+            "asset_class": "Commodity",
+            "sub_asset_class": "Crude Oil",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": None,
+        },
     ]
     for ccy in ("USD", "ZAR"):
-        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Interest Rate Swap", "market_development": "EM",
-                     "currency": ccy, "tenor": "2Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
-                     "sub_asset_class": "Equity Index", "market_development": "EM",
-                     "currency": ccy, "tenor": None, "market_segment": "Local"})
-    rows.append({"series_code": "ZAR_CDS", "asset_class": "Credit", "sub_asset_class": "Sovereign CDS",
-                 "market_development": "EM", "currency": "ZAR", "tenor": "5Y", "market_segment": None})
+        rows.append(
+            {
+                "series_code": f"{ccy}_SWAP",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Interest Rate Swap",
+                "market_development": "EM",
+                "currency": ccy,
+                "tenor": "2Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_EQ",
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Index",
+                "market_development": "EM",
+                "currency": ccy,
+                "tenor": None,
+                "market_segment": "Local",
+            }
+        )
+    rows.append(
+        {
+            "series_code": "ZAR_CDS",
+            "asset_class": "Credit",
+            "sub_asset_class": "Sovereign CDS",
+            "market_development": "EM",
+            "currency": "ZAR",
+            "tenor": "5Y",
+            "market_segment": None,
+        }
+    )
     return pd.DataFrame(rows)
 
 
@@ -141,44 +189,126 @@ def _em_strategy_config() -> StrategyConfig:
 
 
 _CHN_FLOW_BUY_SELL = (
-    "SHANGHAI_BUY_FLOWS_PX_LAST", "SHENZHEN_BUY_FLOWS_PX_LAST",
-    "SHANGHAI_SELL_FLOWS_PX_LAST", "SHENZHEN_SELL_FLOWS_PX_LAST",
+    "SHANGHAI_BUY_FLOWS_PX_LAST",
+    "SHENZHEN_BUY_FLOWS_PX_LAST",
+    "SHANGHAI_SELL_FLOWS_PX_LAST",
+    "SHENZHEN_SELL_FLOWS_PX_LAST",
 )
 _CHN_FLOW_TURNOVER = ("SHANGHAI_FLOWS_TURNOVER_PX_LAST", "SHENZHEN_FLOWS_TURNOVER_PX_LAST")
 
 
 def _chn_metadata() -> pd.DataFrame:
     rows = [
-        {"series_code": "USDCNH_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
-         "market_development": "CHN", "currency": "CNH", "tenor": None, "market_segment": None},
-        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
-        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+        {
+            "series_code": "USDCNH_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Spot",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": None,
+            "market_segment": None,
+        },
+        {
+            "series_code": "MXWO_PX_LAST",
+            "asset_class": "Equity",
+            "sub_asset_class": "Equity Index",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": "Global",
+        },
+        {
+            "series_code": "BRENT_PX_LAST",
+            "asset_class": "Commodity",
+            "sub_asset_class": "Crude Oil",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": None,
+        },
     ]
     for ccy in ("USD", "CNH"):
-        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Interest Rate Swap", "market_development": "CHN",
-                     "currency": ccy, "tenor": "2Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
-                     "sub_asset_class": "Equity Index", "market_development": "CHN",
-                     "currency": ccy, "tenor": None, "market_segment": "Local"})
-    rows.append({"series_code": "CNH_CDS", "asset_class": "Credit", "sub_asset_class": "Sovereign CDS",
-                 "market_development": "CHN", "currency": "CNH", "tenor": "5Y", "market_segment": None})
+        rows.append(
+            {
+                "series_code": f"{ccy}_SWAP",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Interest Rate Swap",
+                "market_development": "CHN",
+                "currency": ccy,
+                "tenor": "2Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_EQ",
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Index",
+                "market_development": "CHN",
+                "currency": ccy,
+                "tenor": None,
+                "market_segment": "Local",
+            }
+        )
+    rows.append(
+        {
+            "series_code": "CNH_CDS",
+            "asset_class": "Credit",
+            "sub_asset_class": "Sovereign CDS",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": "5Y",
+            "market_segment": None,
+        }
+    )
     for code in _CHN_FLOW_BUY_SELL:
-        rows.append({"series_code": code, "asset_class": "Equity", "sub_asset_class": "Equity Flow",
-                     "market_development": "CHN", "currency": "CNY", "tenor": None,
-                     "market_segment": None, "valid_to": "2024-08-16"})
+        rows.append(
+            {
+                "series_code": code,
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Flow",
+                "market_development": "CHN",
+                "currency": "CNY",
+                "tenor": None,
+                "market_segment": None,
+                "valid_to": "2024-08-16",
+            }
+        )
     for code in _CHN_FLOW_TURNOVER:
-        rows.append({"series_code": code, "asset_class": "Equity", "sub_asset_class": "Equity Flow",
-                     "market_development": "CHN", "currency": "CNY", "tenor": None,
-                     "market_segment": None, "valid_to": None})
-    rows.append({"series_code": "OFFSHORE_SPREAD_PX_LAST", "asset_class": "Currency",
-                 "sub_asset_class": "FX Forward", "market_development": "CHN", "currency": "CNH",
-                 "tenor": "3M", "market_segment": "Offshore"})
-    rows.append({"series_code": "ONSHORE_SPREAD_PX_LAST", "asset_class": "Currency",
-                 "sub_asset_class": "FX Forward", "market_development": "CHN", "currency": "CNY",
-                 "tenor": "3M", "market_segment": "Onshore"})
+        rows.append(
+            {
+                "series_code": code,
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Flow",
+                "market_development": "CHN",
+                "currency": "CNY",
+                "tenor": None,
+                "market_segment": None,
+                "valid_to": None,
+            }
+        )
+    rows.append(
+        {
+            "series_code": "OFFSHORE_SPREAD_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Forward",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": "3M",
+            "market_segment": "Offshore",
+        }
+    )
+    rows.append(
+        {
+            "series_code": "ONSHORE_SPREAD_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Forward",
+            "market_development": "CHN",
+            "currency": "CNY",
+            "tenor": "3M",
+            "market_segment": "Onshore",
+        }
+    )
     return pd.DataFrame(rows)
 
 
@@ -241,14 +371,22 @@ def _chn_strategy_config() -> StrategyConfig:
         logged_rate_threshold=0.0025,
         min_observations=60,
         drivers=drivers,
-        expected_signs={name: (0 if name in ("offshore_spread", "flows") else 1) for name in drivers},
+        expected_signs={
+            name: (0 if name in ("offshore_spread", "flows") else 1) for name in drivers
+        },
     )
 
 
 @pytest.mark.parametrize(
     "variant,build_metadata,build_values,build_config,series_code",
     [
-        ("G10", _unblocked_g10_metadata, _unblocked_g10_values, _g10_strategy_config, "EURUSD_PX_LAST"),
+        (
+            "G10",
+            _unblocked_g10_metadata,
+            _unblocked_g10_values,
+            _g10_strategy_config,
+            "EURUSD_PX_LAST",
+        ),
         ("EM", _em_metadata, _em_values, _em_strategy_config, "USDZAR_PX_LAST"),
         ("CHN", _chn_metadata, _chn_values, _chn_strategy_config, "USDCNH_PX_LAST"),
     ],
@@ -280,7 +418,9 @@ def test_steer_fit_matches_the_asset_pipeline_exactly(
             assert driver in fitted.coefficient, f"{driver} missing from Steer's coefficients"
             assert fitted.coefficient[driver] == pytest.approx(estimate_row[column])
         else:
-            assert driver not in fitted.coefficient, f"{driver} unexpectedly present (asset dropped it)"
+            assert driver not in fitted.coefficient, (
+                f"{driver} unexpectedly present (asset dropped it)"
+            )
     assert fitted.dropped_variables == tuple(
         filter(None, (estimate_row["dropped_variables"] or "").split(","))
     )
@@ -381,9 +521,15 @@ def test_blocked_pairs_are_skipped_and_recorded():
             _unblocked_g10_metadata(),
             pd.DataFrame(
                 [
-                    {"series_code": "GBPUSD_PX_LAST", "asset_class": "Currency",
-                     "sub_asset_class": "FX Spot", "market_development": "G10",
-                     "currency": "GBP", "tenor": None, "market_segment": None}
+                    {
+                        "series_code": "GBPUSD_PX_LAST",
+                        "asset_class": "Currency",
+                        "sub_asset_class": "FX Spot",
+                        "market_development": "G10",
+                        "currency": "GBP",
+                        "tenor": None,
+                        "market_segment": None,
+                    }
                 ]
             ),
         ],

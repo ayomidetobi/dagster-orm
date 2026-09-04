@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.source.discovery import PairAvailability
+from dagster_quickstart.availability.report import PairAvailability
 from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN, build_silver_frame
 
 
@@ -21,8 +21,8 @@ class _StubDataAPI:
 
     def __init__(self, values: pd.DataFrame, metadata: pd.DataFrame | None = None):
         self._values = values
-        self._metadata = metadata if metadata is not None else pd.DataFrame(
-            columns=["series_code", "valid_to"]
+        self._metadata = (
+            metadata if metadata is not None else pd.DataFrame(columns=["series_code", "valid_to"])
         )
 
     def get_values(self, series_codes, **kwargs):
@@ -80,8 +80,17 @@ def _fresh_wide_values(as_of: pd.Timestamp, n: int = 90) -> pd.DataFrame:
     rng = np.random.default_rng(3)
     dates = pd.bdate_range(end=as_of, periods=n)
     columns = [
-        "EURUSD_PX_LAST", "MXWO_PX_LAST", "BRENT_PX_LAST",
-        "EUR_SWAP", "USD_SWAP", "EUR_3M", "USD_3M", "EUR_10Y", "USD_10Y", "EUR_EQ", "USD_EQ",
+        "EURUSD_PX_LAST",
+        "MXWO_PX_LAST",
+        "BRENT_PX_LAST",
+        "EUR_SWAP",
+        "USD_SWAP",
+        "EUR_3M",
+        "USD_3M",
+        "EUR_10Y",
+        "USD_10Y",
+        "EUR_EQ",
+        "USD_EQ",
     ]
     data = {col: 100 + np.cumsum(rng.normal(0, 0.5, n)) for col in columns}
     return pd.DataFrame(data, index=dates)
@@ -93,9 +102,7 @@ def test_build_silver_frame_is_callable_with_a_stub_data_api_no_dagster():
     availability = _g10_availability("EURUSD_PX_LAST", "EUR", "USD")
     api = _StubDataAPI(_fresh_wide_values(as_of))
 
-    result = build_silver_frame(
-        api, "G10", _strategy_config("G10"), [availability], as_of=as_of
-    )
+    result = build_silver_frame(api, "G10", _strategy_config("G10"), [availability], as_of=as_of)
 
     assert not result.frame.empty
     assert result.pair_count == 1
@@ -110,17 +117,13 @@ def test_blocked_pair_is_skipped_and_recorded():
     availability = _blocked_availability("AUDUSD_PX_LAST")
     api = _StubDataAPI(pd.DataFrame())
 
-    result = build_silver_frame(
-        api, "G10", _strategy_config("G10"), [availability], as_of=as_of
-    )
+    result = build_silver_frame(api, "G10", _strategy_config("G10"), [availability], as_of=as_of)
 
     assert result.frame.empty
     assert result.fetched_pair_count == 0
     assert result.blocked_pairs == ["AUDUSD_PX_LAST"]
     assert result.stale_pairs == []
-    assert result.skipped_reasons == {
-        "AUDUSD_PX_LAST": "blocked: No swap_2y series for AUD."
-    }
+    assert result.skipped_reasons == {"AUDUSD_PX_LAST": "blocked: No swap_2y series for AUD."}
 
 
 def test_stale_pair_is_skipped_and_recorded_but_not_in_skipped_reasons():
@@ -131,9 +134,7 @@ def test_stale_pair_is_skipped_and_recorded_but_not_in_skipped_reasons():
     stale_values = _fresh_wide_values(pd.Timestamp("2020-01-01"))  # far in the past -> stale
     api = _StubDataAPI(stale_values)
 
-    result = build_silver_frame(
-        api, "G10", _strategy_config("G10"), [availability], as_of=as_of
-    )
+    result = build_silver_frame(api, "G10", _strategy_config("G10"), [availability], as_of=as_of)
 
     assert result.frame.empty
     assert result.fetched_pair_count == 0
@@ -151,7 +152,9 @@ def test_multiple_pairs_mix_of_blocked_fetched_and_stale():
     api = _StubDataAPI(values)
 
     result = build_silver_frame(
-        api, "G10", _strategy_config("G10"),
+        api,
+        "G10",
+        _strategy_config("G10"),
         [fresh_availability, blocked_availability],
         as_of=as_of,
     )
@@ -184,8 +187,11 @@ def test_chn_flows_cutover_failure_is_reported_not_raised():
     )  # no valid_to metadata at all
 
     result = build_silver_frame(
-        api, "CHN", _strategy_config("CHN", DRIVER_NAMES + ("offshore_spread", "flows")),
-        [availability], as_of=as_of,
+        api,
+        "CHN",
+        _strategy_config("CHN", DRIVER_NAMES + ("offshore_spread", "flows")),
+        [availability],
+        as_of=as_of,
     )
 
     assert result.chn_flows_cutover_error is not None
@@ -215,7 +221,16 @@ def test_em_pair_fetches_successfully():
     availability = _em_availability("USDZAR_PX_LAST", "USD", "ZAR", "ZAR")
     rng = np.random.default_rng(5)
     dates = pd.bdate_range(end=as_of, periods=90)
-    columns = ["USDZAR_PX_LAST", "MXWO_PX_LAST", "BRENT_PX_LAST", "USD_SWAP", "ZAR_SWAP", "USD_EQ", "ZAR_EQ", "ZAR_CDS"]
+    columns = [
+        "USDZAR_PX_LAST",
+        "MXWO_PX_LAST",
+        "BRENT_PX_LAST",
+        "USD_SWAP",
+        "ZAR_SWAP",
+        "USD_EQ",
+        "ZAR_EQ",
+        "ZAR_CDS",
+    ]
     values = pd.DataFrame(
         {col: 100 + np.cumsum(rng.normal(0, 0.5, 90)) for col in columns}, index=dates
     )
@@ -247,12 +262,22 @@ def test_chn_pair_fetches_successfully_with_a_resolved_cutover():
     rng = np.random.default_rng(7)
     dates = pd.bdate_range(end=as_of, periods=90)
     value_columns = [
-        "USDCNH_PX_LAST", "MXWO_PX_LAST", "BRENT_PX_LAST", "USD_SWAP", "CNH_SWAP",
-        "USD_EQ", "CNH_EQ", "CNH_CDS",
-        "OFFSHORE_SPREAD_PX_LAST", "ONSHORE_SPREAD_PX_LAST",
-        "SHANGHAI_BUY_FLOWS_PX_LAST", "SHENZHEN_BUY_FLOWS_PX_LAST",
-        "SHANGHAI_SELL_FLOWS_PX_LAST", "SHENZHEN_SELL_FLOWS_PX_LAST",
-        "SHANGHAI_FLOWS_TURNOVER_PX_LAST", "SHENZHEN_FLOWS_TURNOVER_PX_LAST",
+        "USDCNH_PX_LAST",
+        "MXWO_PX_LAST",
+        "BRENT_PX_LAST",
+        "USD_SWAP",
+        "CNH_SWAP",
+        "USD_EQ",
+        "CNH_EQ",
+        "CNH_CDS",
+        "OFFSHORE_SPREAD_PX_LAST",
+        "ONSHORE_SPREAD_PX_LAST",
+        "SHANGHAI_BUY_FLOWS_PX_LAST",
+        "SHENZHEN_BUY_FLOWS_PX_LAST",
+        "SHANGHAI_SELL_FLOWS_PX_LAST",
+        "SHENZHEN_SELL_FLOWS_PX_LAST",
+        "SHANGHAI_FLOWS_TURNOVER_PX_LAST",
+        "SHENZHEN_FLOWS_TURNOVER_PX_LAST",
     ]
     values = pd.DataFrame(
         {col: 100 + np.cumsum(rng.normal(0, 0.5, 90)) for col in value_columns}, index=dates
@@ -260,8 +285,10 @@ def test_chn_pair_fetches_successfully_with_a_resolved_cutover():
     metadata = pd.DataFrame(
         {
             "series_code": [
-                "SHANGHAI_BUY_FLOWS_PX_LAST", "SHENZHEN_BUY_FLOWS_PX_LAST",
-                "SHANGHAI_SELL_FLOWS_PX_LAST", "SHENZHEN_SELL_FLOWS_PX_LAST",
+                "SHANGHAI_BUY_FLOWS_PX_LAST",
+                "SHENZHEN_BUY_FLOWS_PX_LAST",
+                "SHANGHAI_SELL_FLOWS_PX_LAST",
+                "SHENZHEN_SELL_FLOWS_PX_LAST",
             ],
             "valid_to": ["2024-08-16"] * 4,
         }
@@ -269,8 +296,11 @@ def test_chn_pair_fetches_successfully_with_a_resolved_cutover():
     api = _StubDataAPI(values, metadata=metadata)
 
     result = build_silver_frame(
-        api, "CHN", _strategy_config("CHN", DRIVER_NAMES + ("offshore_spread", "flows")),
-        [availability], as_of=as_of,
+        api,
+        "CHN",
+        _strategy_config("CHN", DRIVER_NAMES + ("offshore_spread", "flows")),
+        [availability],
+        as_of=as_of,
     )
 
     assert result.chn_flows_cutover_error is None
