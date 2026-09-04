@@ -61,13 +61,14 @@ class GenericTableRepository(BaseDuckLakeRepository):
 
         qualified = self._qualify(schema, table)
         frame_columns = list(frame.columns)
+        select_list = self._select_list_with_undefined_columns_as_varchar(frame)
 
         with self.transaction():
             self.execute_no_result(f"CREATE SCHEMA IF NOT EXISTS {self.quote_identifier(schema)}")
             with self.register_dataframe(frame) as relation:
                 if not self.table_exists(schema, table):
                     self.execute_no_result(
-                        f"CREATE TABLE {qualified} AS SELECT * FROM {relation} LIMIT 0"
+                        f"CREATE TABLE {qualified} AS SELECT {select_list} FROM {relation} LIMIT 0"
                     )
 
                 existing_columns = self.get_columns(schema, table)
@@ -77,7 +78,7 @@ class GenericTableRepository(BaseDuckLakeRepository):
                 ]
 
                 if new_columns:
-                    described = self.execute(f"DESCRIBE SELECT * FROM {relation}")
+                    described = self.execute(f"DESCRIBE SELECT {select_list} FROM {relation}")
                     duckdb_type_by_column = dict(
                         zip(described["column_name"], described["column_type"])
                     )
@@ -104,3 +105,28 @@ class GenericTableRepository(BaseDuckLakeRepository):
 
     def _qualify(self, schema: str, table: str) -> str:
         return f"{self.quote_identifier(schema)}.{self.quote_identifier(table)}"
+
+    def _select_list_with_undefined_columns_as_varchar(self, frame: pd.DataFrame) -> str:
+        """SELECT list casting any all-null object-dtype ("undefined") column to VARCHAR.
+
+        Same reasoning as DuckLakeMetadataQueryBuilder.build_ensure_table(): left to DuckDB's
+        own type inference (CREATE TABLE ... LIMIT 0, and the widening DESCRIBE above), a
+        column that's entirely NULL in whichever frame happens to create or widen it -- e.g.
+        base_rate_3m, a G10-only driver column an EM/CHN availability report never populates
+        -- infers a numeric SQL type; a later write with real text in that column then fails
+        with a ConversionException. Only object-dtype all-null columns are cast here, unlike
+        the metadata builder's blanket VARCHAR: this repository also carries genuinely numeric
+        gold-table columns (STEER coefficients), and a genuinely numeric all-null column comes
+        through as float64 (NaN), not object -- left alone, to its own natural inference.
+        """
+        undefined_columns = {
+            column
+            for column in frame.columns
+            if frame[column].dtype == object and frame[column].isna().all()
+        }
+        return ", ".join(
+            f"{self.quote_identifier(column)}::VARCHAR AS {self.quote_identifier(column)}"
+            if column in undefined_columns
+            else self.quote_identifier(column)
+            for column in frame.columns
+        )
