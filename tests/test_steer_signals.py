@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate
-from dagster_quickstart.steer.signals import generate_signal
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerEstimate
+from dagster_quickstart.steer.analytics.estimation import generate_signal
 
 AS_OF = pd.Timestamp("2024-06-03")
 

@@ -23,13 +23,13 @@ import pytest
 
 from dagster_quickstart.steer.config import DRIVER_NAMES
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.estimation import (
+from dagster_quickstart.steer.analytics.estimation import (
     cointegration_test,
     engle_granger_cointegration_test,
     estimate_steer,
     sign_check_and_reestimate,
 )
-from dagster_quickstart.steer.results import build_steer_result
+from dagster_quickstart.steer.analytics.results import build_pair_result
 
 
 @pytest.fixture
@@ -344,10 +344,10 @@ def test_driver_2_fix_reconciliation_full_report_for_one_pair():
         rate, new_drivers, as_of=as_of, window_months=12, is_logged=False,
         expected_signs=signs, min_observations=40,
     )
-    old_result = build_steer_result(
+    old_result = build_pair_result(
         "EURNOK_PX_LAST", "G10", rate, old_drivers, estimate=old_estimate, window_months=12
     )
-    new_result = build_steer_result(
+    new_result = build_pair_result(
         "EURNOK_PX_LAST", "G10", rate, new_drivers, estimate=new_estimate, window_months=12
     )
 

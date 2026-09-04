@@ -170,9 +170,10 @@ cython_debug/
 
 #Ignore cursor AI rules
 .cursor/rules/codacy.mdc
-/dagster_quickstart/data/meta_series_steer.csv
+
 /graphify-out/
 /dagster-quickstart/graphify-out/
 CLAUDE.md
 .claude/
 /dagster_quickstart/graphify-out/
+/steer_plots/

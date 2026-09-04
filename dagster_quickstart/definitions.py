@@ -2,6 +2,7 @@ from dagster import Definitions
 from decouple import Csv, config
 
 from dagster_quickstart.assets import (
+    fx_data_availability,
     ingest_bloomberg_values,
     load_meta_series_to_s3,
     steer_assets,
@@ -26,6 +27,7 @@ from dagster_quickstart.sensors import (
 all_assets = [
     load_meta_series_to_s3,
     ingest_bloomberg_values,
+    fx_data_availability,
     *steer_assets,
 ]
 
@@ -71,7 +73,7 @@ outlook_email_resource = OutlookEmailResource(
     email_to=config("OUTLOOK_EMAIL_TO", default="oncall@example.com", cast=Csv()),
 )
 
-# FX_G10/FX_EM/FX_CHN code-defined universes -- see steer/universes.py.
+# FX_G10/FX_EM/FX_CHN code-defined variants -- see steer/variants.py.
 steer_config_resource = SteerConfigResource()
 
 resources = {

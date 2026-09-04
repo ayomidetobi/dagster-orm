@@ -2,9 +2,9 @@
 
 as_of defaults to "today" (the run date) -- pass a StrategyRunConfig(as_of=...)
 to backfill a specific historical date without needing a date partition
-axis (see assets/steer/config.py and the static universe-only partition
-scheme in assets/steer/partitions.py). One universe partition covers every
-pair in that universe -- this loops over each pair present in
+axis (see assets/steer/config.py and the static variant-only partition
+scheme in assets/steer/partitions.py). One variant partition covers every
+pair in that variant -- this loops over each pair present in
 steer_features and produces one row per pair.
 """
 
@@ -13,8 +13,8 @@ from dagster import AssetExecutionContext, MetadataValue, Output, asset
 
 from dagster_quickstart.assets.steer.config import StrategyRunConfig
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
 from dagster_quickstart.steer.errors import InsufficientDataError
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 
 def _resolve_as_of(run_config: StrategyRunConfig, features: pd.DataFrame) -> pd.Timestamp:
@@ -34,21 +34,21 @@ def steer_cointegration(
 ):
     """Engle-Granger cointegration test (statsmodels.tsa.stattools.coint) between each pair's rate and its drivers.
 
-    See steer.estimation's module docstring -- coint() is passed the full
+    See steer.analytics.estimation's module docstring -- coint() is passed the full
     driver frame directly (5 columns for G10/EM, 7 for CHN) and fits/tests
     the cointegrating regression itself, with critical values calibrated
     for the actual regressor count. A pair with too little history for the
     trailing window gets passed=False, reason="insufficient_data" (not a
     crash) -- one pair's data gap doesn't affect any other pair in the same
-    universe partition.
+    variant partition.
     """
-    from dagster_quickstart.steer.estimation import cointegration_test
+    from dagster_quickstart.steer.analytics.estimation import cointegration_test
 
     if steer_features.empty:
         yield Output(pd.DataFrame(), metadata={"pair_count": 0})
         return
 
-    strategy_config = context.resources.steer_config.for_universe(context.partition_key)
+    strategy_config = context.resources.steer_config.for_variant(context.partition_key)
     driver_columns = [
         column
         for column in steer_features.columns

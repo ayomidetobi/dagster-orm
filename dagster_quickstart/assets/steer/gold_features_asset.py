@@ -1,10 +1,10 @@
-"""Gold layer: build_steer_features -- this universe's driver columns, model-ready, for every pair.
+"""Gold layer: build_steer_features -- this variant's driver columns, model-ready, for every pair.
 
 Validated with steer_features_schema(strategy_config.drivers) (pandera) per
 pair as an in-asset check -- non-null rate, numeric/finite drivers,
 plausible bounds -- so bad data for one pair fails that pair's rows loudly
 (excluded from the output, counted in the check) rather than silently
-reaching the OLS; other pairs in the same universe are unaffected.
+reaching the OLS; other pairs in the same variant are unaffected.
 """
 
 import pandas as pd
@@ -20,8 +20,8 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
-from dagster_quickstart.steer.schemas import steer_features_schema
+from dagster_quickstart.steer.analytics.results import steer_features_schema
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 CHECK_NAME = "validate_steer_features"
 
@@ -42,11 +42,11 @@ CHECK_NAME = "validate_steer_features"
 def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataFrame):
     """Build every pair's STEER feature table (5 drivers + realized_volatility + is_logged) from conformed silver prices.
 
-    Wraps steer.features.build_steer_features with this universe's
+    Wraps steer.source.features.build_steer_features with this variant's
     logged_rate_threshold/logged_rate_vol_window_days (from StrategyConfig
     -- never hardcoded here), once per pair present in steer_silver_prices.
     """
-    from dagster_quickstart.steer.features import build_steer_features
+    from dagster_quickstart.steer.source.features import build_steer_features
 
     if steer_silver_prices.empty:
         yield AssetCheckResult(
@@ -55,7 +55,7 @@ def steer_features(context: AssetExecutionContext, steer_silver_prices: pd.DataF
         yield Output(steer_silver_prices, metadata={"row_count": 0})
         return
 
-    strategy_config = context.resources.steer_config.for_universe(context.partition_key)
+    strategy_config = context.resources.steer_config.for_variant(context.partition_key)
     features_schema = steer_features_schema(strategy_config.drivers)
 
     feature_frames = []

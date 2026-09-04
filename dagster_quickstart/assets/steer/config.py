@@ -1,10 +1,11 @@
 """Per-run Dagster Config for the STEER asset graph.
 
-Distinct from steer.config.StrategyConfig (the YAML-loaded, per-universe
-model parameters) -- this is Dagster's own per-run config system (see
+Distinct from steer.config.StrategyConfig (the code-defined, per-variant
+model parameters -- see FX_G10/FX_EM/FX_CHN) -- this is Dagster's own
+per-run config system (see
 assets/ingestion/bloomberg_rewrite/config.py's BloombergValuesConfig for
 the same pattern), used for the one thing that varies per *run* rather
-than per *universe*: which date to evaluate as of.
+than per *variant*: which date to evaluate as of.
 """
 
 from typing import Optional
@@ -23,7 +24,7 @@ class StrategyRunConfig(Config):
             specific historical date for a specific pair (see the README's
             "backfill a single pair/date" section) without needing a date
             partition axis -- the confirmed 2D partition scheme
-            (universe x currency_pair) re-evaluates fresh "as of today" on
+            (variant x currency_pair) re-evaluates fresh "as of today" on
             every materialization by default.
     """
 

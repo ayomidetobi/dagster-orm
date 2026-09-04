@@ -22,7 +22,7 @@ from decouple import config
 
 from dagster_quickstart.resources.outlook_email_resource import OutlookEmailResource
 from dagster_quickstart.sensors.email_helpers import render
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_ESTIMATES_TABLE, STEER_SIGNALS_TABLE
 
 # Fires after steer_daily_schedule's per-pair runs (09:00 Europe/Lisbon,
 # see assets/steer/job.py) have had time to complete.

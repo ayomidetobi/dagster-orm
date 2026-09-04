@@ -3,7 +3,7 @@
 Kept as its own table (not folded into gold.steer_estimates) so trading-rule
 parameters (z_threshold, stop_reward_ratio) can be iterated on in a
 backtest without re-running the model layer -- per the output-tables spec.
-One universe partition covers every pair in that universe -- this loops
+One variant partition covers every pair in that variant -- this loops
 over each pair present in steer_estimate and writes every pair's row to
 gold.steer_signals in one call.
 """
@@ -21,10 +21,10 @@ from dagster import (
 )
 
 from dagster_quickstart.assets.steer.partitions import STEER_PARTITIONS
-from dagster_quickstart.steer.pipeline import SERIES_CODE_COLUMN
-from dagster_quickstart.steer.estimation import CointegrationResult, SteerEstimate
-from dagster_quickstart.steer.schemas import STEER_SIGNALS_SCHEMA
-from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult, SteerEstimate
+from dagster_quickstart.steer.analytics.results import STEER_SIGNALS_SCHEMA
+from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_SIGNALS_TABLE
+from dagster_quickstart.steer.source.features import SERIES_CODE_COLUMN
 
 CHECK_NAME = "validate_steer_signals"
 
@@ -48,10 +48,10 @@ def steer_signal(
     steer_estimate: pd.DataFrame,
     steer_cointegration: pd.DataFrame,
 ):
-    """BUY/SELL/NONE for every pair, from steer_estimate + steer_cointegration -- see steer.signals.generate_signal."""
-    from dagster_quickstart.steer.signals import generate_signal
+    """BUY/SELL/NONE for every pair, from steer_estimate + steer_cointegration -- see steer.analytics.estimation.generate_signal."""
+    from dagster_quickstart.steer.analytics.estimation import generate_signal
 
-    universe = context.partition_key
+    variant = context.partition_key
 
     if steer_estimate.empty:
         yield AssetCheckResult(
@@ -60,7 +60,7 @@ def steer_signal(
         yield Output(pd.DataFrame(), metadata={"pair_count": 0})
         return
 
-    strategy_config = context.resources.steer_config.for_universe(universe)
+    strategy_config = context.resources.steer_config.for_variant(variant)
     cointegration_by_pair = steer_cointegration.set_index(SERIES_CODE_COLUMN)
 
     rows = []
@@ -107,7 +107,9 @@ def steer_signal(
         rows.append(
             {
                 "date": signal.as_of,
-                "universe": universe,
+                # Column is still "universe" -- see steer/orm.py's module docstring (same
+                # reasoning as estimate_asset.py's identical comment).
+                "universe": variant,
                 SERIES_CODE_COLUMN: series_code,
                 "signal": signal.signal,
                 "entry_z_score": signal.entry_z_score,

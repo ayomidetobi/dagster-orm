@@ -16,16 +16,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
-from dagster_quickstart.rewrite.data_api.factory import create_data_api
-from dagster_quickstart.steer.discovery import (
-    RoleResolver,
+from dagster_quickstart.availability.report import (
     assess_pair_availability,
     build_availability_report,
-    discover_pairs,
 )
+from dagster_quickstart.availability.roles import RoleResolver
+from dagster_quickstart.rewrite.data_api.dataset import DatasetBase
+from dagster_quickstart.rewrite.data_api.factory import create_data_api
+from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
+from dagster_quickstart.steer.source.discovery import discover_pairs
 
-CATALOG_PATH = Path(__file__).resolve().parents[1] / "dagster_quickstart" / "data" / "meta_series_steer.csv"
+CATALOG_PATH = (
+    Path(__file__).resolve().parents[1] / "dagster_quickstart" / "data" / "meta_series_steer.csv"
+)
 
 
 class FakeMetadataStorage:
@@ -93,24 +96,13 @@ def real_catalog_data_api():
     DatasetBase._api = None
 
 
-@pytest.mark.parametrize("universe,expected_count", [("G10", 45), ("EM", 21), ("CHN", 1)])
+@pytest.mark.parametrize("variant,expected_count", [("G10", 45), ("EM", 21), ("CHN", 1)])
 def test_discover_pairs_finds_every_pair_in_the_real_catalog(
-    real_catalog_data_api, universe, expected_count
+    real_catalog_data_api, variant, expected_count
 ):
-    pairs = discover_pairs(universe, real_catalog_data_api)
+    pairs = discover_pairs(variant, real_catalog_data_api)
 
     assert len(pairs) == expected_count
-
-
-@pytest.mark.parametrize("universe", ["G10", "EM", "CHN"])
-def test_require_real_still_returns_every_pair(real_catalog_data_api, universe):
-    """The regression this guards against: pairs marked is_synthetic=True
-    would vanish under require_real=True, and a production run that filters
-    is_synthetic=False (the normal way to exclude the 24 placeholder driver
-    rows) would discover zero pairs and estimate nothing."""
-    pairs = discover_pairs(universe, real_catalog_data_api, require_real=True)
-
-    assert not pairs.empty
 
 
 def test_g10_is_the_full_45_pair_cross_with_no_reciprocals():
@@ -145,36 +137,47 @@ def test_no_fx_pair_row_is_synthetic():
     assert not fx["is_synthetic"].any()
 
 
-@pytest.mark.parametrize("universe", ["G10", "EM", "CHN"])
-def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_data_api, universe):
+@pytest.mark.parametrize("variant", ["G10", "EM", "CHN"])
+def test_every_pair_in_the_real_catalog_resolves_with_no_blocks(real_catalog_data_api, variant):
     """Driver 2 (yield_curve_or_cds) is the part most at risk of a coverage
     gap: G10 needs rate_3m+yield_10y for both legs, EM/CHN need cds_5y for
     the non-USD leg. This proves every currency actually pulled into a pair
     -- all 10 G10, all 21 EM, CNH -- has full role coverage in the catalog,
     not just that the roles exist somewhere."""
-    pairs = discover_pairs(universe, real_catalog_data_api)
-    resolver = RoleResolver.from_data_api(real_catalog_data_api)
+    pairs = discover_pairs(variant, real_catalog_data_api)
+    resolver = RoleResolver.from_data_api(real_catalog_data_api, STEER_AVAILABILITY_SPEC)
 
     blocked = [
-        (series_code, assess_pair_availability(series_code, universe, resolver).block_reasons)
+        (
+            series_code,
+            assess_pair_availability(
+                series_code, variant, resolver, STEER_AVAILABILITY_SPEC
+            ).block_reasons,
+        )
         for series_code in pairs["series_code"]
-        if assess_pair_availability(series_code, universe, resolver).blocked
+        if assess_pair_availability(series_code, variant, resolver, STEER_AVAILABILITY_SPEC).blocked
     ]
 
     assert blocked == []
 
 
-def test_cnh_local_equity_resolves_to_the_real_series_not_the_synthetic_duplicate(
+def test_cnh_local_equity_resolves_to_the_live_series_via_explicit_exclusion(
     real_catalog_data_api,
 ):
     """Acceptance criterion: CNH's local_equity role matches 2 real-catalog rows --
-    CNHLIVEMSCI_PX_LAST (real) and CNHMSCI_PX_LAST (synthetic). is_synthetic no longer
-    filters anything, but it must still decide this tie-break: real before synthetic."""
-    resolver = RoleResolver.from_data_api(real_catalog_data_api)
+    CNHLIVEMSCI_PX_LAST (real, live vintage -- confirmed correct, the daily CHN model runs on
+    live data) and CNHMSCI_PX_LAST (synthetic, close vintage). Resolution is driven by
+    STEER_AVAILABILITY_SPEC.excluded_series_codes explicitly excluding CNHMSCI_PX_LAST from
+    local_equity -- not by sort order (there is no is_synthetic tie-break any more) and not by
+    alphabetical accident. See steer/config.py's STEER_AVAILABILITY_SPEC for why."""
+    resolver = RoleResolver.from_data_api(real_catalog_data_api, STEER_AVAILABILITY_SPEC)
 
     code, _ = resolver.resolve("local_equity", "CNH")
 
     assert code == "CNHLIVEMSCI_PX_LAST"
+    # The exclusion prevents the ambiguity from existing at all, not just from winning a
+    # tie-break -- only one candidate ever reaches the (role, currency) group.
+    assert ("local_equity", "CNH") not in resolver.ambiguities
 
 
 def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolution(
@@ -183,10 +186,10 @@ def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolutio
     """Acceptance criterion: role resolution across every G10 (45), EM (21) and CHN (1) pair
     -- ~106 distinct (role, currency) combinations -- costs exactly one get_metadata() call
     (RoleResolver.from_data_api), not one per combination. Pair discovery itself (one
-    get_metadata() call per universe, to find the pairs at all) happens before the counter
+    get_metadata() call per variant, to find the pairs at all) happens before the counter
     starts, since that's a separate concern from role resolution."""
-    pairs_by_universe = {
-        universe: discover_pairs(universe, real_catalog_data_api) for universe in ("G10", "EM", "CHN")
+    pairs_by_variant = {
+        variant: discover_pairs(variant, real_catalog_data_api) for variant in ("G10", "EM", "CHN")
     }
 
     original_get_metadata = real_catalog_data_api.get_metadata
@@ -198,7 +201,9 @@ def test_a_full_availability_run_issues_one_get_metadata_call_for_role_resolutio
 
     real_catalog_data_api.get_metadata = counting_get_metadata
 
-    report = build_availability_report(pairs_by_universe, real_catalog_data_api)
+    report = build_availability_report(
+        pairs_by_variant, real_catalog_data_api, STEER_AVAILABILITY_SPEC
+    )
 
     assert call_count["n"] == 1
     assert len(report) == 45 + 21 + 1

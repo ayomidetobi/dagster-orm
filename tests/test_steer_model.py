@@ -1,7 +1,7 @@
 """Tests for steer.model.Steer/SteerResults -- the model-object facade.
 
 Acceptance criterion 1 is the important one: Steer.fit() must produce EXACTLY the same numbers
-as materializing the real asset graph (steer_data_availability -> ... -> steer_signal), for one
+as materializing the real asset graph (fx_data_availability -> ... -> steer_signal), for one
 G10, one EM, and one CHN pair, since it's a facade over the same functions, not a second
 implementation.
 """
@@ -13,14 +13,15 @@ import pandas as pd
 import pytest
 from dagster import DagsterInstance, materialize
 
-from dagster_quickstart.assets.steer.availability_asset import steer_data_availability
+from dagster_quickstart.assets.availability_asset import fx_data_availability
 from dagster_quickstart.assets.steer.cointegration_asset import steer_cointegration
 from dagster_quickstart.assets.steer.estimate_asset import steer_estimate
 from dagster_quickstart.assets.steer.gold_features_asset import steer_features
 from dagster_quickstart.assets.steer.signal_asset import steer_signal
 from dagster_quickstart.assets.steer.silver_asset import steer_silver_prices
+from dagster_quickstart.steer.analytics.results import PairResult
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.model import Steer
+from dagster_quickstart.steer.model import Steer, SteerResults
 from tests.test_steer_assets import (
     FakeRewriteDataAPIResource,
     FakeSteerConfigResource,
@@ -29,14 +30,39 @@ from tests.test_steer_assets import (
 )
 
 
-def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig):
+def _write_availability_report(data_api, variant: str) -> None:
+    """Write `variant`'s availability report to storage -- what fx_data_availability's asset
+    body does, reused directly here since Steer.fit() (like steer_silver_prices) now reads the
+    stored report instead of rebuilding it itself; every direct Steer.fit() call in this file
+    needs this run first, the same way a real fx_data_availability materialization would need to
+    precede a real steer_silver_prices run."""
+    from dagster_quickstart.availability.report import build_availability_report
+    from dagster_quickstart.availability.storage import write_report
+    from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC
+    from dagster_quickstart.steer.source.discovery import discover_pairs
+
+    pairs = discover_pairs(variant, data_api)
+    report = build_availability_report({variant: pairs}, data_api, STEER_AVAILABILITY_SPEC)
+    write_report(data_api, report)
+
+
+def _materialize_asset_pipeline(
+    metadata: pd.DataFrame, values: pd.DataFrame, strategy_config: StrategyConfig
+):
     resources = {
         "rewrite_data_api": FakeRewriteDataAPIResource(metadata, values),
         "steer_config": FakeSteerConfigResource(strategy_config),
     }
+    availability_result = materialize(
+        [fx_data_availability],
+        resources=resources,
+        partition_key=strategy_config.variant,
+        instance=DagsterInstance.ephemeral(),
+    )
+    assert availability_result.success
+
     result = materialize(
         [
-            steer_data_availability,
             steer_silver_prices,
             steer_features,
             steer_cointegration,
@@ -44,7 +70,7 @@ def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, st
             steer_signal,
         ],
         resources=resources,
-        partition_key=strategy_config.universe,
+        partition_key=strategy_config.variant,
         instance=DagsterInstance.ephemeral(),
     )
     assert result.success
@@ -53,7 +79,7 @@ def _materialize_asset_pipeline(metadata: pd.DataFrame, values: pd.DataFrame, st
 
 def _g10_strategy_config() -> StrategyConfig:
     return StrategyConfig(
-        universe="G10",
+        variant="G10",
         window_months=12,
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
@@ -70,22 +96,68 @@ def _g10_strategy_config() -> StrategyConfig:
 
 def _em_metadata() -> pd.DataFrame:
     rows = [
-        {"series_code": "USDZAR_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
-         "market_development": "EM", "currency": "ZAR", "tenor": None, "market_segment": None},
-        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
-        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+        {
+            "series_code": "USDZAR_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Spot",
+            "market_development": "EM",
+            "currency": "ZAR",
+            "tenor": None,
+            "market_segment": None,
+        },
+        {
+            "series_code": "MXWO_PX_LAST",
+            "asset_class": "Equity",
+            "sub_asset_class": "Equity Index",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": "Global",
+        },
+        {
+            "series_code": "BRENT_PX_LAST",
+            "asset_class": "Commodity",
+            "sub_asset_class": "Crude Oil",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": None,
+        },
     ]
     for ccy in ("USD", "ZAR"):
-        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Interest Rate Swap", "market_development": "EM",
-                     "currency": ccy, "tenor": "2Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
-                     "sub_asset_class": "Equity Index", "market_development": "EM",
-                     "currency": ccy, "tenor": None, "market_segment": "Local"})
-    rows.append({"series_code": "ZAR_CDS", "asset_class": "Credit", "sub_asset_class": "Sovereign CDS",
-                 "market_development": "EM", "currency": "ZAR", "tenor": "5Y", "market_segment": None})
+        rows.append(
+            {
+                "series_code": f"{ccy}_SWAP",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Interest Rate Swap",
+                "market_development": "EM",
+                "currency": ccy,
+                "tenor": "2Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_EQ",
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Index",
+                "market_development": "EM",
+                "currency": ccy,
+                "tenor": None,
+                "market_segment": "Local",
+            }
+        )
+    rows.append(
+        {
+            "series_code": "ZAR_CDS",
+            "asset_class": "Credit",
+            "sub_asset_class": "Sovereign CDS",
+            "market_development": "EM",
+            "currency": "ZAR",
+            "tenor": "5Y",
+            "market_segment": None,
+        }
+    )
     return pd.DataFrame(rows)
 
 
@@ -125,7 +197,7 @@ def _em_values() -> pd.DataFrame:
 
 def _em_strategy_config() -> StrategyConfig:
     return StrategyConfig(
-        universe="EM",
+        variant="EM",
         window_months=6,
         stop_reward_ratio=1.0,
         logged_rate_threshold=0.0025,
@@ -141,44 +213,126 @@ def _em_strategy_config() -> StrategyConfig:
 
 
 _CHN_FLOW_BUY_SELL = (
-    "SHANGHAI_BUY_FLOWS_PX_LAST", "SHENZHEN_BUY_FLOWS_PX_LAST",
-    "SHANGHAI_SELL_FLOWS_PX_LAST", "SHENZHEN_SELL_FLOWS_PX_LAST",
+    "SHANGHAI_BUY_FLOWS_PX_LAST",
+    "SHENZHEN_BUY_FLOWS_PX_LAST",
+    "SHANGHAI_SELL_FLOWS_PX_LAST",
+    "SHENZHEN_SELL_FLOWS_PX_LAST",
 )
 _CHN_FLOW_TURNOVER = ("SHANGHAI_FLOWS_TURNOVER_PX_LAST", "SHENZHEN_FLOWS_TURNOVER_PX_LAST")
 
 
 def _chn_metadata() -> pd.DataFrame:
     rows = [
-        {"series_code": "USDCNH_PX_LAST", "asset_class": "Currency", "sub_asset_class": "FX Spot",
-         "market_development": "CHN", "currency": "CNH", "tenor": None, "market_segment": None},
-        {"series_code": "MXWO_PX_LAST", "asset_class": "Equity", "sub_asset_class": "Equity Index",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": "Global"},
-        {"series_code": "BRENT_PX_LAST", "asset_class": "Commodity", "sub_asset_class": "Crude Oil",
-         "market_development": "GLOBAL", "currency": "USD", "tenor": None, "market_segment": None},
+        {
+            "series_code": "USDCNH_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Spot",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": None,
+            "market_segment": None,
+        },
+        {
+            "series_code": "MXWO_PX_LAST",
+            "asset_class": "Equity",
+            "sub_asset_class": "Equity Index",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": "Global",
+        },
+        {
+            "series_code": "BRENT_PX_LAST",
+            "asset_class": "Commodity",
+            "sub_asset_class": "Crude Oil",
+            "market_development": "GLOBAL",
+            "currency": "USD",
+            "tenor": None,
+            "market_segment": None,
+        },
     ]
     for ccy in ("USD", "CNH"):
-        rows.append({"series_code": f"{ccy}_SWAP", "asset_class": "Fixed Income",
-                     "sub_asset_class": "Interest Rate Swap", "market_development": "CHN",
-                     "currency": ccy, "tenor": "2Y", "market_segment": None})
-        rows.append({"series_code": f"{ccy}_EQ", "asset_class": "Equity",
-                     "sub_asset_class": "Equity Index", "market_development": "CHN",
-                     "currency": ccy, "tenor": None, "market_segment": "Local"})
-    rows.append({"series_code": "CNH_CDS", "asset_class": "Credit", "sub_asset_class": "Sovereign CDS",
-                 "market_development": "CHN", "currency": "CNH", "tenor": "5Y", "market_segment": None})
+        rows.append(
+            {
+                "series_code": f"{ccy}_SWAP",
+                "asset_class": "Fixed Income",
+                "sub_asset_class": "Interest Rate Swap",
+                "market_development": "CHN",
+                "currency": ccy,
+                "tenor": "2Y",
+                "market_segment": None,
+            }
+        )
+        rows.append(
+            {
+                "series_code": f"{ccy}_EQ",
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Index",
+                "market_development": "CHN",
+                "currency": ccy,
+                "tenor": None,
+                "market_segment": "Local",
+            }
+        )
+    rows.append(
+        {
+            "series_code": "CNH_CDS",
+            "asset_class": "Credit",
+            "sub_asset_class": "Sovereign CDS",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": "5Y",
+            "market_segment": None,
+        }
+    )
     for code in _CHN_FLOW_BUY_SELL:
-        rows.append({"series_code": code, "asset_class": "Equity", "sub_asset_class": "Equity Flow",
-                     "market_development": "CHN", "currency": "CNY", "tenor": None,
-                     "market_segment": None, "valid_to": "2024-08-16"})
+        rows.append(
+            {
+                "series_code": code,
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Flow",
+                "market_development": "CHN",
+                "currency": "CNY",
+                "tenor": None,
+                "market_segment": None,
+                "valid_to": "2024-08-16",
+            }
+        )
     for code in _CHN_FLOW_TURNOVER:
-        rows.append({"series_code": code, "asset_class": "Equity", "sub_asset_class": "Equity Flow",
-                     "market_development": "CHN", "currency": "CNY", "tenor": None,
-                     "market_segment": None, "valid_to": None})
-    rows.append({"series_code": "OFFSHORE_SPREAD_PX_LAST", "asset_class": "Currency",
-                 "sub_asset_class": "FX Forward", "market_development": "CHN", "currency": "CNH",
-                 "tenor": "3M", "market_segment": "Offshore"})
-    rows.append({"series_code": "ONSHORE_SPREAD_PX_LAST", "asset_class": "Currency",
-                 "sub_asset_class": "FX Forward", "market_development": "CHN", "currency": "CNY",
-                 "tenor": "3M", "market_segment": "Onshore"})
+        rows.append(
+            {
+                "series_code": code,
+                "asset_class": "Equity",
+                "sub_asset_class": "Equity Flow",
+                "market_development": "CHN",
+                "currency": "CNY",
+                "tenor": None,
+                "market_segment": None,
+                "valid_to": None,
+            }
+        )
+    rows.append(
+        {
+            "series_code": "OFFSHORE_SPREAD_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Forward",
+            "market_development": "CHN",
+            "currency": "CNH",
+            "tenor": "3M",
+            "market_segment": "Offshore",
+        }
+    )
+    rows.append(
+        {
+            "series_code": "ONSHORE_SPREAD_PX_LAST",
+            "asset_class": "Currency",
+            "sub_asset_class": "FX Forward",
+            "market_development": "CHN",
+            "currency": "CNY",
+            "tenor": "3M",
+            "market_segment": "Onshore",
+        }
+    )
     return pd.DataFrame(rows)
 
 
@@ -235,26 +389,34 @@ def _chn_values() -> pd.DataFrame:
 def _chn_strategy_config() -> StrategyConfig:
     drivers = DRIVER_NAMES + ("offshore_spread", "flows")
     return StrategyConfig(
-        universe="CHN",
+        variant="CHN",
         window_months=6,
         stop_reward_ratio=1.0,
         logged_rate_threshold=0.0025,
         min_observations=60,
         drivers=drivers,
-        expected_signs={name: (0 if name in ("offshore_spread", "flows") else 1) for name in drivers},
+        expected_signs={
+            name: (0 if name in ("offshore_spread", "flows") else 1) for name in drivers
+        },
     )
 
 
 @pytest.mark.parametrize(
-    "universe,build_metadata,build_values,build_config,series_code",
+    "variant,build_metadata,build_values,build_config,series_code",
     [
-        ("G10", _unblocked_g10_metadata, _unblocked_g10_values, _g10_strategy_config, "EURUSD_PX_LAST"),
+        (
+            "G10",
+            _unblocked_g10_metadata,
+            _unblocked_g10_values,
+            _g10_strategy_config,
+            "EURUSD_PX_LAST",
+        ),
         ("EM", _em_metadata, _em_values, _em_strategy_config, "USDZAR_PX_LAST"),
         ("CHN", _chn_metadata, _chn_values, _chn_strategy_config, "USDCNH_PX_LAST"),
     ],
 )
 def test_steer_fit_matches_the_asset_pipeline_exactly(
-    universe, build_metadata, build_values, build_config, series_code
+    variant, build_metadata, build_values, build_config, series_code
 ):
     metadata = build_metadata()
     values = build_values()
@@ -266,7 +428,7 @@ def test_steer_fit_matches_the_asset_pipeline_exactly(
     signal_row = result.output_for_node("steer_signal", output_name="result").iloc[0]
     cointegration_row = result.output_for_node("steer_cointegration", output_name="result").iloc[0]
 
-    steer = Steer.from_data_api(data_api, universe=universe, strategy_config=strategy_config)
+    steer = Steer.from_data_api(data_api, variant=variant, strategy_config=strategy_config)
     steer_results = steer.fit(lookback_days=1, cointegration="each")
 
     fitted = steer_results[series_code]
@@ -280,7 +442,9 @@ def test_steer_fit_matches_the_asset_pipeline_exactly(
             assert driver in fitted.coefficient, f"{driver} missing from Steer's coefficients"
             assert fitted.coefficient[driver] == pytest.approx(estimate_row[column])
         else:
-            assert driver not in fitted.coefficient, f"{driver} unexpectedly present (asset dropped it)"
+            assert driver not in fitted.coefficient, (
+                f"{driver} unexpectedly present (asset dropped it)"
+            )
     assert fitted.dropped_variables == tuple(
         filter(None, (estimate_row["dropped_variables"] or "").split(","))
     )
@@ -304,7 +468,8 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
     strategy_config = _g10_strategy_config()
 
     resource = FakeRewriteDataAPIResource(metadata, values)
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=strategy_config)
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=strategy_config)
 
     full_dates = sorted(values["timestamp"].unique())
     cutoff = pd.Timestamp(full_dates[-30])  # a date well before the end of the fetched history
@@ -313,8 +478,9 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
 
     truncated_values = values[values["timestamp"] <= cutoff]
     truncated_resource = FakeRewriteDataAPIResource(metadata, truncated_values)
+    _write_availability_report(truncated_resource.api, "G10")
     truncated_steer = Steer.from_data_api(
-        truncated_resource.api, universe="G10", strategy_config=strategy_config
+        truncated_resource.api, variant="G10", strategy_config=strategy_config
     )
     truncated = truncated_steer.fit(as_of=cutoff, lookback_days=1, cointegration="each")
 
@@ -329,7 +495,8 @@ def test_fit_as_of_is_unchanged_by_data_after_it():
 def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
     """Acceptance criterion 3."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=5, cointegration="latest")
 
@@ -341,13 +508,14 @@ def test_fit_lookback_days_produces_distinct_dates_with_distinct_coefficients():
     assert len(set(coefficients)) > 1  # not all identical -- each date genuinely re-fit
 
 
-def test_get_cross_section_matches_steer_result_cross_section():
+def test_cross_section_matches_pair_result_cross_section():
     """Acceptance criterion 4."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
-    cross_section = results.get_cross_section(-1)
+    cross_section = results.cross_section(-1)
 
     assert len(cross_section) == 1
     row = cross_section.iloc[0]
@@ -365,7 +533,8 @@ def test_get_cross_section_matches_steer_result_cross_section():
 def test_plot_z_history_raises_a_clear_error_when_lookback_is_one():
     """Acceptance criterion 5."""
     resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
 
@@ -381,19 +550,210 @@ def test_blocked_pairs_are_skipped_and_recorded():
             _unblocked_g10_metadata(),
             pd.DataFrame(
                 [
-                    {"series_code": "GBPUSD_PX_LAST", "asset_class": "Currency",
-                     "sub_asset_class": "FX Spot", "market_development": "G10",
-                     "currency": "GBP", "tenor": None, "market_segment": None}
+                    {
+                        "series_code": "GBPUSD_PX_LAST",
+                        "asset_class": "Currency",
+                        "sub_asset_class": "FX Spot",
+                        "market_development": "G10",
+                        "currency": "GBP",
+                        "tenor": None,
+                        "market_segment": None,
+                    }
                 ]
             ),
         ],
         ignore_index=True,
     )
     resource = FakeRewriteDataAPIResource(metadata, _unblocked_g10_values())
-    steer = Steer.from_data_api(resource.api, universe="G10", strategy_config=_g10_strategy_config())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
 
     results = steer.fit(lookback_days=1)
 
     assert "GBPUSD_PX_LAST" in results.blocked
     assert "GBP" in results.blocked["GBPUSD_PX_LAST"]
     assert "EURUSD_PX_LAST" in results.results[results.as_of_dates[-1]]
+
+
+def _fit_g10_lookback(lookback_days: int):
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+    return steer.fit(lookback_days=lookback_days, cointegration="latest")
+
+
+def test_select_narrows_to_given_dates():
+    results = _fit_g10_lookback(5)
+    wanted = results.as_of_dates[-2:]
+
+    narrowed = results.select(dates=wanted)
+
+    assert narrowed.as_of_dates == wanted
+    assert narrowed.variant == results.variant
+    assert narrowed.z_threshold == results.z_threshold
+    assert narrowed.blocked == results.blocked
+
+
+def test_select_narrows_to_given_pairs():
+    results = _fit_g10_lookback(1)
+
+    kept = results.select(pairs=["EURUSD_PX_LAST"])
+    assert kept.as_of_dates == results.as_of_dates
+    assert "EURUSD_PX_LAST" in kept.results[kept.as_of_dates[-1]]
+
+
+def test_select_to_a_pair_that_was_never_fitted_returns_an_empty_steer_results_not_raise():
+    """Acceptance criterion (Part 1): slicing to an empty selection returns an empty
+    SteerResults, never raises -- only asking something concrete of the empty result (here,
+    .get()) raises, via _resolve_as_of's existing "no fitted dates" LookupError."""
+    results = _fit_g10_lookback(1)
+
+    empty = results.select(pairs=["NOT_A_REAL_PAIR"])
+
+    assert empty.as_of_dates == []
+    assert empty.results == {}
+    with pytest.raises(LookupError):
+        empty.get("NOT_A_REAL_PAIR")
+
+
+def test_pair_narrows_to_one_pair_every_fitted_date():
+    results = _fit_g10_lookback(5)
+
+    narrowed = results.pair("EURUSD_PX_LAST")
+
+    assert narrowed.as_of_dates == results.as_of_dates
+    for as_of in narrowed.as_of_dates:
+        assert set(narrowed.results[as_of]) == {"EURUSD_PX_LAST"}
+
+
+def test_at_narrows_to_one_date_every_fitted_pair():
+    results = _fit_g10_lookback(5)
+    target_date = results.as_of_dates[-2]
+
+    narrowed = results.at(target_date)
+
+    assert narrowed.as_of_dates == [target_date]
+    assert set(narrowed.results[target_date]) == set(results.results[target_date])
+
+
+def test_getitem_returns_pair_result_pair_returns_steer_results():
+    """Acceptance criterion 2."""
+    results = _fit_g10_lookback(1)
+
+    assert isinstance(results["EURUSD_PX_LAST"], PairResult)
+    assert isinstance(results.pair("EURUSD_PX_LAST"), SteerResults)
+
+
+def test_pair_at_plot_chains_through_steer_results_to_a_pair_result():
+    """Acceptance criterion 1: each intermediate is a SteerResults, .plot() only at the end."""
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    results = _fit_g10_lookback(5)
+
+    sliced = results.pair("EURUSD_PX_LAST")
+    assert isinstance(sliced, SteerResults)
+    sliced_again = sliced.at(-1)
+    assert isinstance(sliced_again, SteerResults)
+
+    ax = results.pair("EURUSD_PX_LAST").at(-1).plot()
+    assert ax is not None
+
+
+def test_slicing_never_refits():
+    """Acceptance criterion 3: select()/pair()/at() are dict comprehensions over already-fitted
+    results, never a refit -- confirmed with a call-counting wrapper around the estimation
+    function fit() itself calls, rather than trusting that by inspection alone."""
+    from dagster_quickstart.steer.analytics import estimation
+
+    call_count = 0
+    original = estimation.sign_check_and_reestimate
+
+    def counting(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(estimation, "sign_check_and_reestimate", counting)
+        results = steer.fit(lookback_days=5, cointegration="latest")
+        calls_after_fit = call_count
+        assert calls_after_fit > 0
+
+        results.select(pairs=["EURUSD_PX_LAST"])
+        results.pair("EURUSD_PX_LAST")
+        results.at(-1)
+        results.select(dates=results.as_of_dates[:2])
+        results.cross_section(-1)
+        results.to_frame()
+
+        assert call_count == calls_after_fit
+
+
+def test_to_frame_is_long_form_tagged_with_series_code_and_as_of():
+    results = _fit_g10_lookback(2)
+
+    frame = results.to_frame()
+
+    assert set(frame["series_code"]) == {"EURUSD_PX_LAST"}
+    assert set(frame["as_of"]) == set(results.as_of_dates)
+    assert len(frame) == sum(len(result.to_frame()) for by_pair in results.results.values() for result in by_pair.values())
+    assert "fair_value" in frame.columns
+
+
+def test_loaded_steer_results_signals_include_signal_and_reason():
+    """Acceptance criterion 5: signals() used to come back empty (or raise) on a SteerResults
+    rebuilt via SteerResults.load(), since signals_by_date was never persisted -- now that
+    PairResult.signal round-trips through save()/load() like everything else, a loaded
+    SteerResults' signals() should match a freshly-fit one's."""
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    fitted = steer.fit(lookback_days=1)
+    fitted.save(resource.api)
+
+    loaded = SteerResults.load(resource.api, "G10")
+    loaded_signals = loaded.signals().set_index("series_code")
+    fitted_signals = fitted.signals().set_index("series_code")
+
+    assert not loaded_signals.empty
+    assert set(loaded_signals.index) == set(fitted_signals.index)
+    for series_code in fitted_signals.index:
+        assert loaded_signals.loc[series_code, "signal"] == fitted_signals.loc[series_code, "signal"]
+        assert loaded_signals.loc[series_code, "reason"] == fitted_signals.loc[series_code, "reason"]
+        assert loaded_signals.loc[series_code, "entry_z_score"] == pytest.approx(
+            fitted_signals.loc[series_code, "entry_z_score"]
+        )
+
+
+def test_loaded_steer_results_plot_z_scores_has_finite_threshold_lines():
+    """Acceptance criterion (Part 5): SteerResults.load() used to always set z_threshold=NaN,
+    which made plot_z_scores()'s +/-z_threshold reference lines vanish (NaN axvline) and its
+    bar coloring always fall through to gray (value >= nan is always False). z_threshold now
+    comes from VARIANTS[variant]'s current config."""
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    resource = FakeRewriteDataAPIResource(_unblocked_g10_metadata(), _unblocked_g10_values())
+    _write_availability_report(resource.api, "G10")
+    steer = Steer.from_data_api(resource.api, variant="G10", strategy_config=_g10_strategy_config())
+
+    fitted = steer.fit(lookback_days=1)
+    fitted.save(resource.api)
+
+    loaded = SteerResults.load(resource.api, "G10")
+    assert np.isfinite(loaded.z_threshold)
+
+    ax = loaded.plot_z_scores()
+    threshold_lines = [line for line in ax.get_lines() if line.get_xdata()[0] != 0]
+    assert threshold_lines
+    for line in threshold_lines:
+        assert np.isfinite(line.get_xdata()[0])

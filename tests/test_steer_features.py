@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from dagster_quickstart.availability.report import PairAvailability
 from dagster_quickstart.steer.config import DRIVER_NAMES, StrategyConfig
-from dagster_quickstart.steer.discovery import PairAvailability
-from dagster_quickstart.steer.features import (
+from dagster_quickstart.steer.source.features import (
     DriverValues,
     build_chn_flows,
     build_chn_offshore_spread,
@@ -19,7 +19,7 @@ from dagster_quickstart.steer.features import (
     resolve_flows_cutover,
     should_use_logged_rate,
 )
-from dagster_quickstart.steer.silver import conform_to_business_days
+from dagster_quickstart.steer.source.features import conform_to_business_days
 
 _CHN_DRIVERS = DRIVER_NAMES + ("offshore_spread", "flows")
 
@@ -84,7 +84,7 @@ def test_build_steer_features_raises_on_missing_column():
 def test_build_steer_features_keeps_chns_extra_driver_columns():
     """FEATURE_COLUMNS used to be a fixed 5-driver module constant -- CHN's
     offshore_spread/flows columns would've been silently dropped by
-    `raw[list(FEATURE_COLUMNS)]`. drivers= makes the column set per-universe."""
+    `raw[list(FEATURE_COLUMNS)]`. drivers= makes the column set per-variant."""
     dates = pd.bdate_range("2024-01-01", periods=10)
     raw = pd.DataFrame(
         {
@@ -164,8 +164,8 @@ class _FakeFetchDataAPI:
 
     def __init__(self, values: pd.DataFrame, metadata: pd.DataFrame | None = None):
         self._values = values
-        self._metadata = metadata if metadata is not None else pd.DataFrame(
-            columns=["series_code", "valid_to"]
+        self._metadata = (
+            metadata if metadata is not None else pd.DataFrame(columns=["series_code", "valid_to"])
         )
 
     def get_values(self, series_codes):
@@ -179,9 +179,9 @@ class _FakeFetchDataAPI:
         return _FakeMetadataFrame(frame.reset_index(drop=True))
 
 
-def _strategy_config(universe: str, drivers=DRIVER_NAMES) -> StrategyConfig:
+def _strategy_config(variant: str, drivers=DRIVER_NAMES) -> StrategyConfig:
     return StrategyConfig(
-        universe=universe,
+        variant=variant,
         window_months=12,
         stop_reward_ratio=2.0,
         logged_rate_threshold=0.01,
@@ -213,7 +213,7 @@ def test_g10_interest_rate_differential_and_yield_curve_or_cds_are_different_ser
     )
     availability = PairAvailability(
         series_code="EURUSD_PX_LAST",
-        universe="G10",
+        variant="G10",
         base_currency="EUR",
         quote_currency="USD",
         resolved={
@@ -264,7 +264,7 @@ def test_g10_local_equity_and_global_drivers_are_log_transformed():
     )
     availability = PairAvailability(
         series_code="EURUSD_PX_LAST",
-        universe="G10",
+        variant="G10",
         base_currency="EUR",
         quote_currency="USD",
         resolved={
@@ -305,7 +305,7 @@ def test_em_yield_curve_or_cds_is_the_non_usd_legs_cds_level_not_a_difference():
     )
     availability = PairAvailability(
         series_code="USDZAR_PX_LAST",
-        universe="EM",
+        variant="EM",
         base_currency="USD",
         quote_currency="ZAR",
         resolved={
@@ -332,7 +332,7 @@ def test_missing_role_fills_driver_with_na_never_a_proxy():
     )
     availability = PairAvailability(
         series_code="EURUSD_PX_LAST",
-        universe="G10",
+        variant="G10",
         base_currency="EUR",
         quote_currency="USD",
         resolved={},

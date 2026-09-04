@@ -3,24 +3,29 @@
 Pure Python -- no Dagster -- callable from a script or notebook the same
 way as from an asset. `Steer.fit()` is a thin orchestration layer over
 functions that already exist and are already exercised by the asset graph
-(assets/steer/*.py): steer.discovery.discover_pairs/build_availability_report,
-steer.features.fetch_raw_driver_frame/build_steer_features,
-steer.estimation.sign_check_and_reestimate/cointegration_test,
-steer.signals.generate_signal, steer.results.build_steer_result. It does
+(assets/steer/*.py, assets/availability_asset.py):
+dagster_quickstart.availability.storage.read_latest_report,
+steer.source.features.fetch_raw_driver_frame/build_steer_features,
+steer.analytics.estimation.sign_check_and_reestimate/cointegration_test/generate_signal,
+steer.analytics.results.build_pair_result. It does
 not reimplement any of them -- same numbers as the asset pipeline, for the
 same inputs, by construction (see tests/test_steer_model.py's direct
-comparison against a materialized asset graph).
+comparison against a materialized asset graph). fit() reads the availability
+report assets/availability_asset.py already wrote (read_latest_report()) rather than
+rediscovering pairs and re-resolving every driver role itself -- the script/notebook path and
+the Dagster asset graph share one source of truth, not two implementations that could disagree.
 
-SteerResult (steer/results.py) already is the right object for one pair at
-one as_of and is not modified here. SteerResults is the plural container
-its own module docstring describes building manually
-(`pd.DataFrame([r.cross_section() for r in results])`) -- this module
-formalizes that into `get_cross_section()`, plus a few other views
-(`panel`, `signals`, the plotting helpers) over the same underlying
-SteerResult objects.
+PairResult (steer/analytics/results.py) is the ELEMENT type -- one pair, one as_of, everything
+about it. SteerResults is the CONTAINER, closed under slicing: select()/pair()/at() each
+narrow it to a smaller SteerResults (never a refit), while `results[series_code]` is the one
+place that hands back the element itself (a PairResult, at the latest date) -- the same split
+pandas draws between df[["col"]] (a DataFrame) and df["col"] (a Series). cross_section()/
+to_frame() mirror PairResult's own methods of the same name, one level up (every pair at one
+date / every pair at every date, instead of one pair's own time series); `panel`, `signals`,
+the plotting helpers are the other views over the same underlying PairResult objects.
 
 Look-ahead safety: fit(lookback_days=N) re-fits EVERY one of the N dates
-independently via steer.estimation.window_slice (`timestamp <= as_of`),
+independently via window_slice (`timestamp <= as_of`, steer/analytics/estimation.py),
 never derives a "historical" z-score by re-scaling a single fit's
 residuals. See test_lookback_dates_are_look_ahead_safe.
 """
@@ -32,18 +37,18 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 import pandas as pd
 
-from dagster_quickstart.steer.config import StrategyConfig
+from dagster_quickstart.steer.analytics.estimation import CointegrationResult
+from dagster_quickstart.steer.analytics.results import PairResult
+from dagster_quickstart.steer.config import STEER_AVAILABILITY_SPEC, VARIANTS, StrategyConfig
 from dagster_quickstart.steer.constants import (
     COINTEGRATION_MODE_EACH,
     COINTEGRATION_MODE_LATEST,
-    UNIVERSE_CHN,
+    VARIANT_CHN,
 )
 from dagster_quickstart.steer.errors import InsufficientDataError
-from dagster_quickstart.steer.estimation import CointegrationResult
-from dagster_quickstart.steer.results import SteerResult
-from dagster_quickstart.steer.signals import SteerSignal
 
 CointegrationMode = Literal["latest", "each"]
+
 
 #: A cointegration verdict synthesized for a date where the ADF test itself couldn't run
 #: (too little trailing history) -- passed=False, matching how
@@ -63,25 +68,21 @@ def _insufficient_data_cointegration(as_of: pd.Timestamp) -> CointegrationResult
 
 @dataclass(frozen=True)
 class SteerResults:
-    """Every SteerResult fitted by one Steer.fit() call -- {as_of: {series_code: SteerResult}}.
+    """Every PairResult fitted by one Steer.fit() call -- {as_of: {series_code: PairResult}}.
 
-    signals_by_date holds the SteerSignal (BUY/SELL/NONE + reason) generated
-    alongside each SteerResult -- SteerResult itself only keeps the
-    resulting target/stop-loss *levels* (upper/lower), not the signal
-    enum/reason text, so signals() needs this parallel dict. It's only
-    populated by fit() -- SteerResults.load() (from storage) can rebuild
-    every SteerResult but not the signal text, since that isn't part of
-    what SteerResult.save() persists; signals() raises a clear error on a
-    loaded-not-fitted SteerResults rather than silently returning nothing.
+    signals() builds directly from each PairResult's own `signal` field (see PairResult's
+    docstring, steer/analytics/results.py) -- there is no parallel signals_by_date dict any
+    more, so it works identically on a freshly fit() SteerResults and one rebuilt by
+    SteerResults.load() from storage (a signal now round-trips as part of what PairResult.save()
+    persists, where it used to be lost).
 
-    blocked is series_code -> reason, for pairs steer.discovery reported
+    blocked is series_code -> reason, for pairs the stored availability report reported
     blocked at fit() time (never fetched, let alone fitted).
     """
 
-    universe: str
+    variant: str
     z_threshold: float
-    results: Dict[pd.Timestamp, Dict[str, SteerResult]] = field(default_factory=dict)
-    signals_by_date: Dict[pd.Timestamp, Dict[str, SteerSignal]] = field(default_factory=dict)
+    results: Dict[pd.Timestamp, Dict[str, PairResult]] = field(default_factory=dict)
     blocked: Dict[str, str] = field(default_factory=dict)
 
     @property
@@ -92,7 +93,7 @@ class SteerResults:
     def _resolve_as_of(self, as_of: Union[int, str, pd.Timestamp, None]) -> pd.Timestamp:
         dates = self.as_of_dates
         if not dates:
-            raise LookupError(f"No fitted dates in this SteerResults ({self.universe}).")
+            raise LookupError(f"No fitted dates in this SteerResults ({self.variant}).")
         if as_of is None:
             return dates[-1]
         if isinstance(as_of, int):
@@ -107,55 +108,140 @@ class SteerResults:
             raise KeyError(f"{resolved} is not a fitted date. Fitted dates: {dates}")
         return resolved
 
-    def get_cross_section(self, index: Union[int, str, pd.Timestamp] = -1) -> pd.DataFrame:
+    def _by_pair(self, as_of: Union[int, str, pd.Timestamp, None]) -> Dict[str, PairResult]:
+        """Every PairResult fitted at `as_of` -- the _resolve_as_of(as_of) + self.results[...]
+        pair every method that needs one fitted date's pairs (rather than a full narrowed
+        SteerResults -- see select()) was resolving inline."""
+        return self.results[self._resolve_as_of(as_of)]
+
+    def select(
+        self,
+        pairs: Optional[Sequence[str]] = None,
+        dates: Optional[Sequence[Union[int, str, pd.Timestamp]]] = None,
+    ) -> "SteerResults":
+        """A new SteerResults narrowed to `pairs`/`dates` -- the slicing primitive pair()/at()
+        wrap. Either argument left as None keeps every pair/date this SteerResults already has.
+
+        A dict comprehension over self.results, never a refit -- cheap by construction. An
+        empty selection (pairs that were never fitted, or dates that resolve to none of
+        self.as_of_dates) returns an empty SteerResults rather than raising; _resolve_as_of
+        already raises usefully once something is actually asked of the result (e.g. .get(),
+        which needs a fitted date to exist). A fitted date whose pairs are all filtered out is
+        dropped entirely, not kept as an empty entry -- matching fit()'s own invariant that a
+        results key only ever exists with at least one pair under it. Carries the same
+        variant/z_threshold/blocked as self -- slicing narrows which pairs/dates are visible,
+        not what variant this is or which pairs were blocked before fitting even started.
+        """
+        resolved_dates = (
+            {self._resolve_as_of(date) for date in dates} if dates is not None else set(self.results)
+        )
+        pair_set = set(pairs) if pairs is not None else None
+
+        new_results: Dict[pd.Timestamp, Dict[str, PairResult]] = {}
+        for as_of, by_pair in self.results.items():
+            if as_of not in resolved_dates:
+                continue
+            filtered = (
+                by_pair
+                if pair_set is None
+                else {code: result for code, result in by_pair.items() if code in pair_set}
+            )
+            if filtered:
+                new_results[as_of] = filtered
+
+        return SteerResults(
+            variant=self.variant,
+            z_threshold=self.z_threshold,
+            results=new_results,
+            blocked=self.blocked,
+        )
+
+    def pair(self, series_code: str) -> "SteerResults":
+        """A new SteerResults narrowed to one pair, every fitted date it appears in. See select()."""
+        return self.select(pairs=[series_code])
+
+    def at(self, date: Union[int, str, pd.Timestamp]) -> "SteerResults":
+        """A new SteerResults narrowed to one fitted date, every pair fitted at it. See select()."""
+        return self.select(dates=[date])
+
+    def cross_section(self, index: Union[int, str, pd.Timestamp] = -1) -> pd.DataFrame:
         """One row per pair fitted at `index` (a negative/positive position, or a date).
 
-        Built entirely from each SteerResult.cross_section() -- no
-        duplicated cross-section logic here.
+        Built entirely from each PairResult.cross_section() -- no
+        duplicated cross-section logic here. Same name as PairResult.cross_section() --
+        the container's takes an index (which fitted date), the element's takes nothing
+        (there's only ever one), but it's the same concept at each level.
         """
-        as_of = self._resolve_as_of(index)
-        by_pair = self.results[as_of]
+        by_pair = self._by_pair(index)
         return pd.DataFrame([result.cross_section() for result in by_pair.values()])
 
-    def __getitem__(self, series_code: str) -> SteerResult:
-        """The SteerResult for `series_code` at the most recent fitted date."""
+    def to_frame(self) -> pd.DataFrame:
+        """Long-form concat of every fitted PairResult's to_frame(), tagged with series_code/as_of.
+
+        Mirrors PairResult.to_frame() one level up: one row per pair/as_of/date here, versus
+        one row per date for a single pair there. Empty SteerResults -> empty DataFrame.
+        """
+        frames = []
+        for as_of, by_pair in self.results.items():
+            for series_code, result in by_pair.items():
+                frame = result.to_frame().copy()
+                frame.index.name = "date"
+                frame = frame.reset_index()
+                frame.insert(0, "as_of", as_of)
+                frame.insert(0, "series_code", series_code)
+                frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
+    def __getitem__(self, series_code: str) -> PairResult:
+        """The PairResult for `series_code` at the most recent fitted date.
+
+        The one place this class returns the ELEMENT type rather than narrowing itself --
+        deliberate asymmetry, matching pandas' own df[col] (a Series) vs df[[col]] (a
+        DataFrame): this is the single most common lookup (today's number for one pair), and
+        should hand back the number itself, not a one-pair-one-date container the caller then
+        has to unwrap again. Don't "fix" this to return a SteerResults for consistency with
+        pair()/at() -- that would be a regression, not a cleanup.
+        """
         return self.get(series_code)
 
     def get(
         self, series_code: str, as_of: Union[int, str, pd.Timestamp, None] = None
-    ) -> SteerResult:
+    ) -> PairResult:
         resolved = self._resolve_as_of(as_of)
-        by_pair = self.results[resolved]
+        by_pair = self._by_pair(resolved)
         if series_code not in by_pair:
-            raise KeyError(f"{series_code!r} was not fitted as of {resolved} ({self.universe}).")
+            raise KeyError(f"{series_code!r} was not fitted as of {resolved} ({self.variant}).")
         return by_pair[series_code]
 
     def signals(self, as_of: Union[int, str, pd.Timestamp, None] = None) -> pd.DataFrame:
-        """DataFrame matching STEER_SIGNALS_SCHEMA's columns, at one fitted date (default latest)."""
-        resolved = self._resolve_as_of(as_of)
-        if resolved not in self.signals_by_date:
-            raise LookupError(
-                "No signal data for this SteerResults -- SteerResults.load() reconstructs "
-                "SteerResult objects but not the signal enum/reason text (not part of what "
-                "SteerResult persists); signals() only works on a freshly fit() SteerResults."
-            )
+        """DataFrame matching STEER_SIGNALS_SCHEMA's columns, at one fitted date (default latest).
+
+        Built from each PairResult's own `signal` field -- works the same whether this
+        SteerResults came from a fresh fit() or from SteerResults.load(). A pair fitted without
+        a signal (signal=None -- see PairResult's docstring) has nothing to report here and is
+        left out, rather than emitting an all-null row for it.
+        """
+        by_pair = self._by_pair(as_of)
         rows = [
             {
                 "series_code": series_code,
-                "signal": signal.signal,
-                "entry_z_score": signal.entry_z_score,
-                "target": signal.target,
-                "stop_loss": signal.stop_loss,
-                "reason": signal.reason,
+                "signal": result.signal.signal,
+                "entry_z_score": result.signal.entry_z_score,
+                "target": result.signal.target,
+                "stop_loss": result.signal.stop_loss,
+                "reason": result.signal.reason,
             }
-            for series_code, signal in self.signals_by_date[resolved].items()
+            for series_code, result in by_pair.items()
+            if result.signal is not None
         ]
         return pd.DataFrame(rows)
 
     def panel(self, field_name: str) -> pd.DataFrame:
         """DataFrame indexed by fitted date, one column per pair, for a scalar field.
 
-        `field_name` can be a plain SteerResult attribute (z_score), a
+        `field_name` can be a plain PairResult attribute (z_score), a
         time-series property whose latest value is what's meant (
         fair_value, fair_value_upper/_lower -- the value as of that row's
         own date), or anything cross_section() exposes (coefficient_<driver>,
@@ -170,35 +256,72 @@ class SteerResults:
         return pd.DataFrame.from_dict(rows, orient="index").sort_index()
 
     def plot_pair(self, series_code: str, as_of: Union[int, str, pd.Timestamp, None] = None):
-        """Delegates to SteerResult.plot() for one pair/date. Returns the Axes."""
+        """Delegates to PairResult.plot() for one pair/date. Returns the Axes."""
         return self.get(series_code, as_of=as_of).plot()
+
+    def plot(self, *, ax=None):
+        """Delegates to the single PairResult.plot() this SteerResults has been narrowed to --
+        e.g. results.pair(series_code).at(as_of).plot(). Raises a clear ValueError if this
+        SteerResults still has more than one pair or more than one fitted date; that's what
+        plot_pair(series_code, as_of) and the multi-pair/multi-date plotting helpers
+        (plot_z_scores/plot_z_history) are for -- this method doesn't guess which one to show.
+        """
+        dates = self.as_of_dates
+        if len(dates) != 1:
+            raise ValueError(
+                f"plot() needs exactly one fitted date, but this SteerResults has {len(dates)} "
+                "-- narrow with .at(date) first, or use plot_pair(series_code, as_of)/"
+                "plot_z_scores()/plot_z_history() directly."
+            )
+        by_pair = self.results[dates[0]]
+        if len(by_pair) != 1:
+            raise ValueError(
+                f"plot() needs exactly one pair, but this SteerResults has {len(by_pair)} -- "
+                "narrow with .pair(series_code) first, or use plot_pair(series_code, as_of) "
+                "directly."
+            )
+        (result,) = by_pair.values()
+        return result.plot(ax=ax)
+
+    def _draw_threshold_lines(self, ax, *, horizontal: bool) -> None:
+        """+/-z_threshold and a zero reference line, on whichever axis matters --
+        axhline (horizontal) for a time-series y-axis (plot_z_history), axvline (vertical) for
+        a bar chart's x-axis (plot_z_scores). Shared since the two plots' reference lines are
+        the identical three values, differing only in which axis they belong on.
+        """
+        line = ax.axhline if horizontal else ax.axvline
+        line(self.z_threshold, color="black", linestyle="--", linewidth=1)
+        line(-self.z_threshold, color="black", linestyle="--", linewidth=1)
+        line(0, color="black", linewidth=0.8)
 
     def plot_z_scores(self, as_of: Union[int, str, pd.Timestamp, None] = None):
         """Horizontal bar of z-score by pair at one date, sorted, with +/-z_threshold lines.
 
-        matplotlib is imported lazily, same as SteerResult.plot(), so it
+        matplotlib is imported lazily, same as PairResult.plot(), so it
         stays an optional dependency for callers that never plot.
         """
         import matplotlib.pyplot as plt
 
         resolved = self._resolve_as_of(as_of)
-        by_pair = self.results[resolved]
-        z_scores = pd.Series({code: result.z_score for code, result in by_pair.items()}).sort_values()
+        by_pair = self._by_pair(resolved)
+        z_scores = pd.Series(
+            {code: result.z_score for code, result in by_pair.items()}
+        ).sort_values()
 
         colors = [
-            "tab:red" if value >= self.z_threshold
-            else "tab:green" if value <= -self.z_threshold
+            "tab:red"
+            if value >= self.z_threshold
+            else "tab:green"
+            if value <= -self.z_threshold
             else "tab:gray"
             for value in z_scores
         ]
 
         _, ax = plt.subplots(figsize=(8, max(3, 0.35 * len(z_scores))))
         ax.barh(z_scores.index, z_scores.to_numpy(), color=colors)
-        ax.axvline(self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axvline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axvline(0, color="black", linewidth=0.8)
+        self._draw_threshold_lines(ax, horizontal=False)
         ax.set_xlabel("z-score")
-        ax.set_title(f"{self.universe} z-scores as of {resolved.date()}")
+        ax.set_title(f"{self.variant} z-scores as of {resolved.date()}")
         return ax
 
     def plot_z_history(self, series_codes: Optional[Sequence[str]] = None):
@@ -231,16 +354,14 @@ class SteerResults:
             series = pd.Series(z_by_date).sort_index()
             ax.plot(series.index, series.to_numpy(), marker="o", label=code)
 
-        ax.axhline(self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axhline(-self.z_threshold, color="black", linestyle="--", linewidth=1)
-        ax.axhline(0, color="black", linewidth=0.8)
+        self._draw_threshold_lines(ax, horizontal=True)
         ax.set_ylabel("z-score")
-        ax.set_title(f"{self.universe} z-score history")
+        ax.set_title(f"{self.variant} z-score history")
         ax.legend()
         return ax
 
     def save(self, data_api: Any) -> None:
-        """Delegates to SteerResult.save() for every fitted (pair, as_of)."""
+        """Delegates to PairResult.save() for every fitted (pair, as_of)."""
         for by_pair in self.results.values():
             for result in by_pair.values():
                 result.save(data_api)
@@ -249,46 +370,61 @@ class SteerResults:
     def load(
         cls,
         data_api: Any,
-        universe: str,
+        variant: str,
         as_of: Optional[pd.Timestamp] = None,
     ) -> "SteerResults":
-        """Rebuild a SteerResults from storage -- one SteerResult.load() per series_code found.
+        """Rebuild a SteerResults from storage -- one PairResult.load() per series_code found.
 
-        signals_by_date/blocked come back empty (see SteerResults' own
-        docstring for signals_by_date) -- only what SteerResult.save()
-        actually persists round-trips.
+        blocked comes back empty -- fit()'s block reasons are never persisted, only fitted
+        pairs are. signals() works on the result, though: each PairResult's own `signal` field
+        (see its docstring) round-trips through PairResult.save()/.load() like everything else.
+
+        z_threshold comes from VARIANTS[variant]'s current config, not from anything persisted
+        -- PairResult doesn't carry the z_threshold it was actually built with, so this is
+        today's config value for `variant`, not necessarily the exact historical one a very old
+        snapshot was fit with. Used to be float("nan") unconditionally, which made
+        plot_z_scores()/plot_z_history()'s threshold reference lines vanish (NaN axvline/axhline)
+        and their bar/line coloring always fall through to "gray" (value >= nan is always False).
         """
-        from dagster_quickstart.steer.storage import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
+        from dagster_quickstart.steer.orm import GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE
 
-        summary = data_api.read_table(GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=universe).frame
+        z_threshold = VARIANTS[variant].z_threshold
+
+        # The persisted gold-table column is still named "universe" (see steer/orm.py's module
+        # docstring) -- `variant` is the Python-level name.
+        summary = data_api.read_table(
+            GOLD_SCHEMA, STEER_RESULT_SUMMARY_TABLE, universe=variant
+        ).frame
         if summary.empty:
-            return cls(universe=universe, z_threshold=float("nan"))
+            return cls(variant=variant, z_threshold=z_threshold)
 
         summary = summary.copy()
         summary["as_of"] = pd.to_datetime(summary["as_of"])
         if as_of is not None:
             summary = summary[summary["as_of"] == pd.Timestamp(as_of)]
 
-        results: Dict[pd.Timestamp, Dict[str, SteerResult]] = {}
+        results: Dict[pd.Timestamp, Dict[str, PairResult]] = {}
         for series_code in summary["series_code"].unique():
-            result = SteerResult.load(data_api, str(series_code), as_of=as_of)
+            result = PairResult.load(data_api, str(series_code), as_of=as_of)
             results.setdefault(result.as_of, {})[str(series_code)] = result
 
-        return cls(universe=universe, z_threshold=float("nan"), results=results)
+        return cls(variant=variant, z_threshold=z_threshold, results=results)
 
 
-def _scalar_field(result: SteerResult, field_name: str) -> Any:
+def _scalar_field(result: PairResult, field_name: str) -> Any:
     if hasattr(result, field_name):
         value = getattr(result, field_name)
         return float(value.iloc[-1]) if isinstance(value, pd.Series) else value
     cross_section = result.cross_section()
     if field_name in cross_section.index:
         return cross_section[field_name]
-    raise AttributeError(f"SteerResult has no field {field_name!r} (checked attributes and cross_section()).")
+    raise AttributeError(
+        f"PairResult has no field {field_name!r} (checked attributes and cross_section())."
+    )
 
 
 class Steer:
-    """Fit STEER across every pair in one universe.
+    """Fit STEER across every pair in one variant.
 
     A facade over the existing pipeline -- discovery, features, estimation,
     cointegration, signals -- not a reimplementation of any of it. See
@@ -297,14 +433,16 @@ class Steer:
     exactly (same functions, same arguments, same StrategyConfig fields).
     """
 
-    def __init__(self, data_api: Any, *, universe: str, strategy_config: StrategyConfig) -> None:
+    def __init__(self, data_api: Any, *, variant: str, strategy_config: StrategyConfig) -> None:
         self._data_api = data_api
-        self.universe = universe
+        self.variant = variant
         self.strategy_config = strategy_config
 
     @classmethod
-    def from_data_api(cls, data_api: Any, *, universe: str, strategy_config: StrategyConfig) -> "Steer":
-        return cls(data_api, universe=universe, strategy_config=strategy_config)
+    def from_data_api(
+        cls, data_api: Any, *, variant: str, strategy_config: StrategyConfig
+    ) -> "Steer":
+        return cls(data_api, variant=variant, strategy_config=strategy_config)
 
     def fit(
         self,
@@ -314,26 +452,26 @@ class Steer:
         cointegration: CointegrationMode = COINTEGRATION_MODE_LATEST,
         pairs: Optional[Sequence[str]] = None,
     ) -> SteerResults:
-        """Fit every (non-blocked) pair in this universe over the trailing `lookback_days`.
+        """Fit every (non-blocked) pair in this variant over the trailing `lookback_days`.
 
         as_of=None means the latest date available in the fetched data (not
         wall-clock "now") -- the max rate-series date across every pair
         that has any data at all.
 
         lookback_days=N fits N business days ending at as_of, EACH on its
-        own rolling window via steer.estimation.window_slice (`timestamp
-        <= as_of`) -- never a single fit's residuals rescaled across dates,
-        which would be look-ahead (day t-5's z would depend on
+        own rolling window via window_slice (`timestamp
+        <= as_of`, steer/analytics/estimation.py) -- never a single fit's residuals rescaled
+        across dates, which would be look-ahead (day t-5's z would depend on
         coefficients estimated using data through day t).
 
-        pairs=None fits every pair steer.discovery doesn't report blocked;
+        pairs=None fits every pair the stored availability report doesn't report blocked;
         pass a subset of series_codes to fit fewer. A blocked pair is
         skipped entirely (never fetched) -- see SteerResults.blocked for
-        why, in the same wording steer.pipeline.build_silver_frame uses.
+        why, in the same wording steer.source.features.build_silver_frame uses.
 
         cointegration:
-          - "latest" (default): the Engle-Granger test (steer.estimation.
-            cointegration_test, itself an ADF call -- regression="c",
+          - "latest" (default): the Engle-Granger test (cointegration_test,
+            steer/analytics/estimation.py, itself an ADF call -- regression="c",
             autolag="BIC") runs ONCE per pair, at the final as_of in the
             lookback, and that verdict is reused for every earlier date's
             signal. Cheap: ADF dominates cost (~30x one OLS fit on a
@@ -342,42 +480,42 @@ class Steer:
             interactive use.
           - "each": the test reruns at every date. Required for anything
             backtest-like -- the cointegration gate is part of the signal
-            rule itself (steer.signals.generate_signal requires BOTH
+            rule itself (generate_signal requires BOTH
             |z| >= z_threshold AND cointegration passed), so freezing the
             verdict at "latest" changes which historical days would have
             traded, silently. Costs one ADF call per pair per date instead
             of one per pair total.
         """
-        from dagster_quickstart.steer.constants import IS_LOGGED_COLUMN, RATE_COLUMN
-        from dagster_quickstart.steer.discovery import (
-            build_availability_report,
-            discover_pairs,
-            pairs_from_availability_report,
+        from dagster_quickstart.availability.report import pairs_from_availability_report
+        from dagster_quickstart.availability.storage import read_latest_report
+        from dagster_quickstart.steer.analytics.estimation import (
+            cointegration_test,
+            generate_signal,
+            sign_check_and_reestimate,
         )
-        from dagster_quickstart.steer.estimation import cointegration_test, sign_check_and_reestimate
-        from dagster_quickstart.steer.features import (
+        from dagster_quickstart.steer.analytics.results import build_pair_result
+        from dagster_quickstart.steer.constants import IS_LOGGED_COLUMN, RATE_COLUMN
+        from dagster_quickstart.steer.source.features import (
             DriverValues,
             build_steer_features,
+            conform_to_business_days,
             fetch_raw_driver_frame,
             required_series_codes,
             resolve_flows_cutover,
         )
-        from dagster_quickstart.steer.signals import generate_signal
-        from dagster_quickstart.steer.results import build_steer_result
-        from dagster_quickstart.steer.silver import conform_to_business_days
 
         if cointegration not in (COINTEGRATION_MODE_LATEST, COINTEGRATION_MODE_EACH):
             raise ValueError(f'cointegration must be "latest" or "each", got {cointegration!r}')
 
         config = self.strategy_config
-        empty = SteerResults(universe=self.universe, z_threshold=config.z_threshold)
 
-        pair_metadata = discover_pairs(self.universe, self._data_api)
-        if pair_metadata.empty:
-            return empty
-
-        report = build_availability_report({self.universe: pair_metadata}, self._data_api)
-        availabilities = pairs_from_availability_report(report)
+        # Shares one source of truth with the asset graph (assets/availability_asset.py writes
+        # this same stored report) instead of re-discovering pairs and re-resolving every driver
+        # role itself -- read_latest_report() raises LookupError if nothing's ever been written
+        # for this variant, rather than fit() silently returning an empty SteerResults; a caller
+        # that genuinely has no data run yet should see that, not a quietly-empty result.
+        report = read_latest_report(self._data_api, self.variant)
+        availabilities = pairs_from_availability_report(report, STEER_AVAILABILITY_SPEC)
         if pairs is not None:
             wanted = set(pairs)
             availabilities = [a for a in availabilities if a.series_code in wanted]
@@ -386,20 +524,20 @@ class Steer:
         available = []
         for availability in availabilities:
             if availability.blocked:
-                blocked[availability.series_code] = "blocked: " + "; ".join(availability.block_reasons)
+                blocked[availability.series_code] = "blocked: " + "; ".join(
+                    availability.block_reasons
+                )
             else:
                 available.append(availability)
 
         if not available:
-            return SteerResults(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerResults(variant=self.variant, z_threshold=config.z_threshold, blocked=blocked)
 
-        all_series_codes = required_series_codes(
-            ((a.series_code, a) for a in available), config
-        )
+        all_series_codes = required_series_codes(((a.series_code, a) for a in available), config)
         driver_values = DriverValues.load(self._data_api, all_series_codes)
 
         chn_flows_cutover = None
-        if self.universe == UNIVERSE_CHN:
+        if self.variant == VARIANT_CHN:
             try:
                 chn_flows_cutover = resolve_flows_cutover(self._data_api)
             except ValueError:
@@ -428,7 +566,7 @@ class Steer:
             pair_features[availability.series_code] = features
 
         if not pair_features:
-            return SteerResults(universe=self.universe, z_threshold=config.z_threshold, blocked=blocked)
+            return SteerResults(variant=self.variant, z_threshold=config.z_threshold, blocked=blocked)
 
         resolved_as_of = (
             pd.Timestamp(as_of)
@@ -441,7 +579,7 @@ class Steer:
         calendar = [timestamp for timestamp in calendar if timestamp <= resolved_as_of]
         if not calendar:
             raise InsufficientDataError(
-                f"No data on or before {resolved_as_of} for universe {self.universe!r}."
+                f"No data on or before {resolved_as_of} for variant {self.variant!r}."
             )
         fit_dates = calendar[-lookback_days:]
 
@@ -463,12 +601,10 @@ class Steer:
                     config=config,
                 )
 
-        results: Dict[pd.Timestamp, Dict[str, SteerResult]] = {}
-        signals_by_date: Dict[pd.Timestamp, Dict[str, SteerSignal]] = {}
+        results: Dict[pd.Timestamp, Dict[str, PairResult]] = {}
 
         for fit_date in fit_dates:
-            date_results: Dict[str, SteerResult] = {}
-            date_signals: Dict[str, SteerSignal] = {}
+            date_results: Dict[str, PairResult] = {}
 
             for series_code, features in pair_features.items():
                 trailing = features.loc[:fit_date]
@@ -495,12 +631,17 @@ class Steer:
                 coint_result: CointegrationResult
                 if cointegration == COINTEGRATION_MODE_EACH:
                     coint_result = self._safe_cointegration_test(
-                        cointegration_test, rate, drivers, as_of=fit_date, is_logged=is_logged, config=config
+                        cointegration_test,
+                        rate,
+                        drivers,
+                        as_of=fit_date,
+                        is_logged=is_logged,
+                        config=config,
                     )
                 else:
-                    coint_result = latest_cointegration.get(series_code) or _insufficient_data_cointegration(
-                        fit_date
-                    )
+                    coint_result = latest_cointegration.get(
+                        series_code
+                    ) or _insufficient_data_cointegration(fit_date)
 
                 current_rate = float(rate.loc[:fit_date].iloc[-1])
                 signal = generate_signal(
@@ -511,35 +652,33 @@ class Steer:
                     stop_reward_ratio=config.stop_reward_ratio,
                 )
 
-                result = build_steer_result(
+                result = build_pair_result(
                     series_code,
-                    self.universe,
+                    self.variant,
                     rate,
                     drivers,
                     estimate=estimate,
                     window_months=config.window_months,
                     z_threshold=config.z_threshold,
                     cointegration=coint_result,
-                    signal_target=signal.target,
-                    signal_stop_loss=signal.stop_loss,
+                    signal=signal,
                 )
                 date_results[series_code] = result
-                date_signals[series_code] = signal
 
             if date_results:
                 results[fit_date] = date_results
-                signals_by_date[fit_date] = date_signals
 
         return SteerResults(
-            universe=self.universe,
+            variant=self.variant,
             z_threshold=config.z_threshold,
             results=results,
-            signals_by_date=signals_by_date,
             blocked=blocked,
         )
 
     @staticmethod
-    def _safe_cointegration_test(cointegration_test, rate, drivers, *, as_of, is_logged, config) -> CointegrationResult:
+    def _safe_cointegration_test(
+        cointegration_test, rate, drivers, *, as_of, is_logged, config
+    ) -> CointegrationResult:
         """cointegration_test(), or a synthetic passed=False verdict on InsufficientDataError --
         see _insufficient_data_cointegration's docstring for why that (not a missing/None
         result) matches the asset pipeline's own handling of the same case."""

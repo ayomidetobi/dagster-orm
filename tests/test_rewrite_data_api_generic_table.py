@@ -263,6 +263,75 @@ def test_read_table_result_chains_and_narrows_in_memory(data_api):
     assert narrowed.filter_options("universe") == ["CHN"]
 
 
+def test_all_null_object_column_does_not_lock_in_the_wrong_type_for_a_later_string_write(
+    data_api,
+):
+    """Regression: a frame with an all-null role column (e.g. base_rate_3m, populated by G10
+    but never by EM/CHN) used to let DuckDB infer INTEGER for that column at CREATE TABLE
+    time -- a later write with real series-code strings in that column then failed with
+    `_duckdb.ConversionException: Could not convert string ... to INT32`."""
+    em_row = pd.DataFrame([{"series_code": "USDZAR_PX_LAST", "universe": "EM", "base_rate_3m": None}])
+    g10_row = pd.DataFrame(
+        [{"series_code": "EURUSD_PX_LAST", "universe": "G10", "base_rate_3m": "EUR3M_PX_LAST"}]
+    )
+
+    data_api.write_table(GOLD_SCHEMA, TABLE, em_row)
+    data_api.write_table(GOLD_SCHEMA, TABLE, g10_row)
+
+    table = data_api.read_table(GOLD_SCHEMA, TABLE).frame
+    written_g10_row = table[table["series_code"] == "EURUSD_PX_LAST"].iloc[0]
+    written_em_row = table[table["series_code"] == "USDZAR_PX_LAST"].iloc[0]
+    assert written_g10_row["base_rate_3m"] == "EUR3M_PX_LAST"
+    assert pd.isna(written_em_row["base_rate_3m"])
+
+
+def test_all_null_object_column_introduced_via_widening_does_not_lock_in_the_wrong_type(
+    data_api,
+):
+    """Same regression via the widening path (ALTER TABLE ADD COLUMN) rather than CREATE
+    TABLE -- the column is absent from the first write entirely, introduced all-null by the
+    second write, and only given a real string value by a third."""
+    data_api.write_table(
+        GOLD_SCHEMA, TABLE, pd.DataFrame([{"series_code": "USDZAR_PX_LAST", "universe": "EM"}])
+    )
+    data_api.write_table(
+        GOLD_SCHEMA,
+        TABLE,
+        pd.DataFrame([{"series_code": "USDCNH_PX_LAST", "universe": "CHN", "base_rate_3m": None}]),
+    )
+    data_api.write_table(
+        GOLD_SCHEMA,
+        TABLE,
+        pd.DataFrame(
+            [{"series_code": "EURUSD_PX_LAST", "universe": "G10", "base_rate_3m": "EUR3M_PX_LAST"}]
+        ),
+    )
+
+    table = data_api.read_table(GOLD_SCHEMA, TABLE).frame
+    written_g10_row = table[table["series_code"] == "EURUSD_PX_LAST"].iloc[0]
+    assert written_g10_row["base_rate_3m"] == "EUR3M_PX_LAST"
+
+
+def test_all_null_numeric_column_is_left_alone(data_api):
+    """A genuinely numeric all-null column (float64 dtype, NaN rather than None) must not be
+    coerced to string -- only object-dtype all-null columns get the fix (see
+    GenericTableRepository._coerce_all_null_object_columns)."""
+    data_api.write_table(
+        GOLD_SCHEMA,
+        TABLE,
+        pd.DataFrame([{"series_code": "USDZAR_PX_LAST", "universe": "EM", "score": float("nan")}]),
+    )
+    data_api.write_table(
+        GOLD_SCHEMA,
+        TABLE,
+        pd.DataFrame([{"series_code": "EURUSD_PX_LAST", "universe": "G10", "score": 1.5}]),
+    )
+
+    table = data_api.read_table(GOLD_SCHEMA, TABLE).frame
+    written_g10_row = table[table["series_code"] == "EURUSD_PX_LAST"].iloc[0]
+    assert written_g10_row["score"] == pytest.approx(1.5)
+
+
 def test_read_table_get_values_raises_a_clear_error_naming_the_table(data_api):
     """get_values()/get_last_values() aren't meaningful for an arbitrary table -- a clear error,
     not a deep, confusing failure inside MetadataResult."""
