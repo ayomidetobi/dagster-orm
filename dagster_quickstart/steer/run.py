@@ -101,7 +101,7 @@ def main() -> int:
             "(plot_z_history needs more than one); pass --lookback with a larger value."
         )
 
-    top_pair = cross_section.iloc[0]["series_code"]
+    top_pair = cross_section.iloc[2]["series_code"]
     fig = results.plot_pair(top_pair).figure
     path = outdir / f"pair_{top_pair}.png"
     fig.savefig(path, bbox_inches="tight")
